@@ -166,7 +166,7 @@ mod tests {
             &settings,
             &data,
             |path| {
-                assert_eq!(path, source);
+                assert_eq!(path, dunce::canonicalize(&source).unwrap());
                 fs::rename(path, &trash)?;
                 Ok(())
             },

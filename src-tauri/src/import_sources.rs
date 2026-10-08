@@ -178,6 +178,9 @@ mod tests {
     fn select(path: &Path) -> Discovery {
         discover(&[paths::path_text(path).unwrap()]).unwrap()
     }
+    fn canonical_text(path: &Path) -> String {
+        paths::path_text(&dunce::canonicalize(path).unwrap()).unwrap()
+    }
     #[test]
     fn collection_expands_visible_games_and_never_traverses_dot_folders() {
         let temp = tempfile::Builder::new()
@@ -192,7 +195,7 @@ mod tests {
         let result = select(temp.path());
         assert_eq!(
             result.sources,
-            vec![paths::path_text(&temp.path().join("真实游戏")).unwrap()]
+            vec![canonical_text(&temp.path().join("真实游戏"))]
         );
         assert!(result.choices.is_empty());
         let scan = scanner::scan_root(temp.path()).unwrap();
@@ -210,7 +213,7 @@ mod tests {
         fs::write(game.join("游戏.qsp"), b"fixture").unwrap();
         fs::write(game.join("Qqsp/播放器.exe"), b"fixture").unwrap();
         let result = select(&game);
-        assert_eq!(result.sources, vec![paths::path_text(&game).unwrap()]);
+        assert_eq!(result.sources, vec![canonical_text(&game)]);
         assert!(result.choices.is_empty());
         let result = discover(&[
             paths::path_text(temp.path()).unwrap(),
@@ -232,13 +235,10 @@ mod tests {
         let result = select(temp.path());
         assert!(result.sources.is_empty());
         assert_eq!(result.choices.len(), 1);
-        assert_eq!(
-            result.choices[0].root,
-            paths::path_text(temp.path()).unwrap()
-        );
+        assert_eq!(result.choices[0].root, canonical_text(temp.path()));
         assert_eq!(
             result.choices[0].children,
-            vec![paths::path_text(&temp.path().join("bin")).unwrap()]
+            vec![canonical_text(&temp.path().join("bin"))]
         );
     }
     #[cfg(windows)]

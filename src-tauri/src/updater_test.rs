@@ -539,7 +539,7 @@ fn mtool_update_keeps_shared_settings_root_cwd_and_bundled_files() {
     fs::create_dir(&shared).unwrap();
     fs::write(shared.join("MTool.exe"), b"global tool fixture").unwrap();
     let mut settings = f.db.lock().unwrap().settings().unwrap();
-    settings.mtool_root = paths::path_text(&shared).unwrap();
+    settings.mtool_root = paths::path_text(&dunce::canonicalize(&shared).unwrap()).unwrap();
     f.db.lock()
         .unwrap()
         .save_settings(settings.clone())
@@ -656,12 +656,19 @@ fn withdrawing_uncommitted_update_restores_original_and_keeps_source() {
 #[test]
 fn native_cross_volume_update_copies_once_and_preserves_saves_before_source_cleanup() {
     let project = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let fixture_root = project.join(".tools");
+    fs::create_dir_all(&fixture_root).unwrap();
     let destination = tempfile::Builder::new()
         .prefix("update-cross-drive-")
-        .tempdir_in(project.join(".tools"))
+        .tempdir_in(&fixture_root)
         .unwrap();
     let f = Fixture::with_library_root(Some(&destination.path().join("library")));
-    assert_ne!(volume(&f.root).unwrap(), volume(&f.source).unwrap());
+    if volume(&f.root).unwrap() == volume(&f.source).unwrap() {
+        eprintln!(
+            "Cross-volume fixture needs the project and temporary directory on different volumes"
+        );
+        return;
+    }
     let id = f.plan(true, true);
     let plan = f.store.get(&id).unwrap();
     assert!(plan.items[0].cross_volume);

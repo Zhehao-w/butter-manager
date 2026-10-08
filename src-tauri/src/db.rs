@@ -1137,7 +1137,8 @@ mod tests {
     #[test]
     fn relocation_preserves_identity_manual_metadata_history_and_rebases_only_internal_saves() {
         let temp = tempfile::tempdir().unwrap();
-        let old = temp.path().join("旧游戏 v1.2");
+        let base = dunce::canonicalize(temp.path()).unwrap();
+        let old = base.join("旧游戏 v1.2");
         std::fs::create_dir(&old).unwrap();
         std::fs::write(old.join("Game.exe"), b"game fixture").unwrap();
         std::fs::write(old.join("save.dat"), b"save fixture").unwrap();
@@ -1160,7 +1161,7 @@ mod tests {
         db.record_launch(&id).unwrap();
         let before = db.game(&id).unwrap();
         let history = db.launch_history(&id).unwrap();
-        let new = temp.path().join("新目录 & 测试");
+        let new = base.join("新目录 & 测试");
         // Simulate a user moving the folder before opening the manager's preview.
         std::fs::rename(&old, &new).unwrap();
         assert_eq!(
@@ -1257,7 +1258,10 @@ mod tests {
         db.edit_game(edit).unwrap();
         db.record_launch(&ids[0]).unwrap();
         let mut settings = db.settings().unwrap();
-        settings.game_root = temp.path().display().to_string();
+        settings.game_root = dunce::canonicalize(temp.path())
+            .unwrap()
+            .display()
+            .to_string();
         db.save_settings(settings.clone()).unwrap();
         db.remove_game(&ids[0]).unwrap();
         assert!(db.game(&ids[0]).is_err());

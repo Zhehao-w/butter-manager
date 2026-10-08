@@ -1,0 +1,39 @@
+name: 问题反馈
+description: 报告可复现的界面、启动、扫描或导入问题
+title: '[Bug] '
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请勿上传真实数据库、存档或游戏文件。截图和日志中的个人路径、游戏名称及其他隐私信息请先遮盖。
+  - type: input
+    id: version
+    attributes:
+      label: 管理器版本
+      placeholder: '例如 0.3.0'
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Windows 版本及运行方式
+      placeholder: '例如 Windows 11 / 本地构建 exe'
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 如涉及导入或更新，请注明同盘或跨盘、存档选项和停留阶段。
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: 预期结果与实际结果
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: 脱敏后的截图或错误信息

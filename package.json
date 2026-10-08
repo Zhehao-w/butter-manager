@@ -1,0 +1,41 @@
+{
+  "name": "butter-manager",
+  "version": "0.3.0",
+  "private": true,
+  "license": "MIT",
+  "author": "Zhehao-w",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Zhehao-w/butter-manager.git"
+  },
+  "type": "module",
+  "packageManager": "pnpm@11.25.0",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc --noEmit && vite build",
+    "tauri": "tauri",
+    "test": "cargo test --manifest-path src-tauri/Cargo.toml --no-default-features",
+    "check": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings",
+    "test:ui": "vitest run",
+    "format": "prettier --write src vite.config.ts vitest.config.ts",
+    "format:check": "prettier --check src vite.config.ts vitest.config.ts"
+  },
+  "dependencies": {
+    "@tanstack/react-virtual": "^3.14.13",
+    "@tauri-apps/api": "^2.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0",
+    "@testing-library/react": "^16.3.3",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "jsdom": "^30.1.2",
+    "prettier": "^3.9.9",
+    "typescript": "^5.9.0",
+    "vite": "^7.0.0",
+    "vitest": "^5.0.3"
+  }
+}

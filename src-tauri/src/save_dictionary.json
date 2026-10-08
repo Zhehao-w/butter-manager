@@ -1,0 +1,63 @@
+{
+  "common_directories": [
+    "save",
+    "saves",
+    "savedata",
+    "save_data",
+    "savegame",
+    "savegames",
+    "savedgames"
+  ],
+  "engines": [
+    {
+      "engine": "RPG Maker MV",
+      "extensions": ["rpgsave"],
+      "source": "https://github.com/rpgtkoolmv/corescript/blob/master/js/rpg_managers/StorageManager.js"
+    },
+    {
+      "engine": "RPG Maker MZ",
+      "extensions": ["rmmzsave"],
+      "source": "https://rpgmakerofficial.com/product/MZ_help-en/"
+    },
+    {
+      "engine": "RPG Maker (legacy)",
+      "extensions": ["rxdata", "rvdata", "rvdata2", "lsd"],
+      "slot_prefix": "save",
+      "source": "https://wiki.easyrpg.org/development/data-structure-reference/lcfsavedata"
+    },
+    {
+      "engine": "QSP",
+      "extensions": ["sav"],
+      "source": "https://dev.qsp.org/docs/language/qsp-keywords/qsp-keywords-statements/#savegame"
+    },
+    {
+      "engine": "Ren'Py",
+      "preferred_local": "game/saves",
+      "note": "Existing local game/saves is authoritative; do not also associate the AppData copy.",
+      "external": "%APPDATA%/RenPy/{save_directory}",
+      "identity": "config.save_directory literal in game/options.rpy",
+      "source": "https://www.renpy.org/doc/html/config.html#var-config.save_directory"
+    },
+    {
+      "engine": "Godot",
+      "external": "%APPDATA%/Godot/app_userdata/{project_name}",
+      "custom_external": "%APPDATA%/{custom_user_dir_name}",
+      "identity": "project.godot application settings",
+      "source": "https://docs.godotengine.org/en/stable/tutorials/io/data_paths.html"
+    },
+    {
+      "engine": "Unity",
+      "external": "%USERPROFILE%/AppData/LocalLow/{company}/{product}",
+      "identity": "explicit company and product in bundled *_Data/app.info; generic names are excluded",
+      "source": "https://docs.unity.com/en-us/engine/6000.0/script-reference/unityengine/application/persistentdatapath"
+    },
+    {
+      "engine": "NW.js",
+      "external": "%LOCALAPPDATA%/{manifest_name}",
+      "identity": "package.json name",
+      "automatic_external": false,
+      "source": "https://docs.nwjs.io/References/App/#appdatapath",
+      "note": "App data includes browser caches; a profile is not automatically treated as a save folder."
+    }
+  ]
+}

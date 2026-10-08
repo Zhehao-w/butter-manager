@@ -1,0 +1,43 @@
+[package]
+name = "butter_manager"
+version = "0.3.0"
+edition = "2021"
+rust-version = "1.90"
+description = "Local Game Library & Launcher"
+license = "MIT"
+repository = "https://github.com/Zhehao-w/butter-manager"
+
+[lib]
+name = "butter_manager"
+crate-type = ["rlib"]
+
+[[bin]]
+name = "butter-manager"
+path = "src/main.rs"
+required-features = ["desktop"]
+
+[features]
+default = ["desktop"]
+desktop = ["dep:tauri", "dep:tauri-build", "dep:tauri-plugin-dialog"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [], optional = true }
+
+[dependencies]
+tauri = { version = "2", features = [], optional = true }
+tauri-plugin-dialog = { version = "2", optional = true }
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+unicode-normalization = "0.1"
+thiserror = "2"
+dunce = "1"
+
+[dev-dependencies]
+tempfile = "3"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62.2", features = ["Win32_System_Com", "Win32_UI_Shell", "Win32_Foundation"] }
+windows-core = "0.62.2"
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Threading", "Win32_System_Registry", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }

@@ -1,0 +1,36 @@
+node_modules/
+.pnpm-store/
+dist/
+src-tauri/target/
+src-tauri/gen/
+.tools/
+*.log
+*.db
+*.db-shm
+*.db-wal
+
+# Local configuration, credentials and runtime data
+.env
+.env.*
+!.env.example
+*.sqlite
+*.sqlite3
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite3-shm
+*.sqlite3-wal
+*.pem
+*.key
+*.p12
+*.pfx
+/data/
+/imports/
+
+# Native build outputs and machine-specific files
+*.exe
+*.pdb
+*.msi
+.vs/
+.DS_Store
+Thumbs.db
+Desktop.ini

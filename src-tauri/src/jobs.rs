@@ -482,6 +482,13 @@ pub fn run_path_check(job: &Arc<Job>, games: &[Game]) -> Result<()> {
     }
 }
 
+// Compare registered and discovered directories through the same filesystem identity.
+// Keep inaccessible/missing entries in the task; check_game reports their actual state.
+fn scan_path_key(path: &Path) -> Result<String> {
+    let absolute = dunce::canonicalize(path).or_else(|_| std::path::absolute(path))?;
+    paths::path_key(dunce::simplified(&absolute))
+}
+
 pub fn run_scan(job: &Arc<Job>, workers: usize, games: &[Game]) -> Result<()> {
     if ![1, 2, 4].contains(&workers) {
         return Err(Error::Validation(
@@ -490,13 +497,13 @@ pub fn run_scan(job: &Arc<Job>, workers: usize, games: &[Game]) -> Result<()> {
     }
     let registered = games
         .iter()
-        .map(|game| Ok((paths::path_key(Path::new(&game.install_path))?, game)))
+        .map(|game| Ok((scan_path_key(Path::new(&game.install_path))?, game)))
         .collect::<Result<HashMap<_, _>>>()?;
     job.stage("发现目录", 0);
     let (directories, warnings) =
         scanner::discover_root(Path::new(&job.root), &|| job.stop(), &mut |path| {
             if let Ok(mut candidate) = scanner::pending_candidate(path) {
-                candidate.registered_id = paths::path_key(path)
+                candidate.registered_id = scan_path_key(path)
                     .ok()
                     .and_then(|key| registered.get(&key).map(|game| game.id.clone()));
                 job.publish(candidate);
@@ -507,7 +514,7 @@ pub fn run_scan(job: &Arc<Job>, workers: usize, games: &[Game]) -> Result<()> {
     }
     let discovered = directories
         .iter()
-        .map(|path| paths::path_key(path))
+        .map(|path| scan_path_key(path))
         .collect::<Result<HashSet<_>>>()?;
     // Missing games and games outside Game Root must still be checked, without rescanning them.
     let remaining = registered
@@ -549,7 +556,7 @@ pub fn run_scan(job: &Arc<Job>, workers: usize, games: &[Game]) -> Result<()> {
                             value
                         }
                     };
-                    if let Some(game) = paths::path_key(path)
+                    if let Some(game) = scan_path_key(path)
                         .ok()
                         .and_then(|key| registered.get(&key))
                     {
@@ -764,6 +771,144 @@ mod tests {
         cancelled.finish(Err("cancelled".into()));
         assert_eq!(cancelled.page(0).status, "cancelled");
         assert_eq!(cancelled.page(0).path_checks.len(), 1);
+    }
+    #[cfg(windows)]
+    #[test]
+    fn scan_windows_path_forms_do_not_duplicate_registered_work() {
+        use std::os::windows::ffi::OsStrExt;
+        // Keep relative-path coverage independent of the runner's TEMP spelling, without
+        // changing process-wide current_dir or TEMP while other tests run.
+        let cwd = std::env::current_dir().unwrap();
+        let temp = tempfile::Builder::new()
+            .prefix("scan identity 中文 ")
+            .tempdir_in(&cwd)
+            .unwrap();
+        let base = dunce::canonicalize(temp.path()).unwrap();
+        let root = base.join("library");
+        std::fs::create_dir(&root).unwrap();
+        let mut games = Vec::new();
+        for name in [
+            "available",
+            "manual",
+            "unconfigured",
+            "new",
+            "outside",
+            "missing",
+        ] {
+            let path = if matches!(name, "outside" | "missing") {
+                base.join(name)
+            } else {
+                root.join(name)
+            };
+            if name != "missing" {
+                std::fs::create_dir(&path).unwrap();
+                std::fs::write(path.join("game.html"), b"fixture").unwrap();
+            }
+            if name != "new" {
+                let mut game = crate::maintenance::tests::fixture_game(&path);
+                game.id = name.into();
+                if name == "manual" {
+                    game.main_executable = Some("missing.exe".into());
+                } else if name == "unconfigured" {
+                    game.main_executable = None;
+                }
+                games.push(game);
+            }
+        }
+        // GitHub runners can use 8.3 TEMP ancestors; this also works when 8.3
+        // generation is disabled and Windows returns the original long spelling.
+        let input = base
+            .as_os_str()
+            .encode_wide()
+            .chain(Some(0))
+            .collect::<Vec<_>>();
+        let mut buffer = vec![0u16; 32768];
+        let length = unsafe {
+            windows_sys::Win32::Storage::FileSystem::GetShortPathNameW(
+                input.as_ptr(),
+                buffer.as_mut_ptr(),
+                buffer.len() as u32,
+            )
+        } as usize;
+        assert!(length > 0 && length < buffer.len());
+        let short_base = std::path::PathBuf::from(String::from_utf16(&buffer[..length]).unwrap());
+        for form in [
+            "verbatim",
+            "slashes",
+            "relative",
+            "dots",
+            "uppercase",
+            "short",
+            "plain",
+        ] {
+            let represent = |path: &Path| match form {
+                "verbatim" => format!(r"\\?\{}", path.display()),
+                "slashes" => path.display().to_string().replace('\\', "/"),
+                "relative" => path.strip_prefix(&cwd).unwrap().display().to_string(),
+                "dots" => path
+                    .parent()
+                    .unwrap()
+                    .join(".")
+                    .join(path.file_name().unwrap())
+                    .join("..")
+                    .join(path.file_name().unwrap())
+                    .display()
+                    .to_string(),
+                "uppercase" => path.display().to_string().to_uppercase(),
+                "short" => short_base
+                    .join(path.strip_prefix(&base).unwrap())
+                    .display()
+                    .to_string(),
+                _ => path.display().to_string(),
+            };
+            let mut represented = games.clone();
+            for game in &mut represented {
+                game.install_path = represent(Path::new(&game.install_path));
+            }
+            let before = represented.clone();
+            for workers in [1, 2, 4] {
+                let job = TaskManager::default()
+                    .begin("scan", represent(&root))
+                    .unwrap();
+                run_scan(&job, workers, &represented).unwrap();
+                job.finish(Ok(vec![]));
+                let page = job.page(0);
+                assert_eq!((page.total, page.processed), (6, 6), "{form}/{workers}");
+                assert_eq!(job.candidates().len(), 4, "{form}/{workers}");
+                assert_eq!(page.path_checks.len(), 5, "{form}/{workers}");
+                for (id, expected) in [
+                    ("available", "available"),
+                    ("manual", "missing_launch"),
+                    ("unconfigured", "unconfigured"),
+                    ("missing", "missing_directory"),
+                    ("outside", "available"),
+                ] {
+                    let checks = page
+                        .path_checks
+                        .iter()
+                        .filter(|check| check.id == id)
+                        .collect::<Vec<_>>();
+                    assert_eq!(checks.len(), 1, "{form}/{workers}/{id}");
+                    assert_eq!(checks[0].state, expected, "{form}/{workers}/{id}");
+                }
+                let candidates = job.candidates();
+                for name in ["available", "manual", "unconfigured", "new"] {
+                    let candidate = candidates
+                        .iter()
+                        .find(|candidate| candidate.suggested_title == name)
+                        .unwrap();
+                    assert_eq!(
+                        candidate.registered_id.as_deref(),
+                        (name != "new").then_some(name),
+                        "{form}/{workers}/{name}"
+                    );
+                }
+            }
+            assert_eq!(
+                serde_json::to_value(&represented).unwrap(),
+                serde_json::to_value(&before).unwrap()
+            );
+        }
     }
     #[test]
     fn record_maintenance_updates_retained_scan_registration_without_losing_overrides_or_results() {

@@ -123,6 +123,59 @@ beforeEach(() => {
 });
 describe('batch import flow', () => {
   it.each([
+    [['completed', 'copying'], 1, 1],
+    [['completed', 'withdrawn', 'rolled_back', 'pending', 'update_copy', 'rollback_restore'], 3, 2],
+    [['completed', 'withdrawn', 'rolled_back'], 0, 2],
+  ] as const)(
+    'counts only actionable items in a partially finished plan: %j',
+    async (states, pending, records) => {
+      vi.mocked(api.importPlans).mockResolvedValue([
+        {
+          ...plan,
+          status: 'failed',
+          items: states.map((state, index) => ({
+            ...plan.items[0],
+            selection: { ...plan.items[0].selection, source: `D:/Incoming/Game${index}` },
+            target: `E:/Library/Game${index}`,
+            state,
+            error:
+              state === 'copying' || state === 'rollback_restore' ? '写入失败，等待恢复' : null,
+          })),
+        },
+        {
+          ...plan,
+          id: 'finished',
+          status: 'completed',
+          items: [{ ...plan.items[0], state: 'completed' }],
+        },
+        {
+          ...plan,
+          id: 'withdrawn',
+          status: 'withdrawn',
+          items: [{ ...plan.items[0], state: 'withdrawn' }],
+        },
+      ]);
+      render(<ImportPage {...props()} />);
+      await waitFor(() =>
+        expect(screen.getByRole('tab', { name: /导入记录/ }).textContent).toBe(
+          `导入记录 (${records + 1})`,
+        ),
+      );
+      expect(screen.getByRole('tab', { name: /待确认/ }).textContent).toBe(
+        pending ? `待确认 (${pending})` : '待确认',
+      );
+      fireEvent.click(screen.getByRole('tab', { name: /待确认/ }));
+      if (pending > 0) {
+        expect(screen.getByRole('button', { name: '继续未完成项' })).toBeTruthy();
+        if (!states.some((state) => state.startsWith('rollback_'))) {
+          expect(screen.getByRole('button', { name: '撤回未完成项' })).toBeTruthy();
+        }
+      }
+      expect(api.importApply).not.toHaveBeenCalled();
+      expect(api.discardImportPlan).not.toHaveBeenCalled();
+    },
+  );
+  it.each([
     [
       '妹系罗盘～在无人岛的悠闲慢活～シスターズコンパス～妹たちと無人島でラブラブスローライフ',
       '姊妹指南针～与姊妹们在无人岛上的甜蜜慢生活～シスターズコンパス～ AI汉化 Ver1.02',

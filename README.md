@@ -2,7 +2,7 @@
 
 Save Editor Lite v0.1 已接入游戏详情的存档位置，支持标准 RPG Maker MV/MZ 和 Ren’Py 简单字段编辑，以及标准 Ren’Py 存档重新签名。外来、无签名或原签名无效的存档可使用目标游戏的本机密钥重签；运行中的游戏可编辑，保存后重新读档。具体范围、签名限制和真实游戏验收见 [存档编辑器说明](docs/save-editor-lite.md)。
 
-Windows 本地轻量游戏库与启动器，基于 Tauri / Rust / React / SQLite。当前版本 **0.3.0**，采用 [MIT 许可](LICENSE)。当前流程以本文和 [v0.3 实施说明](docs/v0.3-implementation.md) 为准。
+Windows 本地轻量游戏库与启动器，基于 Tauri / Rust / React / SQLite。当前版本 **0.3.1**，采用 [MIT 许可](LICENSE)。当前流程以本文和 [v0.3 实施说明](docs/v0.3-implementation.md) 为准。
 
 Lightweight Windows game library manager with local importing, version tracking, save management, and MTool/QSP launcher support.
 

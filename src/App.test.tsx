@@ -524,7 +524,7 @@ describe('iteration interactions', () => {
     ).toBeNull();
     const sidebar = screen.getByRole('complementary');
     expect(within(sidebar).getByText('by Zhehao-w')).toBeTruthy();
-    expect(within(sidebar).getByText('v0.3.0').className).toBe('sidebar-version');
+    expect(within(sidebar).getByText('v0.3.1').className).toBe('sidebar-version');
     expect(sidebar.querySelectorAll('img')).toHaveLength(2);
     expect(screen.queryByRole('button', { name: '关于' })).toBeNull();
     expect(screen.queryByRole('region', { name: '关于页面' })).toBeNull();

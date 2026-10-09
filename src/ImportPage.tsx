@@ -451,7 +451,13 @@ export function ImportPage({
     ? virtualizer.getVirtualItems().map((v) => ({ index: v.index, start: v.start, size: v.size }))
     : Array.from({ length: count }, (_, index) => ({ index, start: 0, size: 0 }));
   const pendingPlans = plans.filter((p) => !['completed', 'withdrawn'].includes(p.status));
-  const pendingCount = pendingPlans.reduce((count, plan) => count + plan.items.length, 0);
+  const pendingCount = pendingPlans.reduce(
+    (count, plan) =>
+      count +
+      plan.items.filter((item) => !['completed', 'withdrawn', 'rolled_back'].includes(item.state))
+        .length,
+    0,
+  );
   const recordCount = plans.reduce(
     (count, plan) => count + plan.items.filter(isImportRecord).length,
     0,

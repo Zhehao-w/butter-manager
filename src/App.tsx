@@ -742,7 +742,7 @@ export default function App() {
             <Icon name="settings" />
             设置
             <span className="sidebar-version" aria-hidden="true">
-              v0.3.0
+              v0.3.1
             </span>
           </button>
         </div>
@@ -2137,7 +2137,7 @@ function SettingsPage({
                 <p>by Zhehao-w</p>
               </div>
             </div>
-            <span className="mode">v0.3.0</span>
+            <span className="mode">v0.3.1</span>
           </div>
           <p>本地游戏库 · 整理游戏、批量导入、保留存档更新与快捷启动。</p>
           <BrowseButton disabled={busy} onClick={() => void toolAction(api.openDataDirectory)}>

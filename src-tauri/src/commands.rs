@@ -1,7 +1,7 @@
 use crate::db::Database;
 use crate::domain::{
-    Error, Game, GameEdit, MToolLaunchPreview, RegistrationSelection, RelocateGame, ResetReport,
-    Settings, ToolCheck,
+    Error, Game, GameEdit, LaunchConfiguration, MToolLaunchPreview, RegistrationSelection,
+    RelocateGame, ResetReport, Settings, ToolCheck,
 };
 use crate::importer::{self, ImportStore, PlanView, Selection};
 use crate::jobs::{JobPage, TaskManager};
@@ -12,6 +12,7 @@ use tauri::{Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
 struct AppState {
+    appearance: Mutex<crate::appearance::Appearance>,
     db: Arc<Mutex<Database>>,
     tasks: Arc<TaskManager>,
     activity: Arc<Mutex<usize>>,
@@ -23,6 +24,29 @@ struct AppState {
     running: Arc<crate::runtime::RunningGames>,
 }
 type CommandResult<T> = std::result::Result<T, String>;
+#[tauri::command]
+fn get_appearance(state: State<'_, AppState>) -> CommandResult<crate::appearance::Appearance> {
+    let _guard = state.appearance.lock().map_err(|_| "外观设置锁不可用")?;
+    crate::appearance::load(&state.data).map_err(|e| format!("无法读取外观设置：{e}"))
+}
+#[tauri::command]
+fn save_appearance(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    appearance: crate::appearance::Appearance,
+) -> CommandResult<crate::appearance::Appearance> {
+    let mut current = state.appearance.lock().map_err(|_| "外观设置锁不可用")?;
+    let window = app.get_webview_window("main").ok_or("应用窗口不可用")?;
+    window
+        .set_icon(crate::appearance::icon(appearance.icon))
+        .map_err(|e| e.to_string())?;
+    if let Err(error) = crate::appearance::save(&state.data, appearance) {
+        let _ = window.set_icon(crate::appearance::icon(current.icon));
+        return Err(format!("无法保存外观设置：{error}"));
+    }
+    *current = appearance;
+    Ok(appearance)
+}
 fn with_db<T>(
     state: &AppState,
     action: impl FnOnce(&mut Database) -> crate::domain::Result<T>,
@@ -831,7 +855,11 @@ impl Drop for LaunchPermit {
     }
 }
 #[tauri::command]
-async fn play_game(state: State<'_, AppState>, id: String) -> CommandResult<Game> {
+async fn play_game(
+    state: State<'_, AppState>,
+    id: String,
+    configuration: Option<LaunchConfiguration>,
+) -> CommandResult<Game> {
     let (game, settings, permit) = {
         let mut count = state.activity.lock().map_err(|_| "操作锁不可用")?;
         let pair = with_db(&state, |db| Ok((db.game(&id)?, db.settings()?)))?;
@@ -845,6 +873,10 @@ async fn play_game(state: State<'_, AppState>, id: String) -> CommandResult<Game
     let running = state.running.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let _permit = permit;
+        let game = match configuration {
+            Some(config) => launcher::with_configuration(game, config),
+            None => game,
+        };
         launcher::launch_with_runtime(&game, &settings, &running, || {
             let mut database = db
                 .lock()
@@ -1075,7 +1107,15 @@ pub fn run() {
             }
             let data = app.path().app_local_data_dir()?;
             std::fs::create_dir_all(&data)?;
+            let appearance = crate::appearance::load(&data).unwrap_or_else(|error| {
+                eprintln!("Unable to load appearance settings: {error}");
+                crate::appearance::Appearance::default()
+            });
+            if let Some(window) = app.get_webview_window("main") {
+                window.set_icon(crate::appearance::icon(appearance.icon))?;
+            }
             app.manage(AppState {
+                appearance: Mutex::new(appearance),
                 db: Arc::new(Mutex::new(Database::open(&data.join("library.sqlite3"))?)),
                 tasks: Arc::new(TaskManager::default()),
                 activity: Arc::new(Mutex::new(0)),
@@ -1101,6 +1141,8 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            get_appearance,
+            save_appearance,
             list_games,
             choose_import_sources,
             discover_import_sources,

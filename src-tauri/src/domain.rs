@@ -110,6 +110,16 @@ pub struct Game {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LaunchConfiguration {
+    pub main_executable: Option<String>,
+    pub working_directory: String,
+    pub launch_type: String,
+    pub external_player: Option<ExternalPlayer>,
+    pub mtool_target_exe: Option<String>,
+    pub mtool_loader: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GameEdit {
     pub id: String,
     pub canonical_title: String,

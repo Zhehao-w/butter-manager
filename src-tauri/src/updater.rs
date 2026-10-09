@@ -59,6 +59,9 @@ pub struct UpdateData {
     /// Older journals retain their original recovery checks. New plans move whole folders.
     #[serde(default)]
     pub(super) lightweight: bool,
+    /// Keep the original configuration calculation for journals created before this fix.
+    #[serde(default)]
+    inherit_launch_config: bool,
     #[serde(default)]
     incoming_saves: Vec<SaveSnapshot>,
     #[serde(default)]
@@ -649,7 +652,10 @@ fn verify_updated_payload(payload: &Path, package: &Path, item: &Item, job: &Job
     }
     Ok(())
 }
-pub(super) fn configuration(selection: &Selection) -> Result<VersionConfig> {
+fn selection_configuration(
+    selection: &Selection,
+    previous: Option<&VersionConfig>,
+) -> Result<VersionConfig> {
     Ok(VersionConfig {
         version: selection.version.clone(),
         version_source: "manual".into(),
@@ -657,10 +663,13 @@ pub(super) fn configuration(selection: &Selection) -> Result<VersionConfig> {
         engine_source: "manual".into(),
         launch_source: "manual".into(),
         executable: (!selection.executable.is_empty()).then(|| selection.executable.clone()),
-        working_directory: if selection.external_player.is_some() || selection.mtool {
-            ".".into()
-        } else {
-            paths::executable_directory(Some(&selection.executable))?
+        working_directory: match previous {
+            Some(old) => selection
+                .working_directory
+                .clone()
+                .unwrap_or_else(|| old.working_directory.clone()),
+            None if selection.external_player.is_some() || selection.mtool => ".".into(),
+            None => paths::executable_directory(Some(&selection.executable))?,
         },
         launch_type: if selection.external_player.is_some() {
             "EXTERNAL_PLAYER"
@@ -672,8 +681,55 @@ pub(super) fn configuration(selection: &Selection) -> Result<VersionConfig> {
         .into(),
         external_player: selection.external_player.clone(),
         mtool_target: selection.mtool.then(|| selection.executable.clone()),
-        mtool_loader: None,
+        mtool_loader: previous.and_then(|old| match &selection.mtool_loader {
+            Some(value) => (!value.is_empty()).then(|| value.clone()),
+            None => old.mtool_loader.clone(),
+        }),
     })
+}
+pub(super) fn configuration(item: &Item) -> Result<VersionConfig> {
+    selection_configuration(
+        &item.selection,
+        item.update
+            .as_ref()
+            .filter(|update| update.inherit_launch_config)
+            .map(|update| &update.old),
+    )
+}
+
+fn validate_update_launch(
+    target: &Path,
+    config: &VersionConfig,
+    settings: &Settings,
+) -> Result<()> {
+    validate_launch(target, config).map_err(|error| {
+        invalid(format!(
+            "新版启动文件或工作目录不适用，请在更新启动配置中重新配置：{error}"
+        ))
+    })?;
+    if config.launch_type == "MTOOL" {
+        if let Some(loader) = &config.mtool_loader {
+            let loader_file = paths::contained_file(Path::new(&settings.mtool_root), loader, "dll")
+                .map_err(|error| {
+                    invalid(format!(
+                        "MTool loader 不适用，请在更新启动配置中重新选择：{error}"
+                    ))
+                })?;
+            let executable =
+                paths::contained_file(target, config.executable.as_deref().unwrap_or(""), "exe")?;
+            let executable_arch = scanner::architecture(&executable);
+            let loader_arch = scanner::architecture(&loader_file);
+            if executable_arch != "Unknown"
+                && loader_arch != "Unknown"
+                && executable_arch != loader_arch
+            {
+                return Err(invalid(
+                    "新版 EXE 与 MTool loader 位数不同，请重新选择 loader",
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 fn validate_launch(target: &Path, config: &VersionConfig) -> Result<()> {
     if let Some(player) = &config.external_player {
@@ -999,8 +1055,11 @@ impl ImportStore {
                         {
                             return Err(invalid("清理清单不能是链接"));
                         }
-                        serde_json::from_reader(File::open(&manifest)?)
-                            .map_err(|e| invalid(e.to_string()))?
+                        serde_json::from_reader(BufReader::with_capacity(
+                            64 * 1024,
+                            File::open(&manifest)?,
+                        ))
+                        .map_err(|e| invalid(e.to_string()))?
                     } else {
                         let entries = self.owned_cleanup_entries(plan, index, job)?;
                         let mut file = File::create(&manifest)?;
@@ -1143,6 +1202,12 @@ impl ImportStore {
         if !selection.saves_confirmed {
             return Err(invalid("请确认已有游戏的存档范围和迁移方式"));
         }
+        let old = crate::db::config_from_game(game);
+        validate_update_launch(
+            Path::new(&selection.source),
+            &selection_configuration(selection, Some(&old))?,
+            settings,
+        )?;
         let (bytes, quarantine) = storage;
         let root = checked_dir(Path::new(&settings.game_root))?;
         let target = checked_dir(Path::new(&game.install_path))?;
@@ -1187,7 +1252,6 @@ impl ImportStore {
                 return Err(invalid("来源目录与已有存档范围重叠，不能更新或清理来源"));
             }
         }
-        let old = crate::db::config_from_game(game);
         let save_bytes: u64 = saves
             .iter()
             .filter(|s| selection.preserve_saves && s.present)
@@ -1216,6 +1280,7 @@ impl ImportStore {
             rollback_started: false,
             cleanup_ready: false,
             lightweight: true,
+            inherit_launch_config: true,
             incoming_saves,
             rollback_originals: vec![],
         })
@@ -1262,6 +1327,13 @@ impl ImportStore {
                 return Err(invalid("已有游戏配置已改变，请重新生成计划"));
             }
             *expected = actual;
+            // A pending journal has not changed files or committed its new configuration yet.
+            // It can safely adopt inheritance; in-flight/completed legacy journals cannot.
+            plan.items[index]
+                .update
+                .as_mut()
+                .unwrap()
+                .inherit_launch_config = true;
             if plan.items[index].update.as_ref().unwrap().lightweight {
                 let originals = local_originals(
                     Path::new(&plan.items[index].selection.source),
@@ -1341,6 +1413,7 @@ impl ImportStore {
             job,
         )?;
         if item.state == "pending" {
+            validate_update_launch(source, &configuration(&item)?, &plan.settings)?;
             if !update.lightweight {
                 unchanged(source, &item.manifest, job)?;
             }
@@ -1413,7 +1486,7 @@ impl ImportStore {
                 copy_tree(&package, &payload, &item.manifest, job)?;
                 verify_copy(&package, &payload, &item.manifest, job)?;
             }
-            validate_launch(&payload, &configuration(&item.selection)?)?;
+            validate_update_launch(&payload, &configuration(&item)?, &plan.settings)?;
             plan.items[index].payload_id = Some(identity(&payload)?);
             plan.items[index].update.as_mut().unwrap().ready_digest =
                 version_digest(&payload, plan.items[index].update.as_ref().unwrap(), job)?;
@@ -1491,7 +1564,7 @@ impl ImportStore {
                     job,
                 )?;
             }
-            validate_launch(target, &configuration(&item.selection)?)?;
+            validate_update_launch(target, &configuration(&item)?, &plan.settings)?;
             plan.items[index].update.as_mut().unwrap().ready_digest =
                 version_digest(target, update, job)?;
             self.checkpoint(plan, index, "update_commit")?;
@@ -1528,12 +1601,12 @@ impl ImportStore {
                 &[target.to_path_buf(), previous.clone()],
                 update.lightweight,
             )?;
-            validate_launch(target, &configuration(&item.selection)?)?;
+            validate_update_launch(target, &configuration(&item)?, &plan.settings)?;
             database.lock().unwrap().commit_version(
                 &item.game_id,
                 &operation,
                 &update.old,
-                &configuration(&item.selection)?,
+                &configuration(&item)?,
             )?;
             plan.items[index].registered_id = Some(item.game_id.clone());
             self.checkpoint(plan, index, "update_cleanup")?;
@@ -1734,9 +1807,7 @@ impl ImportStore {
             .lock()
             .unwrap()
             .ensure_latest_version(&item.game_id, &format!("{}:{index}", plan.id))?;
-        if database.lock().unwrap().version_config(&item.game_id)?
-            != configuration(&item.selection)?
-        {
+        if database.lock().unwrap().version_config(&item.game_id)? != configuration(item)? {
             return Err(invalid("当前启动配置变化，请先恢复更新后的配置再回退"));
         }
         if paths::path_key(Path::new(&game.install_path))?
@@ -1988,7 +2059,7 @@ impl ImportStore {
             database.lock().unwrap().rollback_version(
                 &item.game_id,
                 &operation,
-                &configuration(&item.selection)?,
+                &configuration(&item)?,
                 &update.old,
             )?;
             plan.items[index]

@@ -1,7 +1,18 @@
-use crate::domain::{Error, Game, MToolLaunchPreview, Result, Settings};
+use crate::domain::{Error, Game, LaunchConfiguration, MToolLaunchPreview, Result, Settings};
 use crate::paths::contained_file;
 use std::path::Path;
 use std::process::Command;
+
+/// A one-time launch keeps the library identity and directory; it never saves the draft.
+pub fn with_configuration(mut game: Game, config: LaunchConfiguration) -> Game {
+    game.main_executable = config.main_executable;
+    game.working_directory = config.working_directory;
+    game.launch_type = config.launch_type;
+    game.external_player = config.external_player;
+    game.mtool_target_exe = config.mtool_target_exe;
+    game.mtool_loader = config.mtool_loader;
+    game
+}
 
 pub fn direct_file(game: &Game) -> Result<std::path::PathBuf> {
     let executable = game
@@ -261,6 +272,123 @@ mod tests {
     use super::*;
     use crate::{db::Database, scanner::analyze_directory};
     #[test]
+    fn one_time_configuration_uses_draft_paths_but_records_only_the_saved_game() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = dunce::canonicalize(temp.path()).unwrap();
+        let game_root = root.join("game");
+        let tools = root.join("shared");
+        std::fs::create_dir_all(game_root.join("新版")).unwrap();
+        std::fs::create_dir_all(tools.join("loaders")).unwrap();
+        for file in [
+            game_root.join("old.exe"),
+            game_root.join("新版/new.exe"),
+            game_root.join("新版/player.exe"),
+            game_root.join("新版/story.qsp"),
+            tools.join("loaders/inject.exe"),
+            tools.join("loaders/custom.dll"),
+            tools.join("MTool.exe"),
+        ] {
+            std::fs::write(file, b"fixture-not-executed").unwrap();
+        }
+        let mut db = Database::open(&root.join("test.db")).unwrap();
+        let id = db
+            .register(&[analyze_directory(&game_root).unwrap()])
+            .unwrap()
+            .remove(0);
+        let saved = db.game(&id).unwrap();
+        let settings = Settings {
+            mtool_root: tools.display().to_string(),
+            mtool_injector: "loaders/inject.exe".into(),
+            mtool_runtime: "MTool.exe".into(),
+            ..Settings::default()
+        };
+        for mode in ["DIRECT", "MTOOL", "EXTERNAL_PLAYER"] {
+            let draft = with_configuration(
+                saved.clone(),
+                LaunchConfiguration {
+                    launch_type: mode.into(),
+                    main_executable: Some(
+                        if mode == "EXTERNAL_PLAYER" {
+                            "新版/player.exe"
+                        } else {
+                            "新版/new.exe"
+                        }
+                        .into(),
+                    ),
+                    working_directory: "新版".into(),
+                    mtool_target_exe: Some("新版/new.exe".into()),
+                    mtool_loader: Some("loaders/custom.dll".into()),
+                    external_player: Some(crate::domain::ExternalPlayer {
+                        player_type: "QSP".into(),
+                        scope: "GAME_LOCAL".into(),
+                        game_file: Some("新版/story.qsp".into()),
+                    }),
+                },
+            );
+            assert_eq!(draft.id, saved.id);
+            assert_eq!(draft.install_path, saved.install_path);
+            assert_eq!(draft.display_title, saved.display_title);
+            assert_eq!(draft.aliases, saved.aliases);
+            assert_eq!(draft.save_paths, saved.save_paths);
+            match mode {
+                "DIRECT" => {
+                    assert_eq!(direct_file(&draft).unwrap(), game_root.join("新版/new.exe"));
+                    assert_eq!(
+                        crate::paths::working_directory(&game_root, &draft.working_directory)
+                            .unwrap(),
+                        game_root.join("新版")
+                    );
+                }
+                "MTOOL" => {
+                    let (injector, _) = mtool_commands(&draft, &settings).unwrap();
+                    assert_eq!(
+                        injector.get_args().collect::<Vec<_>>(),
+                        vec![
+                            game_root.join("新版").join("new.exe").as_os_str(),
+                            tools.join("loaders").join("custom.dll").as_os_str()
+                        ]
+                    );
+                    assert_eq!(
+                        injector.get_current_dir(),
+                        Some(game_root.join("新版").as_path())
+                    );
+                    let mut invalid = draft.clone();
+                    invalid.mtool_loader = Some("../escape.dll".into());
+                    assert!(mtool_commands(&invalid, &settings).is_err());
+                }
+                _ => {
+                    let command = crate::external_player::command(&draft).unwrap();
+                    assert_eq!(
+                        command.get_program(),
+                        game_root.join("新版").join("player.exe").as_os_str()
+                    );
+                    assert_eq!(
+                        command.get_args().collect::<Vec<_>>(),
+                        vec![game_root.join("新版").join("story.qsp").as_os_str()]
+                    );
+                    assert_eq!(
+                        command.get_current_dir(),
+                        Some(game_root.join("新版").as_path())
+                    );
+                }
+            }
+            let mut invalid = draft.clone();
+            invalid.main_executable = Some("../escape.exe".into());
+            assert!(direct_file(&invalid).is_err());
+            assert!(crate::paths::working_directory(&game_root, "../shared").is_err());
+            // The same history callback used after a successful launch returns persisted config.
+            let recorded = db.record_launch(&draft.id).unwrap();
+            assert_eq!(recorded.main_executable, saved.main_executable);
+            assert_eq!(recorded.working_directory, saved.working_directory);
+            assert_eq!(recorded.launch_type, saved.launch_type);
+            assert_eq!(recorded.external_player, saved.external_player);
+            assert_eq!(recorded.mtool_target_exe, saved.mtool_target_exe);
+            assert_eq!(recorded.mtool_loader, saved.mtool_loader);
+            assert!(recorded.last_launched_at.is_some());
+        }
+        assert_eq!(db.launch_history(&id).unwrap().len(), 3);
+    }
+    #[test]
     fn save_browsing_resolves_game_relative_unicode_directories_and_files() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("ゲーム 中文 with spaces");
@@ -367,7 +495,17 @@ mod tests {
             .register(&[crate::scanner::analyze_directory(root.path()).unwrap()])
             .unwrap()
             .remove(0);
-        let game = db.game(&id).unwrap();
+        let game = with_configuration(
+            db.game(&id).unwrap(),
+            LaunchConfiguration {
+                launch_type: "DIRECT".into(),
+                main_executable: Some("missing.exe".into()),
+                working_directory: ".".into(),
+                external_player: None,
+                mtool_target_exe: None,
+                mtool_loader: None,
+            },
+        );
         assert!(launch_tracked(&game, &db.settings().unwrap(), || db.record_launch(&id)).is_err());
         assert!(db.game(&id).unwrap().last_launched_at.is_none());
         assert!(db.launch_history(&id).unwrap().is_empty());

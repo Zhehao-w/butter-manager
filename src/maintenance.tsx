@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from './api';
 import { QspConfiguration } from './QspConfiguration';
 import { localQsp } from './qsp';
-import { BrowseButton } from './ui';
+import { BrowseButton, Modal } from './ui';
 import { DeleteGameDialog } from './DeleteGameDialog';
 import { isAssociatedFile } from './library';
 import type { Game, DeleteReport, LibraryPathCheck, RelocateGame } from './types';
@@ -230,13 +230,13 @@ export function GameMaintenance({
     <section className="panel game-maintenance" aria-label="游戏记录维护">
       <h3>目录与库记录</h3>
       <p className="muted">游戏目录改名或移动后可以关联新目录，也可以仅移除这条库记录。</p>
-      {message && <p role="status">{message}</p>}
+      {message && !confirmRemove && <p role="status">{message}</p>}
       {locked && <p className="muted">请先保存或放弃资料编辑，并结束当前任务后再维护记录。</p>}
-      {!path && !confirmRemove && (
+      {!path && (
         <div className="header-actions">
           <BrowseButton
             type="button"
-            disabled={locked || busy}
+            disabled={locked || busy || confirmRemove || confirmDelete}
             onClick={() =>
               void run(async () => {
                 const selected = await api.chooseDirectory();
@@ -249,15 +249,18 @@ export function GameMaintenance({
           <button
             type="button"
             className="danger"
-            disabled={locked || busy}
-            onClick={() => setConfirmRemove(true)}
+            disabled={locked || busy || confirmRemove || confirmDelete}
+            onClick={() => {
+              setMessage('');
+              setConfirmRemove(true);
+            }}
           >
             从库中移除
           </button>
           <button
             type="button"
             className="danger danger-solid"
-            disabled={locked || busy}
+            disabled={locked || busy || confirmRemove || confirmDelete}
             onClick={() => setConfirmDelete(true)}
           >
             删除游戏文件（回收站）
@@ -290,23 +293,37 @@ export function GameMaintenance({
         />
       )}
       {confirmRemove && (
-        <div role="alert">
-          <p>
-            仅移除“{game.display_title}”的库记录、别名、存档路径记录和运行历史；游戏与存档文件保留。
-          </p>
-          <div className="footer-actions">
-            <button disabled={busy} onClick={() => setConfirmRemove(false)}>
-              取消移除
-            </button>
-            <button
-              className="danger"
-              disabled={busy || locked}
-              onClick={() => void run(onRemoved)}
-            >
-              确认移除记录
-            </button>
-          </div>
-        </div>
+        <Modal
+          title={`从库中移除：${game.display_title}`}
+          variant="confirm"
+          className="modal-maintenance"
+          showClose={false}
+          onClose={() => {
+            if (!busy) setConfirmRemove(false);
+          }}
+          footer={
+            <div className="confirmation-actions">
+              <button disabled={busy} onClick={() => setConfirmRemove(false)}>
+                取消移除
+              </button>
+              <button
+                className="danger danger-solid"
+                disabled={busy || locked}
+                onClick={() => void run(onRemoved)}
+              >
+                {busy ? '正在移除…' : '确认移除记录'}
+              </button>
+            </div>
+          }
+        >
+          <p>仅移除库记录、别名、存档路径记录和运行历史；游戏与存档文件保留。</p>
+          <p className="path delete-path">{game.install_path}</p>
+          {message && (
+            <p className="error" role="alert">
+              {message}
+            </p>
+          )}
+        </Modal>
       )}
     </section>
   );

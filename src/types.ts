@@ -56,6 +56,16 @@ export interface Game {
   save_paths: string[];
 }
 
+export type LaunchConfiguration = Pick<
+  Game,
+  | 'main_executable'
+  | 'working_directory'
+  | 'launch_type'
+  | 'external_player'
+  | 'mtool_target_exe'
+  | 'mtool_loader'
+>;
+
 export type GameEdit = Pick<
   Game,
   | 'id'
@@ -201,6 +211,9 @@ export interface RegistrationSelection {
 
 export interface ImportSelection {
   external_player?: ExternalPlayer | null;
+  working_directory?: string | null;
+  // Omitted/null inherits; an empty string explicitly selects automatic detection.
+  mtool_loader?: string | null;
   source: string;
   title: string;
   target_name: string;
@@ -279,4 +292,9 @@ export interface ImportPlan {
 export interface ImportRecoveryIssue {
   record: string;
   message: string;
+}
+export type AppearanceChoice = 'original' | 'new';
+export interface Appearance {
+  icon: AppearanceChoice;
+  illustration: AppearanceChoice;
 }

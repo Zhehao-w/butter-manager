@@ -21,13 +21,18 @@ export function DeleteGameDialog({
   const [plan, setPlan] = useState<DeletePlan | null>(null);
   const [report, setReport] = useState<DeleteReport | null>(null);
   const [loading, setLoading] = useState(true);
+  const [waiting, setWaiting] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   useEffect(() => {
     let stale = false;
     setPlan(null);
     setLoading(true);
+    setWaiting(false);
     setError('');
+    const timer = setTimeout(() => {
+      if (!stale) setWaiting(true);
+    }, 500);
     void api
       .previewDelete(game.id)
       .then((plan) => {
@@ -37,10 +42,12 @@ export function DeleteGameDialog({
         if (!stale) setError(String(e));
       })
       .finally(() => {
+        clearTimeout(timer);
         if (!stale) setLoading(false);
       });
     return () => {
       stale = true;
+      clearTimeout(timer);
     };
   }, [game.id]);
   const close = () => {
@@ -68,15 +75,39 @@ export function DeleteGameDialog({
     <Modal
       title={report ? '文件操作结果' : `移入回收站：${game.display_title}`}
       variant="confirm"
+      className="modal-maintenance"
       showClose={false}
       onClose={close}
+      footer={
+        <div className="confirmation-actions">
+          <button disabled={busy} onClick={close}>
+            {report ? '完成' : '取消'}
+          </button>
+          {!report && (
+            <button
+              className="danger danger-solid maintenance-confirm"
+              aria-busy={loading || busy}
+              title={loading ? '正在检查目录与存档范围' : undefined}
+              disabled={busy || loading || !plan || !!plan.blockers.length}
+              onClick={() => void apply()}
+            >
+              <span
+                className={`maintenance-spinner${waiting && loading ? ' active' : ''}`}
+                aria-hidden="true"
+              />
+              <span className="maintenance-confirm-label">
+                {busy ? '正在处理…' : '确认移入回收站'}
+              </span>
+            </button>
+          )}
+        </div>
+      }
     >
       {!report ? (
         <>
           <p>游戏目录和关联存档将一同移入回收站，完成后移除库记录。</p>
           <p className="path delete-path">{plan?.game_path ?? game.install_path}</p>
-          {loading && <p role="status">正在检查目录与存档范围…</p>}
-          {plan && (
+          {plan && plan.saves.length > 0 && (
             <ul className="delete-save-list">
               {plan.saves.map((save) => (
                 <li key={save.path}>
@@ -116,20 +147,6 @@ export function DeleteGameDialog({
           {error}
         </p>
       )}
-      <div className="confirmation-actions">
-        <button disabled={busy} onClick={close}>
-          {report ? '完成' : '取消'}
-        </button>
-        {!report && (
-          <button
-            className="danger danger-solid"
-            disabled={busy || loading || !plan || !!plan.blockers.length}
-            onClick={() => void apply()}
-          >
-            {busy ? '正在处理…' : '确认移入回收站'}
-          </button>
-        )}
-      </div>
     </Modal>
   );
 }

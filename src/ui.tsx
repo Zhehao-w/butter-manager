@@ -227,11 +227,15 @@ export function Modal({
   showClose = true,
   closeIconOnly = false,
   footer,
+  headerActions,
+  className = '',
 }: {
   variant?: 'detail' | 'confirm' | 'filters' | 'record';
   showClose?: boolean;
   closeIconOnly?: boolean;
   footer?: ReactNode;
+  headerActions?: ReactNode;
+  className?: string;
   title: string;
   onClose: () => void;
   children: ReactNode;
@@ -245,7 +249,7 @@ export function Modal({
   return (
     <dialog
       ref={ref}
-      className={`modal ${variant ? `modal-${variant}` : ''}`}
+      className={`modal ${variant ? `modal-${variant}` : ''} ${className}`}
       aria-label={title}
       onCancel={(event) => {
         event.preventDefault();
@@ -255,17 +259,20 @@ export function Modal({
     >
       <div className="modal-header">
         <h2>{title}</h2>
-        {showClose && (
-          <button
-            type="button"
-            className={closeIconOnly ? 'modal-close-icon' : undefined}
-            aria-label="关闭弹窗"
-            onClick={onClose}
-          >
-            <Icon name="close" size={16} />
-            {!closeIconOnly && '关闭'}
-          </button>
-        )}
+        <div className="modal-header-actions">
+          {headerActions}
+          {showClose && (
+            <button
+              type="button"
+              className={closeIconOnly ? 'modal-close-icon' : undefined}
+              aria-label="关闭弹窗"
+              onClick={onClose}
+            >
+              <Icon name="close" size={16} />
+              {!closeIconOnly && '关闭'}
+            </button>
+          )}
+        </div>
       </div>
       <div className="modal-scroll-shell">
         <div

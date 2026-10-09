@@ -13,3 +13,5 @@ Lucide 图标来源地址与 SHA-256 保存在 [sources.json](src/assets/lucide/
 应用图标原图与侧栏插画由 Zhehao-w 使用 GPT 生成；作者于 2026-10-08 确认允许随 GitHub 项目公开发布。应用图标透明 master 及尺寸转换记录见 [图标说明](src-tauri/icons/README.md)，侧栏插画见 [资源说明](src/assets/README.md)。不包含游戏资源、MTool 或 QSP 播放器程序。
 
 本文记录仓库直接打包的资源。Node.js 与 Rust 依赖各自保留其上游许可，可通过锁文件追溯对应版本。
+
+2026-10-08 外观切换功能新增用户提供的两张透明 PNG。它们与原版图片分别保留；提供者于同日要求将全部改动推送至 GitHub，包含这些资源。新版附件的生成方式未单独记录，见 [资源说明](src/assets/README.md)。

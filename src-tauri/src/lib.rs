@@ -1,3 +1,4 @@
+pub mod appearance;
 pub mod association;
 pub mod db;
 pub mod deletion;

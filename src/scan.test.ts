@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { scanResults } from './scan';
+import { directoryTime, scanResults } from './scan';
 import type { ScanCandidate } from './types';
 
 const candidate = (folder: string, modified: number | null, registered = false): ScanCandidate => ({
@@ -53,6 +53,10 @@ describe('scan result search and sorting', () => {
     const input = [candidate('Old', 0), candidate('No date', null), candidate('New', 100, true)];
     expect(names(scanResults(input, '', 'modified-asc'))).toEqual(['Old', 'New', 'No date']);
     expect(names(scanResults(input, '', 'modified-desc'))).toEqual(['New', 'Old', 'No date']);
+    expect(directoryTime(null)).toBe('-');
+    for (const ms of [0, 1700000000000, Date.UTC(2026, 9, 8, 4)]) {
+      expect(directoryTime(ms)).toBe(new Date(ms).toLocaleString('zh-CN', { hour12: false }));
+    }
   });
   it('normalizes Unicode/case and searches paths, engine and manually chosen file/version', () => {
     const game = candidate('游戏 ABC', 10);

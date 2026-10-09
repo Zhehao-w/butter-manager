@@ -86,14 +86,24 @@ impl Fixture {
         }
     }
     fn plan(&self, preserve: bool, confirmed: bool) -> String {
+        self.plan_with(preserve, confirmed, |_| {})
+    }
+    fn plan_with(
+        &self,
+        preserve: bool,
+        confirmed: bool,
+        configure: impl FnOnce(&mut Selection),
+    ) -> String {
         let candidate = scanner::analyze_directory(&self.source).unwrap();
-        let selection = Selection {
+        let mut selection = Selection {
             source: paths::path_text(&self.source).unwrap(),
             title: "incoming name".into(),
             target_name: "ignored incoming folder".into(),
             version: "v2".into(),
             engine: "RPG Maker MV".into(),
             executable: "游戏.html".into(),
+            working_directory: None,
+            mtool_loader: None,
             external_player: None,
             mtool: false,
             existing_id: Some(self.id.clone()),
@@ -101,6 +111,7 @@ impl Fixture {
             preserve_saves: preserve,
             saves_confirmed: confirmed,
         };
+        configure(&mut selection);
         let settings = self.db.lock().unwrap().settings().unwrap();
         let games = self.db.lock().unwrap().games().unwrap();
         let job = self
@@ -151,7 +162,12 @@ impl Fixture {
         let item = record["items"][0].as_object_mut().unwrap();
         item.remove("basic_transfer");
         let update = item["update"].as_object_mut().unwrap();
-        for field in ["lightweight", "incoming_saves", "rollback_originals"] {
+        for field in [
+            "lightweight",
+            "incoming_saves",
+            "rollback_originals",
+            "inherit_launch_config",
+        ] {
             update.remove(field);
         }
         update.insert(
@@ -172,6 +188,240 @@ impl Fixture {
         self.store = ImportStore::open(self.store.directory.clone()).unwrap();
         assert!(self.store.recovery_issues().is_empty());
     }
+}
+
+fn write_pe_fixture(path: &Path, machine: u16) {
+    let mut bytes = vec![0u8; 70];
+    bytes[..2].copy_from_slice(b"MZ");
+    bytes[60..64].copy_from_slice(&64u32.to_le_bytes());
+    bytes[64..68].copy_from_slice(b"PE\0\0");
+    bytes[68..70].copy_from_slice(&machine.to_le_bytes());
+    fs::write(path, bytes).unwrap();
+}
+
+fn manual_launch_fixture(mtool: bool) -> Fixture {
+    let f = Fixture::new();
+    for (root, executable) in [(&f.old(), "original"), (&f.source, "replacement")] {
+        fs::create_dir(root.join(executable)).unwrap();
+        fs::create_dir(root.join("manual-cwd")).unwrap();
+        fs::create_dir(root.join("override-cwd")).unwrap();
+        write_pe_fixture(&root.join(executable).join("Game.exe"), 0x8664);
+    }
+    let shared = f._temp.path().join("shared-tool");
+    fs::create_dir_all(shared.join("loaders")).unwrap();
+    for loader in ["custom.dll", "replacement.dll"] {
+        write_pe_fixture(&shared.join("loaders").join(loader), 0x8664);
+    }
+    let mut db = f.db.lock().unwrap();
+    let mut settings = db.settings().unwrap();
+    settings.mtool_root = paths::path_text(&shared).unwrap();
+    db.save_settings(settings).unwrap();
+    let game = db.game(&f.id).unwrap();
+    db.edit_game(GameEdit {
+        id: game.id,
+        canonical_title: game.canonical_title,
+        display_title: game.display_title,
+        current_version: game.current_version,
+        engine: game.engine,
+        play_status: game.play_status,
+        main_executable: Some("original/Game.exe".into()),
+        working_directory: "manual-cwd".into(),
+        launch_type: if mtool { "MTOOL" } else { "DIRECT" }.into(),
+        external_player: None,
+        mtool_target_exe: mtool.then(|| "original/Game.exe".into()),
+        mtool_loader: mtool.then(|| "loaders/custom.dll".into()),
+        aliases: game.aliases,
+        save_paths: game.save_paths,
+    })
+    .unwrap();
+    drop(db);
+    f
+}
+
+#[test]
+fn update_inherits_manual_launch_configuration_across_exe_changes_and_restart_then_rolls_back() {
+    for (mtool, legacy) in [(false, false), (true, false), (false, true), (true, true)] {
+        let mut f = manual_launch_fixture(mtool);
+        let before = f.db.lock().unwrap().version_config(&f.id).unwrap();
+        let id = f.plan_with(true, true, |selection| {
+            selection.executable = "replacement/Game.exe".into();
+            selection.mtool = mtool;
+        });
+        assert!(f.store.get(&id).unwrap().items[0].blockers.is_empty());
+        if legacy {
+            f.use_legacy_journal(&id);
+        }
+        f.store = ImportStore::open(f.store.directory.clone()).unwrap();
+        f.apply(&id).unwrap();
+        let updated = f.db.lock().unwrap().game(&f.id).unwrap();
+        assert_eq!(updated.working_directory, before.working_directory);
+        assert_eq!(updated.mtool_loader, before.mtool_loader);
+        assert_eq!(
+            updated.main_executable.as_deref(),
+            Some("replacement/Game.exe")
+        );
+        f.store = ImportStore::open(f.store.directory.clone()).unwrap();
+        f.rollback(&id).unwrap();
+        assert_eq!(f.db.lock().unwrap().version_config(&f.id).unwrap(), before);
+    }
+}
+
+#[test]
+fn explicit_update_launch_overrides_and_automatic_loader_choice_do_not_change_rollback_configuration(
+) {
+    for (mtool, loader, working_directory) in [
+        (false, None, Some("override-cwd")),
+        (true, Some("loaders/replacement.dll"), None),
+        (true, None, Some("override-cwd")),
+        (true, Some(""), None),
+    ] {
+        let f = manual_launch_fixture(mtool);
+        let before = f.db.lock().unwrap().version_config(&f.id).unwrap();
+        let id = f.plan_with(true, true, |selection| {
+            selection.executable = "replacement/Game.exe".into();
+            selection.mtool = mtool;
+            selection.working_directory = working_directory.map(str::to_owned);
+            selection.mtool_loader = loader.map(str::to_owned);
+        });
+        assert!(f.store.get(&id).unwrap().items[0].blockers.is_empty());
+        f.apply(&id).unwrap();
+        let updated = f.db.lock().unwrap().game(&f.id).unwrap();
+        assert_eq!(
+            updated.working_directory,
+            working_directory.unwrap_or("manual-cwd")
+        );
+        assert_eq!(
+            updated.mtool_loader.as_deref(),
+            if mtool && loader.is_none() {
+                Some("loaders/custom.dll")
+            } else {
+                loader.filter(|value| !value.is_empty())
+            }
+        );
+        f.rollback(&id).unwrap();
+        assert_eq!(f.db.lock().unwrap().version_config(&f.id).unwrap(), before);
+    }
+}
+
+#[test]
+fn incompatible_working_directory_blocks_preview_and_is_rechecked_before_moving_files() {
+    let f = manual_launch_fixture(false);
+    fs::remove_dir(f.source.join("manual-cwd")).unwrap();
+    let blocked = f.plan_with(true, true, |selection| {
+        selection.executable = "replacement/Game.exe".into();
+    });
+    let plan = f.store.get(&blocked).unwrap();
+    assert!(plan.items[0]
+        .blockers
+        .iter()
+        .any(|reason| reason.contains("重新配置")));
+    assert!(f.apply(&blocked).is_err());
+    let ready = f.plan_with(true, true, |selection| {
+        selection.executable = "replacement/Game.exe".into();
+        selection.working_directory = Some("override-cwd".into());
+    });
+    assert!(f.store.get(&ready).unwrap().items[0].blockers.is_empty());
+    fs::remove_dir(f.source.join("override-cwd")).unwrap();
+    assert!(f
+        .apply(&ready)
+        .unwrap_err()
+        .to_string()
+        .contains("重新配置"));
+    assert!(f.old().join("original/Game.exe").is_file());
+    assert!(f.source.join("replacement/Game.exe").is_file());
+    assert_eq!(
+        f.db.lock().unwrap().game(&f.id).unwrap().working_directory,
+        "manual-cwd"
+    );
+}
+
+#[test]
+fn changed_exe_architecture_or_missing_loader_requires_explicit_reconfiguration() {
+    let f = manual_launch_fixture(true);
+    write_pe_fixture(&f.source.join("replacement/Game.exe"), 0x14c);
+    let blocked = f.plan_with(true, true, |selection| {
+        selection.executable = "replacement/Game.exe".into();
+        selection.mtool = true;
+    });
+    assert!(f.store.get(&blocked).unwrap().items[0]
+        .blockers
+        .iter()
+        .any(|reason| reason.contains("位数不同")));
+    assert!(f.apply(&blocked).is_err());
+    let missing = f.plan_with(true, true, |selection| {
+        selection.executable = "replacement/Game.exe".into();
+        selection.mtool = true;
+        selection.mtool_loader = Some("loaders/missing.dll".into());
+    });
+    assert!(f.store.get(&missing).unwrap().items[0]
+        .blockers
+        .iter()
+        .any(|reason| reason.contains("重新选择")));
+    let escaped = f.plan_with(true, true, |selection| {
+        selection.executable = "replacement/Game.exe".into();
+        selection.mtool = true;
+        selection.mtool_loader = Some("../outside.dll".into());
+    });
+    assert!(!f.store.get(&escaped).unwrap().items[0].blockers.is_empty());
+    let ready = f.plan_with(true, true, |selection| {
+        selection.executable = "replacement/Game.exe".into();
+        selection.mtool = true;
+        selection.mtool_loader = Some(String::new());
+    });
+    f.apply(&ready).unwrap();
+    assert!(f
+        .db
+        .lock()
+        .unwrap()
+        .game(&f.id)
+        .unwrap()
+        .mtool_loader
+        .is_none());
+    f.rollback(&ready).unwrap();
+    assert_eq!(
+        f.db.lock()
+            .unwrap()
+            .game(&f.id)
+            .unwrap()
+            .mtool_loader
+            .as_deref(),
+        Some("loaders/custom.dll")
+    );
+}
+
+#[test]
+fn pre_fix_completed_journal_still_rolls_back_using_its_original_configuration() {
+    let mut f = manual_launch_fixture(true);
+    let before = f.db.lock().unwrap().version_config(&f.id).unwrap();
+    let id = f.plan_with(true, true, |selection| {
+        selection.executable = "replacement/Game.exe".into();
+        selection.mtool = true;
+        // Reproduce the configuration produced before the fix without changing launch logic.
+        selection.working_directory = Some(".".into());
+        selection.mtool_loader = Some(String::new());
+    });
+    f.apply(&id).unwrap();
+    let mut record = serde_json::to_value(f.store.get(&id).unwrap()).unwrap();
+    record["items"][0]["update"]
+        .as_object_mut()
+        .unwrap()
+        .remove("inherit_launch_config");
+    record["items"][0]["selection"]
+        .as_object_mut()
+        .unwrap()
+        .remove("working_directory");
+    record["items"][0]["selection"]
+        .as_object_mut()
+        .unwrap()
+        .remove("mtool_loader");
+    fs::write(
+        f.store.directory.join(format!("{id}.json")),
+        serde_json::to_vec(&record).unwrap(),
+    )
+    .unwrap();
+    f.store = ImportStore::open(f.store.directory.clone()).unwrap();
+    f.rollback(&id).unwrap();
+    assert_eq!(f.db.lock().unwrap().version_config(&f.id).unwrap(), before);
 }
 
 #[test]
@@ -581,6 +831,8 @@ fn source_containing_an_external_save_is_blocked_but_ordinary_payload_changes_ar
         version: "v2".into(),
         engine: "HTML".into(),
         executable: "游戏.html".into(),
+        working_directory: None,
+        mtool_loader: None,
         external_player: None,
         mtool: false,
         existing_id: Some(f.id.clone()),

@@ -291,6 +291,64 @@ describe('batch import flow', () => {
     );
     expect(api.importApply).not.toHaveBeenCalled();
   });
+  it.each(['inherit', 'override', 'automatic', 'reset'] as const)(
+    'passes only explicit launch configuration changes to update plans: %s',
+    async (mode) => {
+      const installed: Game = {
+        ...oldGame,
+        launch_type: 'MTOOL',
+        working_directory: 'manual-cwd',
+        mtool_loader: 'loaders/custom.dll',
+      };
+      vi.mocked(api.importMatches).mockResolvedValue({
+        [candidate.install_path]: [
+          {
+            id: installed.id,
+            title: installed.display_title,
+            version: installed.current_version,
+            path: installed.install_path,
+            reason: '名称一致',
+          },
+        ],
+      });
+      render(<ImportPage {...props()} games={[installed]} />);
+      fireEvent.click(screen.getByRole('button', { name: '添加文件夹' }));
+      await screen.findByRole('radiogroup', { name: '存档处理' });
+      fireEvent.click(screen.getByRole('checkbox', { name: '公共 MTool' }));
+      fireEvent.click(screen.getByText('更新启动配置'));
+      const working = screen.getByLabelText('工作目录（相对新版游戏目录）') as HTMLInputElement;
+      const loader = screen.getByLabelText(
+        'MTool loader（相对公共 MTool 目录）',
+      ) as HTMLInputElement;
+      expect(working.value).toBe('manual-cwd');
+      expect(loader.value).toBe('loaders/custom.dll');
+      if (mode !== 'inherit') {
+        fireEvent.change(working, { target: { value: 'new-cwd' } });
+        fireEvent.change(loader, {
+          target: { value: mode === 'automatic' ? '' : 'loaders/new.dll' },
+        });
+      }
+      if (mode === 'reset') {
+        fireEvent.click(screen.getByRole('button', { name: '恢复继承旧配置' }));
+        expect(working.value).toBe('manual-cwd');
+        expect(loader.value).toBe('loaders/custom.dll');
+      }
+      fireEvent.click(screen.getByRole('checkbox', { name: '选择 Game v1.2' }));
+      fireEvent.click(screen.getByRole('button', { name: '生成导入与更新计划（1）' }));
+      await waitFor(() => expect(api.importPlan).toHaveBeenCalledOnce());
+      const selected = vi.mocked(api.importPlan).mock.calls[0][1][0];
+      expect(selected.working_directory).toBe(
+        mode === 'inherit' || mode === 'reset' ? undefined : 'new-cwd',
+      );
+      expect(selected.mtool_loader).toBe(
+        mode === 'inherit' || mode === 'reset'
+          ? undefined
+          : mode === 'automatic'
+            ? ''
+            : 'loaders/new.dll',
+      );
+    },
+  );
   it('keeps weak and ambiguous recommendations unassociated until the user chooses', async () => {
     for (const ambiguous of [false, true]) {
       const recommendation = {

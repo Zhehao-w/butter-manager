@@ -8,4 +8,8 @@ Prompt intent: remove white canvas outside the original rounded square, preserve
 
 Approved master SHA-256: 78289afdecb4c619e6d2d5f26742fba305eae442212b8569314c79305c140ecf
 
-The UI PNG (256px), native PNG (128px) and ICO (16/24/32/48/64/128/256px) are format/size conversions of that approved master, preserving alpha. No further artwork editing is applied during packaging.
+The original UI PNG (`src/assets/app-icon.png`, 256px) and runtime RGBA (`icon-original.rgba`, 128px) are size/format conversions of that approved master.
+
+`source-icon-new.png` is the unchanged transparent PNG provided by the user on 2026-10-08 for the new appearance option. `src/assets/app-icon-new.png` (256px), `icon.png` (128px), `icon.ico` (16/24/32/48/64/128/256px), and `icon-new.rgba` (128px) are size/format conversions preserving alpha. No artwork editing is applied. RGBA files contain raw 128 × 128 × 4 bytes for the native window icon, avoiding an additional runtime PNG decoder.
+
+The executable embeds the new icon. Runtime window and in-app icons can independently select the original or new option in Settings. See [appearance behavior and future file-icon plan](../../docs/appearance.md). On 2026-10-08, the provider requested publishing all changes to GitHub, including the new assets. The new attachments' generation method has not been separately recorded.

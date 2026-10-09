@@ -385,7 +385,17 @@ export function ImportPage({
     });
   }
   function update(source: string, change: Partial<ImportSelection>) {
-    setChoices((current) => ({ ...current, [source]: { ...current[source], ...change } }));
+    setChoices((current) => ({
+      ...current,
+      [source]: {
+        ...current[source],
+        ...(Object.hasOwn(change, 'existing_id') &&
+        change.existing_id !== current[source].existing_id
+          ? { working_directory: undefined, mtool_loader: undefined }
+          : {}),
+        ...change,
+      },
+    }));
   }
   const rows = useMemo(() => {
     const key = search.trim().toLocaleLowerCase();
@@ -960,6 +970,50 @@ export function ImportPage({
                               公共 MTool
                             </label>
                           </div>
+                        )}
+                        {existing && (
+                          <details className="full">
+                            <summary>更新启动配置</summary>
+                            <p className="muted">
+                              默认继承旧配置；新版目录或游戏位数改变时，可在此调整。
+                            </p>
+                            <div className="form-grid">
+                              <label>
+                                工作目录（相对新版游戏目录）
+                                <input
+                                  value={choice.working_directory ?? existing.working_directory}
+                                  disabled={disabled}
+                                  onChange={(e) =>
+                                    update(source, { working_directory: e.target.value })
+                                  }
+                                />
+                              </label>
+                              {choice.mtool && (
+                                <label>
+                                  MTool loader（相对公共 MTool 目录）
+                                  <input
+                                    value={choice.mtool_loader ?? existing.mtool_loader ?? ''}
+                                    placeholder="自动识别；留空可改为自动"
+                                    disabled={disabled}
+                                    onChange={(e) =>
+                                      update(source, { mtool_loader: e.target.value })
+                                    }
+                                  />
+                                </label>
+                              )}
+                            </div>
+                            <button
+                              disabled={disabled}
+                              onClick={() =>
+                                update(source, {
+                                  working_directory: undefined,
+                                  mtool_loader: undefined,
+                                })
+                              }
+                            >
+                              恢复继承旧配置
+                            </button>
+                          </details>
                         )}
                         {!!candidate?.save_paths?.length && (
                           <p className="detected-saves">

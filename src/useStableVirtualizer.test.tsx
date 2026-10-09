@@ -29,22 +29,26 @@ function fixture() {
   const scrollTo = vi.fn();
   scroll.scrollTo = scrollTo;
   let offset!: (offset: number, scrolling: boolean) => void;
-  const hook = renderHook(() =>
-    useStableVirtualizer(
-      {
-        count: 100,
-        getScrollElement: () => scroll,
-        estimateSize: () => 100,
-        observeElementRect: (_instance, update) => {
-          update({ width: 300, height: 200 });
+  const hook = renderHook(
+    ({ enabled, scope, keyPrefix }) =>
+      useStableVirtualizer(
+        {
+          count: 100,
+          enabled,
+          getItemKey: (index) => `${keyPrefix}-${index}`,
+          getScrollElement: () => scroll,
+          estimateSize: () => 100,
+          observeElementRect: (_instance, update) => {
+            update({ width: 300, height: 200 });
+          },
+          observeElementOffset: (_instance, update) => {
+            offset = update;
+            update(0, false);
+          },
         },
-        observeElementOffset: (_instance, update) => {
-          offset = update;
-          update(0, false);
-        },
-      },
-      'fixture',
-    ),
+        scope,
+      ),
+    { initialProps: { enabled: true, scope: 'fixture', keyPrefix: 'row' } },
   );
   const resize = (height: number) => {
     const instance = hook.result.current.virtualizer;
@@ -68,6 +72,25 @@ function fixture() {
 }
 
 describe('stable dynamic scrolling', () => {
+  it('retains measured heights when a tab is disabled, without reusing heights for other keys or scopes', () => {
+    const f = fixture();
+    act(() => f.resize(240));
+    const total = f.hook.result.current.virtualizer.getTotalSize();
+    f.hook.rerender({ enabled: false, scope: 'fixture', keyPrefix: 'row' });
+    expect(f.hook.result.current.virtualizer.getTotalSize()).toBe(0);
+    f.hook.rerender({ enabled: true, scope: 'fixture', keyPrefix: 'row' });
+    expect(f.hook.result.current.virtualizer.getTotalSize()).toBe(total);
+    act(() => f.resize(360));
+    expect(f.hook.result.current.virtualizer.getTotalSize()).toBe(total + 120);
+    f.hook.rerender({ enabled: false, scope: 'fixture', keyPrefix: 'row' });
+    f.hook.rerender({ enabled: true, scope: 'fixture', keyPrefix: 'other' });
+    expect(f.hook.result.current.virtualizer.getTotalSize()).toBe(10000);
+    f.hook.rerender({ enabled: false, scope: 'new-plan', keyPrefix: 'row' });
+    f.hook.rerender({ enabled: true, scope: 'new-plan', keyPrefix: 'row' });
+    expect(f.hook.result.current.virtualizer.getTotalSize()).toBe(10000);
+    f.dispose();
+  });
+
   it('keeps the total extent and scroll position stable while scrolling, then anchors at rest', () => {
     const f = fixture();
     act(() => f.resize(240));

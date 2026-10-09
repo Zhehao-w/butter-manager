@@ -1,7 +1,8 @@
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { measureElement, useVirtualizer } from '@tanstack/react-virtual';
 
 type Options = Parameters<typeof useVirtualizer<HTMLDivElement, HTMLDivElement>>[0];
+type ItemKey = ReturnType<NonNullable<Options['getItemKey']>>;
 
 // Dynamic cards keep their measured (or estimated) extent while scrolling.
 // Removing the temporary height at rest lets ResizeObserver measure natural
@@ -9,8 +10,13 @@ type Options = Parameters<typeof useVirtualizer<HTMLDivElement, HTMLDivElement>>
 export function useStableVirtualizer(options: Options, scope: string) {
   const dragging = useRef(false);
   const [draggingScrollbar, setDraggingScrollbar] = useState(false);
+  // Disabling the core virtualizer clears its size cache. Keep measured heights
+  // by item key so returning to a tab does not first rebuild from rough estimates.
+  const measuredSizes = useMemo(() => new Map<ItemKey, number>(), [scope]);
   const virtualizer = useVirtualizer<HTMLDivElement, HTMLDivElement>({
     ...options,
+    estimateSize: (index) =>
+      measuredSizes.get(options.getItemKey?.(index) ?? index) ?? options.estimateSize(index),
     useCachedMeasurements: options.enabled === false,
     useAnimationFrameWithResizeObserver: true,
     measureElement: (element, entry, instance) => {
@@ -19,7 +25,12 @@ export function useStableVirtualizer(options: Options, scope: string) {
         const key = instance.options.getItemKey(index);
         return instance.itemSizeCache.get(key) ?? instance.options.estimateSize(index);
       }
-      return measureElement(element, entry, instance);
+      const size = measureElement(element, entry, instance);
+      if (size > 0) {
+        const index = instance.indexFromElement(element);
+        measuredSizes.set(instance.options.getItemKey(index), size);
+      }
+      return size;
     },
   });
   virtualizer.shouldAdjustScrollPositionOnItemSizeChange = (item, _delta, instance) =>

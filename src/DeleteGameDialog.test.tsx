@@ -21,7 +21,13 @@ const plan: DeletePlan = {
 describe('delete confirmation', () => {
   beforeEach(() => vi.clearAllMocks());
   it('previews game and associated saves without deleting and requires explicit confirmation', async () => {
-    vi.mocked(api.previewDelete).mockResolvedValue(plan);
+    let complete!: (plan: DeletePlan) => void;
+    vi.mocked(api.previewDelete).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          complete = resolve;
+        }),
+    );
     const report = {
       removed: true,
       recycled: ['D:/Game'],
@@ -32,7 +38,24 @@ describe('delete confirmation', () => {
     render(
       <DeleteGameDialog game={game} onClose={vi.fn()} onDeleted={onDeleted} onBusy={vi.fn()} />,
     );
+    const dialog = screen.getByRole('dialog');
+    const footer = screen.getByRole('button', { name: '确认移入回收站' }).closest('.modal-footer');
+    expect(dialog.classList.contains('modal-maintenance')).toBe(true);
+    expect(footer).toBeTruthy();
+    expect(screen.queryByText('正在检查目录与存档范围…')).toBeNull();
+    const spinner = dialog.querySelector('.maintenance-spinner')!;
+    expect(spinner.classList.contains('active')).toBe(false);
+    expect(
+      (screen.getByRole('button', { name: '确认移入回收站' }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+    await waitFor(() => expect(spinner.classList.contains('active')).toBe(true));
+    complete(plan);
     await screen.findByText('移入回收站');
+    expect(screen.getByRole('dialog')).toBe(dialog);
+    expect(spinner.classList.contains('active')).toBe(false);
+    expect(screen.getByRole('button', { name: '确认移入回收站' }).closest('.modal-footer')).toBe(
+      footer,
+    );
     expect(screen.queryByRole('checkbox')).toBeNull();
     expect(api.previewDelete).toHaveBeenCalledWith(game.id);
     expect(api.deleteFiles).not.toHaveBeenCalled();
@@ -44,9 +67,16 @@ describe('delete confirmation', () => {
     expect(onDeleted).toHaveBeenCalledWith(report);
   });
   it('blocks unsafe associated save plans without allowing save preservation', async () => {
-    vi.mocked(api.previewDelete).mockResolvedValue({ ...plan, blockers: ['共用存档目录'] });
+    vi.mocked(api.previewDelete).mockResolvedValue({
+      ...plan,
+      saves: [],
+      blockers: ['共用存档目录'],
+    });
     render(<DeleteGameDialog game={game} onClose={vi.fn()} onDeleted={vi.fn()} onBusy={vi.fn()} />);
     await screen.findByText('共用存档目录');
+    expect(screen.queryByText('正在检查目录与存档范围…')).toBeNull();
+    expect(screen.getByRole('dialog').querySelector('.maintenance-spinner.active')).toBeNull();
+    expect(screen.queryByRole('list')).toBeNull();
     expect(
       (screen.getByRole('button', { name: '确认移入回收站' }) as HTMLButtonElement).disabled,
     ).toBe(true);

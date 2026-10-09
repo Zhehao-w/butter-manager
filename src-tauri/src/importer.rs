@@ -6,7 +6,7 @@ use crate::{jobs::Job, paths, scanner};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
-use std::io::{Read, Write};
+use std::io::{BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::UNIX_EPOCH;
@@ -170,6 +170,12 @@ pub struct Selection {
     pub version: String,
     pub engine: String,
     pub executable: String,
+    /// Update-only overrides; absent values inherit the previous configuration.
+    #[serde(default)]
+    pub working_directory: Option<String>,
+    /// An explicit empty string selects automatic loader detection.
+    #[serde(default)]
+    pub mtool_loader: Option<String>,
     #[serde(default)]
     pub external_player: Option<crate::domain::ExternalPlayer>,
     pub mtool: bool,
@@ -361,10 +367,11 @@ impl ImportStore {
                     if metadata.len() > 16 * 1024 * 1024 {
                         return Err(invalid("导入记录超过读取上限"));
                     }
-                    let mut plan: Plan =
-                        serde_json::from_reader(File::open(&path)?).map_err(|e| {
-                            invalid(format!("导入记录无法读取：{}：{e}", path.display()))
-                        })?;
+                    let mut plan: Plan = serde_json::from_reader(BufReader::with_capacity(
+                        64 * 1024,
+                        File::open(&path)?,
+                    ))
+                    .map_err(|e| invalid(format!("导入记录无法读取：{}：{e}", path.display())))?;
                     uuid::Uuid::parse_str(&plan.id).map_err(|_| invalid("无效的导入记录"))?;
                     if path.file_stem().and_then(|s| s.to_str()) != Some(plan.id.as_str())
                         || !matches!(
@@ -436,8 +443,11 @@ impl ImportStore {
                                 return Err(invalid("导入文件清单超过读取上限"));
                             }
                             item.manifest = Arc::new(
-                                serde_json::from_reader(File::open(manifest_path)?)
-                                    .map_err(|e| invalid(e.to_string()))?,
+                                serde_json::from_reader(BufReader::with_capacity(
+                                    64 * 1024,
+                                    File::open(manifest_path)?,
+                                ))
+                                .map_err(|e| invalid(e.to_string()))?,
                             );
                             let mut seen = HashSet::new();
                             for entry in item.manifest.iter() {
@@ -1731,6 +1741,8 @@ mod tests {
             engine: "QSP".into(),
             executable: "qspgui.exe".into(),
             external_player: crate::external_player::qsp_config(&candidate),
+            working_directory: None,
+            mtool_loader: None,
             mtool: false,
             existing_id: None,
             new_override: false,
@@ -1820,6 +1832,8 @@ mod tests {
                     .clone()
                     .unwrap_or_default(),
                 external_player: crate::external_player::qsp_config(c),
+                working_directory: None,
+                mtool_loader: None,
                 mtool: false,
                 existing_id: None,
                 new_override: false,
@@ -1929,6 +1943,8 @@ mod tests {
                     version: "v1.2.3".into(),
                     engine: "HTML".into(),
                     executable: "包装/游戏.html".into(),
+                    working_directory: None,
+                    mtool_loader: None,
                     external_player: None,
                     mtool: false,
                     existing_id: None,
@@ -2049,11 +2065,38 @@ mod tests {
         let source = f.game("invalid");
         let id = f.plan(&[source]);
         let path = f.store.directory.join(format!("{id}-0.manifest"));
-        fs::write(
-            &path,
-            br#"[{"path":"../outside","directory":false,"bytes":1,"modified":0}]"#,
-        )
-        .unwrap();
+        // Cross many read-buffer boundaries; late invalid entries must still block recovery.
+        let mut entries = (0..5000)
+            .map(|index| Entry {
+                path: format!("资源/scene-{index}.png"),
+                directory: false,
+                bytes: 1,
+                modified: 0,
+            })
+            .collect::<Vec<_>>();
+        let valid = serde_json::to_vec(&entries).unwrap();
+        assert!(valid.len() > 64 * 1024);
+        fs::write(&path, &valid).unwrap();
+        let recovered = ImportStore::open(f.store.directory.clone()).unwrap();
+        assert!(recovered.recovery_issues().is_empty());
+        assert_eq!(
+            recovered.get(&id).unwrap().items[0].manifest.len(),
+            entries.len()
+        );
+        for invalid_path in ["../outside", "资源/scene-0.png"] {
+            entries.push(Entry {
+                path: invalid_path.into(),
+                directory: false,
+                bytes: 1,
+                modified: 0,
+            });
+            fs::write(&path, serde_json::to_vec(&entries).unwrap()).unwrap();
+            let recovered = ImportStore::open(f.store.directory.clone()).unwrap();
+            assert_eq!(recovered.recovery_issues().len(), 1);
+            assert!(recovered.views().is_empty());
+            entries.pop();
+        }
+        fs::write(&path, &valid[..valid.len() - 1]).unwrap();
         let recovered = ImportStore::open(f.store.directory.clone()).unwrap();
         assert_eq!(recovered.recovery_issues().len(), 1);
         assert!(recovered.views().is_empty());
@@ -2079,6 +2122,13 @@ mod tests {
         assert!(a.is_dir() && b.is_dir());
         assert_eq!(fs::read_dir(&fixture.root).unwrap().count(), 0);
         assert!(fixture.db.lock().unwrap().games().unwrap().is_empty());
+        // Update-only overrides must not change the defaults for a new import.
+        let mut preview = fixture.store.get(&id).unwrap();
+        for item in &mut preview.items {
+            item.selection.working_directory = Some("missing-cwd".into());
+            item.selection.mtool_loader = Some("loaders/missing.dll".into());
+        }
+        fixture.store.save(&preview).unwrap();
         let ids = fixture.apply(&id).unwrap();
         assert_eq!(ids.len(), 2);
         let completed = fixture.store.views()[0]
@@ -2113,6 +2163,7 @@ mod tests {
         for game in fixture.db.lock().unwrap().games().unwrap() {
             assert_eq!(game.main_executable.as_deref(), Some("包装/游戏.html"));
             assert_eq!(game.working_directory, "包装");
+            assert!(game.mtool_loader.is_none());
             assert_eq!(game.engine, "HTML");
             assert_eq!(
                 fs::read(Path::new(&game.install_path).join("包装/Save/存档.dat")).unwrap(),

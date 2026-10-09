@@ -60,6 +60,15 @@ export function scanResults(
     });
 }
 
+const directoryDateFormat = new Intl.DateTimeFormat('zh-CN', {
+  year: 'numeric',
+  month: 'numeric',
+  day: 'numeric',
+  hour: 'numeric',
+  minute: 'numeric',
+  second: 'numeric',
+  hour12: false,
+});
 export function directoryTime(ms: number | null): string {
-  return ms == null ? '-' : new Date(ms).toLocaleString('zh-CN', { hour12: false });
+  return ms == null ? '-' : directoryDateFormat.format(ms);
 }

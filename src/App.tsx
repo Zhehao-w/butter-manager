@@ -1,12 +1,16 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, RefObject } from 'react';
 import { isTauri } from '@tauri-apps/api/core';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useStableVirtualizer } from './useStableVirtualizer';
 import { api } from './api';
 import { useNotifications, NotificationToast } from './notifications';
-import appIcon from './assets/app-icon.png';
-import sidebarCharacter from './assets/sidebar-character.png';
+import {
+  AppearancePicker,
+  appearanceIcons,
+  appearanceIllustrations,
+  defaultAppearance,
+} from './appearance';
 import {
   Icon,
   Modal,
@@ -27,9 +31,11 @@ import { ProgressBar } from './ProgressBar';
 import { scanResults, directoryTime } from './scan';
 import type { ScanSort, ScanChoice } from './scan';
 import type {
+  Appearance,
   Game,
   DeleteReport,
   GameEdit,
+  LaunchConfiguration,
   JobPage,
   MToolRecipe,
   ScanCandidate,
@@ -44,6 +50,7 @@ import { MToolConfiguration } from './MToolConfiguration';
 import { ImportPage } from './ImportPage';
 import { QspConfiguration } from './QspConfiguration';
 import { EngineSelect } from './EngineSelect';
+import { FolderErrorDialog } from './FolderErrorDialog';
 import { useLibraryLayout, useSavedSort } from './preferences';
 import {
   PlayBadge,
@@ -89,6 +96,14 @@ function launchBlockReason(game: Game, check?: LibraryPathCheck): string | undef
 }
 
 export default function App() {
+  const [appearance, setAppearance] = useState<Appearance>(defaultAppearance);
+  const [appearanceReady, setAppearanceReady] = useState(false);
+  const appIcon = appearanceIcons[appearance.icon];
+  const sidebarCharacter = appearanceIllustrations[appearance.illustration];
+  useEffect(() => {
+    const favicon = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
+    if (favicon) favicon.href = appIcon;
+  }, [appIcon]);
   const [games, setGames] = useState<Game[]>([]);
   const [pathChecks, setPathChecks] = useState<Record<string, LibraryPathCheck>>({});
   const [issuesOnly, setIssuesOnly] = useState(false);
@@ -115,12 +130,12 @@ export default function App() {
   }
   const [launchingIds, setLaunchingIds] = useState<Set<string>>(new Set());
   const launchRequests = useRef(new Set<string>());
-  async function playGame(id: string) {
+  async function playGame(id: string, configuration?: LaunchConfiguration) {
     if (launchRequests.current.has(id)) return;
     launchRequests.current.add(id);
     setLaunchingIds((current) => new Set(current).add(id));
     try {
-      const launched = await api.play(id);
+      const launched = await (configuration ? api.play(id, configuration) : api.play(id));
       if (launched)
         setGames((current) => current.map((game) => (game.id === id ? launched : game)));
     } finally {
@@ -337,6 +352,17 @@ export default function App() {
   useEffect(() => {
     if (!desktop) return;
     let stale = false;
+    api
+      .appearance()
+      .then((value) => {
+        if (!stale) setAppearance(value);
+      })
+      .catch((reason) => {
+        if (!stale) setError(String(reason));
+      })
+      .finally(() => {
+        if (!stale) setAppearanceReady(true);
+      });
     Promise.all([api.games(), api.settings()])
       .then(([library, config]) => {
         if (stale) return;
@@ -1290,6 +1316,12 @@ export default function App() {
           {settingsOpen && settings && (
             <SettingsPage
               settings={settings}
+              appearance={appearance}
+              appearanceReady={appearanceReady}
+              onAppearanceSave={async (next) => {
+                const saved = await api.saveAppearance(next);
+                setAppearance(saved);
+              }}
               initialSection={settingsSection}
               scrollPositions={settingsScroll}
               navigationGuard={settingsGuard}
@@ -1445,7 +1477,7 @@ export default function App() {
             taskJob.markCancelling();
           }}
           launching={launchingIds.has(game.id)}
-          onPlay={() => playGame(game.id)}
+          onPlay={(configuration) => playGame(game.id, configuration)}
           onSaved={(saved) => {
             setGames((current) => current.map((g) => (g.id === saved.id ? saved : g)));
             if (
@@ -1723,6 +1755,9 @@ function DiscardConfirmation({
 }
 function SettingsPage({
   settings,
+  appearance,
+  appearanceReady,
+  onAppearanceSave,
   initialSection,
   scrollPositions,
   navigationGuard,
@@ -1731,6 +1766,9 @@ function SettingsPage({
   onReset,
 }: {
   settings: Settings;
+  appearance: Appearance;
+  appearanceReady: boolean;
+  onAppearanceSave: (next: Appearance) => Promise<void>;
   initialSection: SettingsSection;
   scrollPositions: RefObject<Record<SettingsSection, number>>;
   navigationGuard: RefObject<((go: () => void) => void) | null>;
@@ -1975,6 +2013,13 @@ function SettingsPage({
             </div>
           </fieldset>
         </form>
+        {section === 'library' && (
+          <AppearancePicker
+            value={appearance}
+            disabled={!appearanceReady || busy || locked || confirmClose}
+            onSave={onAppearanceSave}
+          />
+        )}
         <section className="reset-library panel" hidden={section !== 'library'}>
           <h3>清空游戏库</h3>
           <p>
@@ -2029,7 +2074,7 @@ function SettingsPage({
         <section className="about-card panel" hidden={section !== 'library'} aria-label="关于应用">
           <div className="settings-about-heading">
             <div className="settings-about-identity">
-              <img src={appIcon} alt="" />
+              <img src={appearanceIcons[appearance.icon]} alt="" />
               <div>
                 <h3>关于 butter-manager</h3>
                 <p>by Zhehao-w</p>
@@ -2085,11 +2130,12 @@ function GameDetail({
   onAnalyze: () => Promise<void>;
   onCancelAnalysis: () => Promise<void>;
   launching: boolean;
-  onPlay: () => Promise<void>;
+  onPlay: (configuration: LaunchConfiguration) => Promise<void>;
   onSaved: (game: Game) => void;
   onClose: () => void;
 }) {
   const [draft, setDraft] = useState<GameEdit>({ ...game });
+  const formId = useId();
   const previousStatus = useRef(game.play_status);
   useEffect(() => {
     const old = previousStatus.current;
@@ -2147,10 +2193,28 @@ function GameDetail({
   const [debugText, setDebugText] = useState('');
   const [requestBusy, setBusy] = useState(false);
   const [maintenanceBusy, setMaintenanceBusy] = useState(false);
+  const [folderError, setFolderError] = useState<string | null>(null);
   const busy = requestBusy || maintenanceBusy;
   const [message, setMessage] = useState('');
   const [confirmClose, setConfirmClose] = useState(false);
   const edit = { ...draft, aliases: lines(aliases), save_paths: lines(saves) };
+  const configuration: LaunchConfiguration = {
+    main_executable: draft.main_executable,
+    working_directory: draft.working_directory,
+    launch_type: draft.launch_type,
+    external_player: draft.external_player ?? null,
+    mtool_target_exe: draft.mtool_target_exe,
+    mtool_loader: draft.mtool_loader,
+  };
+  const launchChanged = Object.keys(configuration).some(
+    (key) =>
+      JSON.stringify(configuration[key as keyof LaunchConfiguration] ?? null) !==
+      JSON.stringify(game[key as keyof LaunchConfiguration] ?? null),
+  );
+  // A check of the saved launch file must not block a newly selected file.
+  // The backend validates the current paths again before executing anything.
+  const launchCheck =
+    !launchChanged || pathCheck?.state === 'missing_directory' ? pathCheck : undefined;
   const dirty =
     (
       [
@@ -2229,7 +2293,21 @@ function GameDetail({
     setDebugText('');
   }
   return (
-    <Modal title={game.display_title} onClose={close} variant="detail">
+    <Modal
+      title={game.display_title}
+      onClose={close}
+      variant="detail"
+      headerActions={
+        <button
+          type="submit"
+          form={formId}
+          className="primary"
+          disabled={!dirty || busy || launching || confirmClose}
+        >
+          保存资料
+        </button>
+      }
+    >
       <div className="detail-hero panel">
         <GameMark game={{ ...game, engine: draft.engine }} large />
         <div className="detail-hero-info">
@@ -2244,7 +2322,7 @@ function GameDetail({
               <Icon name="tag" size={14} />
               {displayVersion(game.current_version)}
             </span>
-            <LaunchBadge game={game} />
+            <LaunchBadge game={{ ...game, ...configuration }} />
             <PlayBadge game={game} />
             <span className="mode">{draft.engine === 'Unknown' ? '引擎未识别' : draft.engine}</span>
           </div>
@@ -2256,10 +2334,15 @@ function GameDetail({
         <div className="detail-actions">
           <button
             className="primary play-button"
-            disabled={busy || launching || dirty || !!launchBlockReason(game, pathCheck)}
+            disabled={
+              busy ||
+              launching ||
+              confirmClose ||
+              !!launchBlockReason({ ...game, ...configuration }, launchCheck)
+            }
             onClick={() => {
               setMessage('');
-              void onPlay()
+              void onPlay(configuration)
                 .then(() => setMessage('启动请求已发送。'))
                 .catch((reason) => setMessage(String(reason)));
             }}
@@ -2269,7 +2352,15 @@ function GameDetail({
           </button>
           <button
             disabled={busy || launching}
-            onClick={() => void run(() => api.openFolder(game.id))}
+            onClick={() =>
+              void run(async () => {
+                try {
+                  await api.openFolder(game.id);
+                } catch (reason) {
+                  setFolderError(String(reason));
+                }
+              })
+            }
           >
             打开目录
           </button>
@@ -2284,6 +2375,16 @@ function GameDetail({
       {confirmClose && (
         <DiscardConfirmation onDiscard={onClose} onKeep={() => setConfirmClose(false)} />
       )}
+      {folderError !== null && (
+        <FolderErrorDialog
+          game={game}
+          reason={folderError}
+          locked={dirty || launching || analysisLocked}
+          onClose={() => setFolderError(null)}
+          onRemoved={onRemoved}
+          onBusy={setMaintenanceBusy}
+        />
+      )}
       <p className="path">{game.install_path}</p>
       <PathBadge check={pathCheck} />
       {pathCheck && pathCheck.state !== 'available' && (
@@ -2293,9 +2394,10 @@ function GameDetail({
         <TaskProgress page={analysisJob} onCancel={() => void run(onCancelAnalysis)} />
       )}
       <div className="inline-status" role="status">
-        {message || analysisNotice || (dirty ? '资料尚未保存。保存后可启动。' : '\u00a0')}
+        {message || analysisNotice || (dirty ? '资料尚未保存；启动使用当前配置。' : '\u00a0')}
       </div>
       <form
+        id={formId}
         onSubmit={(event) => {
           event.preventDefault();
           void run(async () => {
@@ -2591,9 +2693,6 @@ function GameDetail({
                 } as Record<string, string>
               )[game.version_source] || '未识别'}
             </span>
-            <button className="primary" disabled={!dirty}>
-              保存资料
-            </button>
           </div>
         </fieldset>
       </form>

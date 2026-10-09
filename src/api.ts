@@ -1,9 +1,11 @@
 import { invoke } from '@tauri-apps/api/core';
 import type {
+  Appearance,
   Game,
   DeletePlan,
   DeleteReport,
   GameEdit,
+  LaunchConfiguration,
   Settings,
   ResetReport,
   JobPage,
@@ -20,6 +22,8 @@ import type {
   VersionHistory,
 } from './types';
 export const api = {
+  appearance: () => invoke<Appearance>('get_appearance'),
+  saveAppearance: (appearance: Appearance) => invoke<Appearance>('save_appearance', { appearance }),
   versionHistory: (id: string) => invoke<VersionHistory[]>('version_history', { id }),
   rollbackVersion: (planId: string, index: number) =>
     invoke<string>('start_version_rollback', { planId, index }),
@@ -84,7 +88,8 @@ export const api = {
     invoke<string>('start_deep_analysis', { scanId, path }),
   saveGame: (edit: GameEdit) => invoke<Game>('save_game', { edit }),
   startGameAnalysis: (id: string) => invoke<string>('start_game_analysis', { id }),
-  play: (id: string) => invoke<Game>('play_game', { id }),
+  play: (id: string, configuration?: LaunchConfiguration) =>
+    invoke<Game>('play_game', { id, configuration }),
   launchHistory: (id: string) => invoke<string[]>('launch_history', { id }),
   clearLibrary: (confirmation: string) => invoke<ResetReport>('clear_library', { confirmation }),
   refreshMetadata: () => invoke<string>('start_metadata_refresh'),

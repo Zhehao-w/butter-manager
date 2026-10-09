@@ -724,13 +724,16 @@ mod tests {
                 expected
             );
         }
+        // Candidate lookup uses the path emitted by discovery, not the TEMP alias
+        // used to create this fixture (e.g. an 8.3 ancestor or verbatim prefix).
+        let discovered_root = dunce::canonicalize(&root).unwrap();
         assert!(job
-            .candidate(&root.join("new").display().to_string())
+            .candidate(&discovered_root.join("new").display().to_string())
             .unwrap()
             .registered_id
             .is_none());
         assert_eq!(
-            job.candidate(&root.join("manual").display().to_string())
+            job.candidate(&discovered_root.join("manual").display().to_string())
                 .unwrap()
                 .registered_id
                 .as_deref(),

@@ -325,7 +325,7 @@ fn pickle_protocols_scalar_changes_complex_objects_and_shared_memo() {
     assert!(pickle::Pickle::parse(b"\x80\x04\x95\xff\xff\xff\xff\xff\xff\xff\xffN.").is_err());
 }
 #[test]
-fn signing_matches_independent_python_sha1_raw_ecdsa_and_rejects_untrusted_keys() {
+fn signing_matches_independent_sha1_fixture_and_inspects_without_requiring_original_key() {
     let fixtures = fixtures();
     let fixture = &fixtures["fixtures"][5];
     let log = raw(fixture, "log");
@@ -341,12 +341,26 @@ fn signing_matches_independent_python_sha1_raw_ecdsa_and_rejects_untrusted_keys(
     let key = renpy::fixture_keys(std::slice::from_ref(&path), &log, signature).unwrap();
     let signed = renpy::fixture_signature(&key, &log).unwrap();
     renpy::fixture_keys(std::slice::from_ref(&path), &log, &signed).unwrap();
-    assert!(renpy::fixture_keys(std::slice::from_ref(&path), b"changed", signature).is_err());
-    assert!(renpy::fixture_keys(std::slice::from_ref(&path), &log, "").is_err());
+    assert_eq!(
+        renpy::fixture_inspect(std::slice::from_ref(&path), &log, signature).status,
+        "local"
+    );
+    assert_eq!(
+        renpy::fixture_inspect(std::slice::from_ref(&path), b"changed", signature).status,
+        "invalid"
+    );
+    assert_eq!(
+        renpy::fixture_inspect(std::slice::from_ref(&path), &log, "").status,
+        "unsigned"
+    );
     let other = p256::SecretKey::from_slice(&[9; 32]).unwrap();
     let other = p256::ecdsa::SigningKey::from(other);
     let foreign = renpy::fixture_signature(&other, &log).unwrap();
-    assert!(renpy::fixture_keys(std::slice::from_ref(&path), &log, &foreign).is_err());
+    assert_eq!(
+        renpy::fixture_inspect(std::slice::from_ref(&path), &log, &foreign).status,
+        "foreign"
+    );
+    renpy::fixture_keys(std::slice::from_ref(&path), &log, &foreign).unwrap();
     assert_eq!(
         fs::read_to_string(&path).unwrap(),
         fixtures["signingKey"].as_str().unwrap()
@@ -357,8 +371,8 @@ fn renpy_zip_and_persistent_edits_keep_metadata_and_resign_original_data() {
     let dir = tempfile::tempdir().unwrap();
     let fixture = fixtures();
     let sample = &fixture["fixtures"][5];
-    let saves = dir.path().join("game");
-    let tokens = dir.path().join("tokens");
+    let saves = dir.path().join("Ren'Py Data/game");
+    let tokens = dir.path().join("Ren'Py Data/tokens");
     fs::create_dir_all(&saves).unwrap();
     fs::create_dir_all(&tokens).unwrap();
     fs::write(
@@ -368,20 +382,21 @@ fn renpy_zip_and_persistent_edits_keep_metadata_and_resign_original_data() {
     .unwrap();
     let log = raw(sample, "log");
     let original = zip(&log, sample["signatures"].as_str().unwrap());
-    let path = saves.join("1-1.save");
-    let (fields, metadata, image, warnings) = renpy::read(&path, &original, false).unwrap();
+    let mut game = game(dir.path());
+    game.save_paths = vec![saves.display().to_string()];
+    let (fields, metadata, image, warnings, _) = renpy::read(&game, &original, false).unwrap();
     assert!(warnings.is_empty());
     assert!(image.is_some());
     assert!(metadata.iter().any(|m| m.contains("Chapter 2")));
     let updated = renpy::apply(
-        &path,
+        &game,
         &original,
         false,
         &[change(field(&fields, "store.money"), json!(7))],
     )
     .unwrap();
     export_fixture("signed.save", &updated);
-    let (next, _, _, warnings) = renpy::read(&path, &updated, false).unwrap();
+    let (next, _, _, warnings, _) = renpy::read(&game, &updated, false).unwrap();
     assert!(warnings.is_empty());
     assert_eq!(field(&next, "store.money").value, 7);
     let mut old = ZipArchive::new(Cursor::new(&original)).unwrap();
@@ -398,11 +413,10 @@ fn renpy_zip_and_persistent_edits_keep_metadata_and_resign_original_data() {
     let raw = raw(sample, "persistent");
     let mut original = rpg::deflate(&raw, 3).unwrap();
     original.extend_from_slice(sample["persistentSignatures"].as_str().unwrap().as_bytes());
-    let path = saves.join("persistent");
-    let (fields, _, _, warnings) = renpy::read(&path, &original, true).unwrap();
+    let (fields, _, _, warnings, _) = renpy::read(&game, &original, true).unwrap();
     assert!(warnings.is_empty());
     let updated = renpy::apply(
-        &path,
+        &game,
         &original,
         true,
         &[change(field(&fields, "money"), json!(25))],
@@ -410,7 +424,7 @@ fn renpy_zip_and_persistent_edits_keep_metadata_and_resign_original_data() {
     .unwrap();
     export_fixture("signed-persistent", &updated);
     assert_eq!(
-        field(&renpy::read(&path, &updated, true).unwrap().0, "money").value,
+        field(&renpy::read(&game, &updated, true).unwrap().0, "money").value,
         25
     );
 }
@@ -469,4 +483,418 @@ fn associated_slot_write_revision_running_game_unicode_and_no_backups() {
         assert_eq!(fs::read_to_string(&slot).unwrap(), original);
         assert_eq!(fs::read_dir(root.join("save")).unwrap().count(), 2);
     }
+}
+
+fn renpy_game(root: &Path) -> Game {
+    let mut game = game(root);
+    game.engine = "Ren'Py".into();
+    game.save_paths = vec!["<GAME>/Ren'Py Data/fixture".into()];
+    fs::create_dir_all(root.join("Ren'Py Data/fixture")).unwrap();
+    fs::create_dir_all(root.join("Ren'Py Data/tokens")).unwrap();
+    fs::write(
+        root.join("Ren'Py Data/tokens/security_keys.txt"),
+        fixtures()["signingKey"].as_str().unwrap(),
+    )
+    .unwrap();
+    game
+}
+fn member(data: &[u8], name: &str) -> Vec<u8> {
+    let mut archive = ZipArchive::new(Cursor::new(data)).unwrap();
+    let mut bytes = Vec::new();
+    archive
+        .by_name(name)
+        .unwrap()
+        .read_to_end(&mut bytes)
+        .unwrap();
+    bytes
+}
+fn without_signatures(data: &[u8]) -> Vec<u8> {
+    let mut archive = ZipArchive::new(Cursor::new(data)).unwrap();
+    let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+    for i in 0..archive.len() {
+        let member = archive.by_index(i).unwrap();
+        if member.name() != "signatures" {
+            writer.raw_copy_file(member).unwrap();
+        }
+    }
+    writer.finish().unwrap().into_inner()
+}
+#[test]
+fn renpy_resign_local_foreign_unsigned_invalid_and_unsupported_preserves_log_and_members() {
+    let dir = tempfile::tempdir().unwrap();
+    let game = renpy_game(dir.path());
+    let fixtures = fixtures();
+    let sample = &fixtures["fixtures"][5];
+    let log = raw(sample, "log");
+    let foreign = p256::ecdsa::SigningKey::from(p256::SecretKey::from_slice(&[9; 32]).unwrap());
+    for (status, signature) in [
+        ("local", sample["signatures"].as_str().unwrap().to_owned()),
+        ("foreign", renpy::fixture_signature(&foreign, &log).unwrap()),
+        ("unsigned", String::new()),
+        ("invalid", "signature damaged damaged\n".into()),
+    ] {
+        let original = zip(&log, &signature);
+        assert_eq!(
+            renpy::read(&game, &original, false).unwrap().4.status,
+            status
+        );
+        let updated = renpy::apply(&game, &original, false, &[]).unwrap();
+        assert_eq!(member(&updated, "log"), log);
+        assert_eq!(
+            renpy::read(&game, &updated, false).unwrap().4.status,
+            "local"
+        );
+        for name in ["json", "extra_info", "unknown.bin", "screenshot.png"] {
+            assert_eq!(member(&updated, name), member(&original, name));
+        }
+        // Foreign/no/invalid original signatures no longer prevent controlled edits.
+        let fields = renpy::read(&game, &original, false).unwrap().0;
+        let edited = renpy::apply(
+            &game,
+            &original,
+            false,
+            &[change(field(&fields, "store.money"), json!(19))],
+        )
+        .unwrap();
+        assert_eq!(
+            field(
+                &renpy::read(&game, &edited, false).unwrap().0,
+                "store.money"
+            )
+            .value,
+            19
+        );
+    }
+    let original = without_signatures(&zip(&log, ""));
+    let updated = renpy::apply(&game, &original, false, &[]).unwrap();
+    assert!(!member(&updated, "signatures").is_empty());
+    assert_eq!(member(&updated, "log"), log);
+    // Protocol 5 out-of-band buffer is deliberately unsupported by the scalar parser.
+    let complex = b"\x80\x05\x97.";
+    for persistent in [false, true] {
+        let original = if persistent {
+            rpg::deflate(complex, 3).unwrap()
+        } else {
+            zip(complex, "")
+        };
+        assert!(renpy::read(&game, &original, persistent)
+            .unwrap()
+            .0
+            .is_empty());
+        let updated = renpy::apply(&game, &original, persistent, &[]).unwrap();
+        assert_eq!(renpy::fixture_log(&updated, persistent).unwrap(), complex);
+        assert_eq!(
+            renpy::read(&game, &updated, persistent).unwrap().4.status,
+            "local"
+        );
+    }
+    let signed = renpy::apply(&game, &zip(&log, ""), false, &[]).unwrap();
+    export_fixture("resigned.save", &signed);
+    export_fixture("save-proof.json", &serde_json::to_vec(&json!({"log":STANDARD.encode(&log), "signatures":renpy::fixture_signatures(&signed, false).unwrap(), "trusted":fixtures["verifyingKey"]})).unwrap());
+    assert_eq!(
+        fs::read_to_string(dir.path().join("Ren'Py Data/tokens/security_keys.txt")).unwrap(),
+        fixtures["signingKey"].as_str().unwrap()
+    );
+}
+#[test]
+fn persistent_foreign_unsigned_invalid_resign_and_controlled_edit() {
+    let dir = tempfile::tempdir().unwrap();
+    let game = renpy_game(dir.path());
+    let raw = raw(&fixtures()["fixtures"][5], "persistent");
+    let foreign = p256::ecdsa::SigningKey::from(p256::SecretKey::from_slice(&[7; 32]).unwrap());
+    for signature in [
+        String::new(),
+        fixtures()["fixtures"][5]["persistentSignatures"]
+            .as_str()
+            .unwrap()
+            .into(),
+        renpy::fixture_signature(&foreign, &raw).unwrap(),
+        "corrupt signature\n".into(),
+    ] {
+        let mut original = rpg::deflate(&raw, 3).unwrap();
+        original.extend_from_slice(signature.as_bytes());
+        let resigned = renpy::apply(&game, &original, true, &[]).unwrap();
+        assert_eq!(renpy::fixture_log(&resigned, true).unwrap(), raw);
+        assert_eq!(
+            renpy::read(&game, &resigned, true).unwrap().4.status,
+            "local"
+        );
+        let fields = renpy::read(&game, &original, true).unwrap().0;
+        let updated = renpy::apply(
+            &game,
+            &original,
+            true,
+            &[change(field(&fields, "money"), json!(27))],
+        )
+        .unwrap();
+        assert_eq!(
+            field(&renpy::read(&game, &updated, true).unwrap().0, "money").value,
+            27
+        );
+        assert_eq!(
+            renpy::read(&game, &updated, true).unwrap().4.status,
+            "local"
+        );
+        export_fixture("resigned-persistent", &updated);
+        export_fixture("persistent-proof.json", &serde_json::to_vec(&json!({"log":STANDARD.encode(renpy::fixture_log(&updated, true).unwrap()), "signatures":renpy::fixture_signatures(&updated, true).unwrap(), "trusted":fixtures()["verifyingKey"]})).unwrap());
+    }
+    let compressed = rpg::deflate(&raw, 3).unwrap();
+    assert!(renpy::apply(&game, &compressed[..compressed.len() - 2], true, &[]).is_err());
+    let mut invalid_utf8 = compressed;
+    invalid_utf8.extend_from_slice(&[255, 254]);
+    assert_eq!(
+        renpy::read(&game, &invalid_utf8, true).unwrap().4.status,
+        "invalid"
+    );
+    renpy::apply(&game, &invalid_utf8, true, &[]).unwrap();
+}
+#[test]
+fn target_tokens_multiple_keys_missing_invalid_no_fallback_or_external_key_use() {
+    let dir = tempfile::tempdir().unwrap();
+    let game = renpy_game(dir.path());
+    let key_file = dir.path().join("Ren'Py Data/tokens/security_keys.txt");
+    let fixture = fixtures();
+    let log = raw(&fixture["fixtures"][5], "log");
+    let original = zip(&log, "");
+    for text in [
+        "",
+        "signing-key invalid\n",
+        fixture["verifyingKey"].as_str().unwrap(),
+    ] {
+        fs::write(&key_file, text).unwrap();
+        assert!(!renpy::read(&game, &original, false).unwrap().4.can_resign);
+        assert!(renpy::apply(&game, &original, false, &[]).is_err());
+    }
+    fs::remove_file(&key_file).unwrap();
+    assert!(renpy::apply(&game, &original, false, &[]).is_err());
+    fs::write(
+        &key_file,
+        format!(
+            "signing-key invalid\n{}\n{}",
+            fixture["verifyingKey"].as_str().unwrap(),
+            fixture["signingKey"].as_str().unwrap()
+        ),
+    )
+    .unwrap();
+    let updated = renpy::apply(&game, &original, false, &[]).unwrap();
+    assert_eq!(
+        renpy::read(&game, &updated, false).unwrap().4.status,
+        "local"
+    );
+    let second = p256::SecretKey::from_slice(&[8; 32]).unwrap();
+    let second = format!(
+        "signing-key {}\n",
+        STANDARD.encode(second.to_sec1_der().unwrap().as_slice())
+    );
+    fs::write(
+        &key_file,
+        format!("{second}{}", fixture["signingKey"].as_str().unwrap()),
+    )
+    .unwrap();
+    let updated = renpy::apply(&game, &original, false, &[]).unwrap();
+    assert_eq!(
+        renpy::read(&game, &updated, false).unwrap().4.status,
+        "local"
+    );
+    // Explicit environment override follows official priority and never falls back.
+    let custom = dir.path().join("custom");
+    assert_eq!(
+        renpy::key_paths_with(&game, Some(&custom), Some(dir.path())).unwrap(),
+        vec![custom.join("tokens/security_keys.txt")]
+    );
+    let paths = renpy::key_paths_with(&game, Some(&custom), Some(dir.path())).unwrap();
+    assert!(renpy::fixture_keys(&paths, &log, "").is_err());
+    fs::create_dir_all(custom.join("tokens")).unwrap();
+    fs::write(&paths[0], &second).unwrap();
+    let chosen = renpy::fixture_keys(&paths, &log, "").unwrap();
+    assert_eq!(
+        chosen,
+        p256::ecdsa::SigningKey::from(p256::SecretKey::from_slice(&[8; 32]).unwrap())
+    );
+    assert_eq!(
+        renpy::key_paths_with(&game, None, Some(dir.path())).unwrap(),
+        vec![key_file.clone()]
+    );
+    let default_dir = tempfile::tempdir().unwrap();
+    let default_game = self::game(default_dir.path());
+    assert_eq!(
+        renpy::key_paths_with(&default_game, None, Some(dir.path())).unwrap(),
+        vec![dir.path().join("RenPy/tokens/security_keys.txt")]
+    );
+    // Nested executable determines the nearest Ren'Py Data, not a parent/unrelated store.
+    fs::create_dir_all(dir.path().join("nested/Ren'Py Data/tokens")).unwrap();
+    fs::write(
+        dir.path()
+            .join("nested/Ren'Py Data/tokens/security_keys.txt"),
+        "signing-key invalid",
+    )
+    .unwrap();
+    let mut nested = game.clone();
+    nested.main_executable = Some("nested/game.exe".into());
+    assert!(renpy::apply(&nested, &original, false, &[]).is_err());
+}
+#[test]
+fn external_picker_grants_game_binding_revision_expiry_failure_and_no_backups() {
+    let dir = tempfile::tempdir().unwrap();
+    let game = renpy_game(dir.path());
+    let external = dir.path().join("external");
+    fs::create_dir(&external).unwrap();
+    let path = external.join("outside.save");
+    let original = zip(&raw(&fixtures()["fixtures"][5], "log"), "");
+    fs::write(&path, &original).unwrap();
+    let grants = ExternalSaves::default();
+    assert!(read(&game, &path.display().to_string()).is_err());
+    let doc = grants.choose(&game, &path).unwrap();
+    assert!(doc.slot.external);
+    let id = &doc.slot.id;
+    let mut other = game.clone();
+    other.id = "other".into();
+    assert!(grants.read(&other, id).is_err());
+    assert!(grants.write(&game, id, &doc.revision, None, false).is_err());
+    let updated = grants.write(&game, id, &doc.revision, None, true).unwrap();
+    assert_eq!(updated.signature.unwrap().status, "local");
+    assert_eq!(
+        member(&fs::read(&path).unwrap(), "log"),
+        member(&original, "log")
+    );
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        let held = OpenOptions::new()
+            .read(true)
+            .share_mode(1)
+            .open(&path)
+            .unwrap();
+        let before = fs::read(&path).unwrap();
+        assert!(grants
+            .write(&game, id, &updated.revision, None, true)
+            .is_err());
+        assert_eq!(fs::read(&path).unwrap(), before);
+        assert_eq!(fs::read_dir(&external).unwrap().count(), 1);
+        drop(held);
+    }
+    fs::write(&path, &original).unwrap();
+    assert!(grants.read(&game, id).is_err());
+    assert!(grants
+        .write(&game, id, &updated.revision, None, true)
+        .is_err());
+    let refreshed = grants.choose(&game, &path).unwrap();
+    grants
+        .0
+        .lock()
+        .unwrap()
+        .get_mut(&refreshed.slot.id)
+        .unwrap()
+        .created -= std::time::Duration::from_secs(7201);
+    assert!(grants.read(&game, &refreshed.slot.id).is_err());
+    grants.release(&game.id).unwrap();
+    assert!(grants.read(&game, id).is_err());
+    fs::write(&path, zip(b"\x80\x05\x97.", "")).unwrap();
+    let complex = grants.choose(&game, &path).unwrap();
+    assert!(complex.fields.is_empty());
+    let signed = grants
+        .write(&game, &complex.slot.id, &complex.revision, None, true)
+        .unwrap();
+    assert_eq!(signed.signature.unwrap().status, "local");
+    assert_eq!(member(&fs::read(&path).unwrap(), "log"), b"\x80\x05\x97.");
+    fs::write(external.join("invalid.save"), b"not a zip").unwrap();
+    assert!(grants
+        .choose(&game, &external.join("invalid.save"))
+        .is_err());
+    fs::write(external.join("script.rpy"), b"no").unwrap();
+    assert!(grants.choose(&game, &external.join("script.rpy")).is_err());
+}
+#[test]
+fn discovery_skips_disappearing_files_but_propagates_access_errors() {
+    let dir = tempfile::tempdir().unwrap();
+    let game = game(dir.path());
+    fs::create_dir(dir.path().join("save")).unwrap();
+    for name in ["file1.rpgsave", "file2.rpgsave"] {
+        fs::write(dir.path().join("save").join(name), b"fixture").unwrap();
+    }
+    let (catalog, _) = discover_with(&game, |path| {
+        if path.file_name().unwrap() == "file1.rpgsave" {
+            fs::remove_file(path).unwrap();
+        }
+    })
+    .unwrap();
+    assert_eq!(catalog.slots.len(), 1);
+    assert!(catalog.slots[0].name.contains("file2"));
+    assert!(transient::<()>(Err(std::io::Error::from(
+        std::io::ErrorKind::PermissionDenied
+    )))
+    .is_err());
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        let _held = OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .custom_flags(0x02000000)
+            .open(dir.path().join("save"))
+            .unwrap();
+        assert!(list(&game).is_err());
+    }
+}
+#[test]
+fn editor_permit_and_file_tasks_exclude_each_other_until_write_finishes() {
+    let activity = Arc::new(Mutex::new(0));
+    let tasks = Arc::new(crate::jobs::TaskManager::default());
+    let dir = tempfile::tempdir().unwrap();
+    let imports = Arc::new(crate::importer::ImportStore::open(dir.path().join("imports")).unwrap());
+    let game = game(dir.path());
+    let (started_tx, started_rx) = std::sync::mpsc::channel();
+    let (finish_tx, finish_rx) = std::sync::mpsc::channel();
+    let count = activity.clone();
+    let jobs = tasks.clone();
+    let store = imports.clone();
+    let target = game.clone();
+    let writer = std::thread::spawn(move || {
+        let (_, _permit) = WritePermit::acquire(count, || {
+            if jobs.active() || store.blocks_game(&target) {
+                return Err(invalid("blocked"));
+            }
+            Ok(())
+        })
+        .unwrap();
+        started_tx.send(()).unwrap();
+        finish_rx.recv().unwrap();
+    });
+    started_rx.recv().unwrap();
+    // Same gate/check used by start_import_apply and start_version_rollback.
+    assert_eq!(*activity.lock().unwrap(), 1);
+    finish_tx.send(()).unwrap();
+    writer.join().unwrap();
+    assert_eq!(*activity.lock().unwrap(), 0);
+    let job = {
+        let _gate = activity.lock().unwrap();
+        tasks.begin("import_apply", String::new()).unwrap()
+    };
+    assert!(WritePermit::acquire(activity.clone(), || {
+        if tasks.active() || imports.blocks_game(&game) {
+            return Err(invalid("blocked"));
+        }
+        Ok(())
+    })
+    .is_err());
+    assert_eq!(*activity.lock().unwrap(), 0);
+    job.finish(Ok(Vec::new()));
+    let (_, permit) = WritePermit::acquire(activity.clone(), || Ok(())).unwrap();
+    assert_eq!(*activity.lock().unwrap(), 1);
+    drop(permit);
+    assert_eq!(*activity.lock().unwrap(), 0);
+    fs::write(
+        dir.path().join("imports/broken.json"),
+        b"invalid synthetic recovery record",
+    )
+    .unwrap();
+    let recovering = crate::importer::ImportStore::open(dir.path().join("imports")).unwrap();
+    assert!(WritePermit::acquire(activity.clone(), || {
+        if recovering.blocks_game(&game) {
+            return Err(invalid("恢复操作未完成"));
+        }
+        Ok(())
+    })
+    .is_err());
+    assert_eq!(*activity.lock().unwrap(), 0);
 }

@@ -10,7 +10,13 @@ export type SaveField = {
   reason: string | null;
   description: string | null;
 };
-export type SaveSlot = { id: string; name: string; format: string; modified: number };
+export type SaveSlot = {
+  id: string;
+  name: string;
+  format: string;
+  modified: number;
+  external?: boolean;
+};
 export type SaveCatalog = { slots: SaveSlot[]; warnings: string[] };
 export type SaveDocument = {
   slot: SaveSlot;
@@ -19,5 +25,10 @@ export type SaveDocument = {
   metadata: string[];
   screenshot: string | null;
   warnings: string[];
+  signature?: {
+    status: 'local' | 'foreign' | 'unsigned' | 'invalid' | 'unknown';
+    can_resign: boolean;
+    reason: string | null;
+  } | null;
 };
 export type SaveChange = { id: string; value: SaveValue };

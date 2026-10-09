@@ -3542,6 +3542,22 @@ button.save-editor-entry:active:not(:disabled) {
   align-items: center;
   gap: 10px;
 }
+.save-editor-signature {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 12px;
+}
+.save-editor-signature > span {
+  margin-right: auto;
+  color: var(--muted);
+}
+.save-editor-signature button {
+  min-height: 32px;
+  padding: 4px 10px;
+}
 .save-editor-toolbar label {
   margin: 0;
   font-size: 12px;
@@ -3565,14 +3581,22 @@ button.save-editor-entry:active:not(:disabled) {
   margin: 8px 0 10px;
   min-width: 0;
 }
-.save-editor-metadata img {
-  max-width: 72px;
-  max-height: 40px;
+.save-editor-metadata.is-renpy {
+  height: 40px;
+}
+.save-editor-preview {
+  flex: 0 0 72px;
+  height: 40px;
+}
+.save-editor-preview img {
+  width: 100%;
+  height: 100%;
   object-fit: contain;
   border-radius: 8px;
 }
 .save-editor-metadata-text {
   display: flex;
+  flex: 1;
   align-items: center;
   gap: 12px;
   min-width: 0;
@@ -3630,6 +3654,12 @@ button.save-editor-entry:active:not(:disabled) {
   margin-top: 10px;
   scrollbar-gutter: stable;
 }
+.save-editor-empty {
+  margin: 0;
+  padding: 16px 14px;
+  font-size: 12px;
+  line-height: 1.6;
+}
 .save-editor-field {
   height: var(--save-editor-row-height);
   display: flex;
@@ -3638,6 +3668,7 @@ button.save-editor-entry:active:not(:disabled) {
   padding: 6px 14px;
   border-bottom: 1px solid #edf3ff;
   box-sizing: border-box;
+  font-size: 13px;
 }
 .save-editor-field.is-changed {
   background: #f0f6ff;
@@ -3665,6 +3696,7 @@ button.save-editor-entry:active:not(:disabled) {
   height: 32px;
   padding: 5px 9px;
   flex-shrink: 0;
+  font-size: 12px;
 }
 .save-editor-field input.save-editor-switch {
   appearance: none;

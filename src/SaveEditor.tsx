@@ -6,6 +6,13 @@ import type { Game } from './types';
 import type { SaveCatalog, SaveDocument, SaveField, SaveChange } from './saveEditorTypes';
 
 const rowHeight = 56;
+const signatureLabels = {
+  local: '本机可信',
+  foreign: '外来有效',
+  unsigned: '无签名',
+  invalid: '签名无效',
+  unknown: '无法判断',
+};
 const categories: Record<string, string> = {
   variables: '变量 / 数值',
   switches: '开关',
@@ -24,18 +31,26 @@ export function SaveEditor({ game, onClose }: { game: Game; onClose: () => void 
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [pending, setPending] = useState<null | (() => void)>(null);
+  const [pendingTrust, setPendingTrust] = useState<null | (() => void)>(null);
+  const trusted = useRef(new Set<string>());
+  const lastNormalSlot = useRef('');
+  const externalSlots = useRef<SaveCatalog['slots']>([]);
   const alive = useRef(true);
   const active = useRef(false);
   const viewport = useRef<HTMLDivElement>(null);
   async function load(id: string) {
-    setDocument(null);
-    setSlotId(id);
     setDrafts({});
     setSearch('');
-    if (!id) return;
+    if (!id) {
+      setDocument(null);
+      setSlotId('');
+      return;
+    }
     const next = await api.readEditableSave(game.id, id);
     if (!alive.current) return;
+    setSlotId(id);
     setDocument(next);
+    if (next.slot.format === 'RenPy') lastNormalSlot.current = next.slot.id;
     setCategory(next.slot.format === 'Persistent' ? 'persistent' : 'variables');
   }
   async function run(action: () => Promise<void>) {
@@ -56,6 +71,7 @@ export function SaveEditor({ game, onClose }: { game: Game; onClose: () => void 
   async function refresh() {
     const next = await api.listEditableSaves(game.id);
     if (!alive.current) return;
+    next.slots = [...next.slots, ...externalSlots.current];
     setCatalog(next);
     await load(next.slots.some((slot) => slot.id === slotId) ? slotId : (next.slots[0]?.id ?? ''));
   }
@@ -64,6 +80,7 @@ export function SaveEditor({ game, onClose }: { game: Game; onClose: () => void 
     void run(refresh);
     return () => {
       alive.current = false;
+      void api.releaseExternalSaves(game.id).catch(() => {});
     };
     // The editor is mounted per game, and its first discovery uses no stale slot selection.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -102,11 +119,57 @@ export function SaveEditor({ game, onClose }: { game: Game; onClose: () => void 
           changes.push({ id: field.id, value });
         } else changes.push({ id: field.id, value: draft });
       }
-      const next = await api.applySaveEdits(game.id, document.slot.id, document.revision, changes);
+      const next = document.slot.external
+        ? await api.applySaveEdits(
+            game.id,
+            document.slot.id,
+            document.revision,
+            changes,
+            trusted.current.has(document.slot.id),
+          )
+        : await api.applySaveEdits(game.id, document.slot.id, document.revision, changes);
       if (!alive.current) return;
       setDocument(next);
       setDrafts({});
       setNotice('已保存，请回游戏重新读档。');
+    });
+  }
+  function trustBeforeWrite(action: () => void) {
+    if (
+      document &&
+      (document.slot.external || (document.signature && document.signature.status !== 'local')) &&
+      !trusted.current.has(document.slot.id)
+    )
+      setPendingTrust(() => action);
+    else action();
+  }
+  async function chooseExternal() {
+    await run(async () => {
+      const next = await api.chooseExternalRenpySave(game.id);
+      if (!next || !alive.current) return;
+      externalSlots.current.push(next.slot);
+      setCatalog((current) => ({ ...current, slots: [...current.slots, next.slot] }));
+      setDocument(next);
+      setSlotId(next.slot.id);
+      setDrafts({});
+      setSearch('');
+      setCategory(next.slot.format === 'Persistent' ? 'persistent' : 'variables');
+      if (next.slot.format === 'RenPy') lastNormalSlot.current = next.slot.id;
+    });
+  }
+  async function resign() {
+    if (!document) return;
+    await run(async () => {
+      const next = await api.resignRenpySave(
+        game.id,
+        document.slot.id,
+        document.revision,
+        trusted.current.has(document.slot.id),
+      );
+      if (!alive.current) return;
+      setDocument(next);
+      setDrafts({});
+      setNotice('已重新签名为本机存档，内容未修改。签名不保证不同游戏版本的兼容性。');
     });
   }
   const renpy = document?.slot.format === 'RenPy' || document?.slot.format === 'Persistent';
@@ -118,6 +181,12 @@ export function SaveEditor({ game, onClose }: { game: Game; onClose: () => void 
     [document, renpy],
   );
   function categorySlot(tab: string) {
+    if (tab === 'variables') {
+      const remembered = catalog.slots.find(
+        (slot) => slot.id === lastNormalSlot.current && slot.format === 'RenPy',
+      );
+      if (remembered) return remembered;
+    }
     return catalog.slots.find(
       (slot) => slot.format === (tab === 'persistent' ? 'Persistent' : 'RenPy'),
     );
@@ -209,7 +278,11 @@ export function SaveEditor({ game, onClose }: { game: Game; onClose: () => void 
               {document?.slot.format === 'Persistent' &&
                 ' Persistent 可能需要重启；运行中的游戏可能再次覆盖它。'}
             </p>
-            <button className="primary" disabled={busy || !dirty} onClick={() => void save()}>
+            <button
+              className="primary"
+              disabled={busy || !dirty}
+              onClick={() => trustBeforeWrite(() => void save())}
+            >
               {busy && dirty
                 ? '正在保存…'
                 : `保存修改${dirty ? ` (${Object.keys(drafts).length})` : ''}`}
@@ -240,6 +313,24 @@ export function SaveEditor({ game, onClose }: { game: Game; onClose: () => void 
             刷新
           </button>
         </div>
+        {(renpy || game.engine === "Ren'Py") && (
+          <div className="save-editor-signature">
+            <span>
+              签名：{document?.signature ? signatureLabels[document.signature.status] : '无法判断'}
+            </span>
+            <button disabled={busy} onClick={() => guarded(() => void chooseExternal())}>
+              选择外部 Ren’Py 存档
+            </button>
+            <button
+              className="save-editor-entry"
+              title={document?.signature?.reason ?? undefined}
+              disabled={busy || !document?.signature?.can_resign}
+              onClick={() => guarded(() => trustBeforeWrite(() => void resign()))}
+            >
+              重新签名为本机存档
+            </button>
+          </div>
+        )}
         {error && (
           <p className="error" role="alert">
             {error}
@@ -264,8 +355,7 @@ export function SaveEditor({ game, onClose }: { game: Game; onClose: () => void 
         )}
         {document && (
           <>
-            <div className="save-editor-metadata">
-              {document.screenshot && <img src={document.screenshot} alt="存档截图" />}
+            <div className={`save-editor-metadata${renpy ? ' is-renpy' : ''}`}>
               <div className="save-editor-metadata-text">
                 <span className="muted">
                   {new Date(document.slot.modified * 1000).toLocaleString()} ·{' '}
@@ -277,6 +367,11 @@ export function SaveEditor({ game, onClose }: { game: Game; onClose: () => void 
                   </span>
                 ))}
               </div>
+              {document.screenshot && (
+                <div className="save-editor-preview">
+                  <img src={document.screenshot} alt="存档截图" />
+                </div>
+              )}
             </div>
             <div className="save-editor-filters">
               <div className="save-editor-tabs" role="tablist" aria-label="存档字段分类">
@@ -331,7 +426,11 @@ export function SaveEditor({ game, onClose }: { game: Game; onClose: () => void 
               ) : (
                 fields.map(row)
               )}
-              {!fields.length && <p className="muted">没有符合条件的字段。</p>}
+              {!fields.length && (
+                <p className="muted save-editor-empty">
+                  {search.trim() ? '未找到匹配字段，请调整搜索关键词。' : '此页暂无可显示的字段。'}
+                </p>
+              )}
             </div>
           </>
         )}
@@ -351,6 +450,28 @@ export function SaveEditor({ game, onClose }: { game: Game; onClose: () => void 
               }}
             >
               放弃修改
+            </button>
+          </div>
+        </Modal>
+      )}
+      {pendingTrust && (
+        <Modal title="确认外部存档来源可信" variant="confirm" onClose={() => setPendingTrust(null)}>
+          <p>
+            仅对来源可信的存档重新签名。Ren’Py 读取 pickle
+            时可能执行其中的代码；重新签名后，游戏可能不再显示外来存档警告。签名不会验证存档内容是否安全，也不保证游戏版本兼容。
+          </p>
+          <div className="confirmation-actions">
+            <button onClick={() => setPendingTrust(null)}>取消</button>
+            <button
+              className="primary"
+              onClick={() => {
+                if (document) trusted.current.add(document.slot.id);
+                const action = pendingTrust;
+                setPendingTrust(null);
+                action();
+              }}
+            >
+              来源可信，继续
             </button>
           </div>
         </Modal>

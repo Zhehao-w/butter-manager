@@ -1,4 +1,4 @@
-//! Filename-only suggestions. Conflicting or complex tokens require manual input.
+//! Filename-only suggestions. Conflicting or unsupported tokens require manual input.
 #[derive(Debug)]
 enum Parsed {
     Absent,
@@ -6,7 +6,9 @@ enum Parsed {
     Ambiguous,
 }
 fn parse(value: &str) -> Parsed {
-    // Strip only supported game-file suffixes; complex version suffixes stay ambiguous.
+    let archive_free = without_archive_suffix(value);
+    let value = archive_free.as_str();
+    // Strip supported game-file suffixes; preserve recognized version qualifiers.
     let value = value
         .rsplit_once('.')
         .filter(|(_, extension)| {
@@ -46,10 +48,11 @@ fn parse(value: &str) -> Parsed {
             i += 1;
             continue;
         }
-        let (end, groups) = number(bytes, start);
+        let (numeric_end, groups) = number(bytes, start);
         if !(2..=4).contains(&groups) && !(long > 1 && groups == 1) {
             return Parsed::Ambiguous;
         }
+        let end = qualifier_end(value, numeric_end);
         if !simple_tail(&value[end..]) {
             return Parsed::Ambiguous;
         }
@@ -57,25 +60,27 @@ fn parse(value: &str) -> Parsed {
         i = end;
     }
     if found.is_empty() {
-        let text = value.trim_end_matches([' ', ')', ']', '】']);
-        let bytes = text.as_bytes();
-        let mut start = bytes.len();
-        while start > 0 && (bytes[start - 1].is_ascii_digit() || bytes[start - 1] == b'.') {
-            start -= 1;
-        }
-        if start < bytes.len()
-            && bytes[start].is_ascii_digit()
-            && (start == 0 || !bytes[start - 1].is_ascii_alphanumeric())
-        {
-            let (end, groups) = number(bytes, start);
-            let first = text[start..].split('.').next().unwrap_or("");
-            if end == bytes.len()
-                && (2..=4).contains(&groups)
-                && first.len() <= 3
-                && !(groups == 3 && first.parse::<u32>().unwrap_or(0) >= 20)
-            {
-                found.push(text[start..].into());
+        let mut start = 0;
+        while start < bytes.len() {
+            if !bytes[start].is_ascii_digit() {
+                start += 1;
+                continue;
             }
+            let (numeric_end, groups) = number(bytes, start);
+            let preceding = value[..start].chars().next_back();
+            let boundary = preceding.is_none_or(|c| {
+                !c.is_ascii() || c.is_ascii_whitespace() || matches!(c, '-' | '_' | '(' | '[')
+            });
+            let token = &value[start..numeric_end];
+            let first = token.split('.').next().unwrap_or("");
+            if boundary && groups >= 2 && first.len() <= 3 && !date_like(token) {
+                let end = qualifier_end(value, numeric_end);
+                if groups > 4 || !simple_tail(&value[end..]) {
+                    return Parsed::Ambiguous;
+                }
+                found.push(value[start..end].into());
+            }
+            start = numeric_end;
         }
     }
     let key = |s: &str| {
@@ -88,6 +93,79 @@ fn parse(value: &str) -> Parsed {
         1 => Parsed::Simple(found.remove(0)),
         _ => Parsed::Ambiguous,
     }
+}
+fn without_archive_suffix(value: &str) -> String {
+    let lower = value.to_ascii_lowercase();
+    let mut result = value.to_owned();
+    let mut ranges = Vec::new();
+    for suffix in [".7z", ".zip", ".rar"] {
+        for (start, _) in lower.match_indices(suffix) {
+            let end = start + suffix.len();
+            if value[end..].chars().next().is_none_or(|c| {
+                !c.is_ascii() || c.is_ascii_whitespace() || matches!(c, ')' | ']' | '}' | '_' | '-')
+            }) {
+                ranges.push(start..end);
+            }
+        }
+    }
+    ranges.sort_by_key(|r| std::cmp::Reverse(r.start));
+    for range in ranges {
+        // A boundary prevents joining a qualifier across an archive extension.
+        result.replace_range(range, "]");
+    }
+    result
+}
+// Keep qualifiers verbatim instead of silently turning e.g. 1.2beta into 1.2.
+fn qualifier_end(value: &str, numeric_end: usize) -> usize {
+    let tail = &value[numeric_end..];
+    let trimmed = tail.trim_start_matches(['.', '-', '_', ' ', '\t']);
+    let separator = tail.len() - trimmed.len();
+    let lower = trimmed.to_ascii_lowercase();
+    let length = [
+        "public", "final", "beta", "alpha", "demo", "fix", "vip", "rc", "ea",
+    ]
+    .iter()
+    .find(|tag| lower.starts_with(**tag))
+    .map(|tag| tag.len())
+    .or_else(|| {
+        (separator == 0
+            && lower
+                .as_bytes()
+                .first()
+                .is_some_and(u8::is_ascii_alphabetic))
+        .then_some(1)
+    });
+    let Some(length) = length else {
+        return numeric_end;
+    };
+    let mut end = numeric_end + separator + length;
+    if value.as_bytes().get(end) == Some(&b'-')
+        && value
+            .as_bytes()
+            .get(end + 1)
+            .is_some_and(u8::is_ascii_digit)
+    {
+        end += 1;
+    }
+    while value.as_bytes().get(end).is_some_and(u8::is_ascii_digit) {
+        end += 1;
+    }
+    if simple_tail(&value[end..]) {
+        end
+    } else {
+        numeric_end
+    }
+}
+fn date_like(token: &str) -> bool {
+    let parts: Vec<_> = token.split('.').collect();
+    parts.len() == 3
+        && parts[0].parse::<u32>().is_ok_and(|year| year >= 20)
+        && parts[1]
+            .parse::<u32>()
+            .is_ok_and(|month| (1..=12).contains(&month))
+        && parts[2]
+            .parse::<u32>()
+            .is_ok_and(|day| (1..=31).contains(&day))
 }
 fn number(bytes: &[u8], start: usize) -> (usize, usize) {
     let mut end = start;
@@ -120,6 +198,27 @@ fn simple_tail(tail: &str) -> bool {
     !next.is_ascii()
         || matches!(next, ' ' | '\t' | '_' | ')' | ']' | '}' | '+' | '[')
         || lower.starts_with("dlc")
+        || (next == '-' && package_tail(tail))
+}
+// Packaging labels describe the distribution, not a version prerelease suffix.
+fn package_tail(tail: &str) -> bool {
+    let tail = tail.trim_start_matches(['-', '_', ' ', '\t']);
+    if tail.is_empty() || tail.chars().next().is_some_and(|c| !c.is_ascii()) {
+        return true;
+    }
+    let lower = tail.to_ascii_lowercase();
+    for label in [
+        "windows", "android", "linux", "win", "mac", "pc", "x64", "x86",
+    ] {
+        if let Some(rest) = lower.strip_prefix(label) {
+            let rest = rest.trim_start_matches(|c: char| c.is_ascii_digit());
+            return rest.is_empty()
+                || rest.chars().next().is_some_and(|c| !c.is_ascii())
+                || rest.starts_with([')', ']', '}', ' '])
+                || (rest.starts_with(['-', '_']) && package_tail(rest));
+        }
+    }
+    false
 }
 pub fn simple_version(value: &str) -> Option<String> {
     match parse(value) {
@@ -171,29 +270,88 @@ mod tests {
             ("游戏v1.2.qsp", "v1.2"),
             ("游戏 1.2.HTML", "1.2"),
             ("游戏 Ver1.06.gam", "Ver1.06"),
+            ("v1.2beta", "v1.2beta"),
+            ("v1.2 rc1", "v1.2 rc1"),
+            ("V1.5.12.Fix4", "V1.5.12.Fix4"),
+            ("v1.2-rc1", "v1.2-rc1"),
+            ("Ver0.29.3b", "Ver0.29.3b"),
+            ("游戏v1.2beta.qsp", "v1.2beta"),
+            ("游戏V1.5.12.Fix4.html", "V1.5.12.Fix4"),
         ] {
             assert_eq!(simple_version(text).as_deref(), Some(expected), "{text}");
         }
         for text in [
             "dev1.2",
             "v1",
-            "v1.2beta",
-            "v1.2 rc1",
-            "V1.5.12.Fix4",
-            "v1.2-rc1",
             "v1.2.3.4.5",
             "v1.2 v2.0",
-            "Ver0.29.3b",
             "2026.10.05",
             "游戏 26.07.01",
             "游戏2",
-            "游戏v1.2beta.qsp",
-            "游戏V1.5.12.Fix4.html",
         ] {
             assert!(simple_version(text).is_none(), "{text}");
         }
         assert_eq!(suggest("游戏", Some("包装Ver1.06/Game.exe")).0, "Ver1.06");
         assert_eq!(suggest("游戏v1.2", Some("v2.0.exe")).0, "Unknown");
         assert_eq!(suggest("游戏v1.2beta", Some("v1.2.exe")).0, "Unknown");
+    }
+    #[test]
+    fn distribution_labels_and_translated_titles_do_not_hide_decimal_versions() {
+        for (name, version) in [
+            ("Ripples-0.5.0-pc2", "0.5.0"),
+            ("RiseoftheOrcsDarkMemories-3.6-pc", "3.6"),
+            ("Sara-0.9 莎拉 第二部", "0.9"),
+            ("SaradaRising-1.1.3-pc", "1.1.3"),
+            ("Agent 17_0.26.10-pc", "0.26.10"),
+            ("Another Chance -v1.66-pc 另一个机会", "v1.66"),
+            ("CampMourningWood-0.23.0.4-pc", "0.23.0.4"),
+            ("游戏 1.0完结 新鲜姐妹", "1.0"),
+            ("游戏1.2-pc", "1.2"),
+            ("PathOfDesire-0.4.0-欲望之路", "0.4.0"),
+            ("CityDevilRestart-0.3.0- 城市恶魔：重启", "0.3.0"),
+            ("LoSeSb-24.11.0-pc", "24.11.0"),
+            ("Game [1.2.3-win64]", "1.2.3"),
+            ("游戏-v1.2-pc-x64", "v1.2"),
+            ("Under_Your_Spell-0.4.0p-pc", "0.4.0p"),
+            ("MilaAI-1.5.4public-pc", "1.5.4public"),
+            ("That New Teacher-v0.9.0ea-pc 那位新老师", "v0.9.0ea"),
+            ("Harem_Hotel-v0.18-BETA-3 官方中文", "v0.18-BETA-3"),
+            ("游戏v1.03b", "v1.03b"),
+            ("游戏1.0.rar", "1.0"),
+            ("SummerClover v1.11.7z 夏色四葉草", "v1.11"),
+            ("Game-v1.2.zip-beta1", "v1.2"),
+        ] {
+            assert_eq!(simple_version(name).as_deref(), Some(version), "{name}");
+            assert_eq!(
+                suggest(name, Some("Game.exe")),
+                (version.into(), "folder_name".into())
+            );
+        }
+        for name in [
+            "游戏-v1.2-patch2",
+            "游戏-1.2arbitrary-pc",
+            "游戏-1.2.3.4.5-pc",
+            "游戏-26.07.01-pc",
+            "游戏-2026.10.05-pc",
+            "游戏2-pc",
+            "Chapter1_Ep.2-pc",
+            "Game32.exe",
+            "游戏-1.2-pcorporate",
+            "游戏-1.2 2.0-pc",
+        ] {
+            assert!(simple_version(name).is_none(), "{name}");
+        }
+        assert_eq!(
+            suggest(
+                "Runawaygirl Sweet Days V1.04",
+                Some("RunawayGirl_MultiLang_Ver1.06/RunawayGirl.exe")
+            ),
+            ("Unknown".into(), "unknown".into())
+        );
+        assert_eq!(suggest("Game-1.2-pc", Some("Game-2.0.exe")).0, "Unknown");
+        assert_eq!(
+            suggest("Game-1.2-pc", Some("Game-1.2.exe")),
+            ("1.2".into(), "folder_name".into())
+        );
     }
 }

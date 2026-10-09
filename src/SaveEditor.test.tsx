@@ -10,6 +10,9 @@ vi.mock('./api', () => ({
     listEditableSaves: vi.fn(),
     readEditableSave: vi.fn(),
     applySaveEdits: vi.fn(),
+    chooseExternalRenpySave: vi.fn(),
+    resignRenpySave: vi.fn(),
+    releaseExternalSaves: vi.fn(),
   },
 }));
 const game = { id: 'game', display_title: '游戏', play_status: 'PLAYING' } as Game;
@@ -46,6 +49,7 @@ function doc(id = 'one'): SaveDocument {
 }
 beforeEach(() => {
   vi.resetAllMocks();
+  vi.mocked(api.releaseExternalSaves).mockResolvedValue();
   vi.mocked(api.listEditableSaves).mockResolvedValue({
     slots: [doc().slot, doc('two').slot],
     warnings: [],
@@ -202,5 +206,137 @@ describe('Save Editor Lite', () => {
     render(<SaveEditor game={game} onClose={vi.fn()} />);
     await screen.findByLabelText('money');
     expect(screen.getByText(/运行中的游戏可能再次覆盖它/)).toBeTruthy();
+  });
+  it('remembers the selected normal RenPy slot across Persistent and falls back only when removed', async () => {
+    const one = doc('one'),
+      two = doc('two'),
+      persistent = doc('persistent');
+    one.slot.format = two.slot.format = 'RenPy';
+    persistent.slot.format = 'Persistent';
+    persistent.fields = [field('persistent.money', 10, 'number', 'persistent')];
+    const documents = { one, two, persistent };
+    vi.mocked(api.listEditableSaves).mockResolvedValue({
+      slots: [one.slot, two.slot, persistent.slot],
+      warnings: [],
+    });
+    vi.mocked(api.readEditableSave).mockImplementation(
+      async (_game, id) => documents[id as keyof typeof documents],
+    );
+    render(<SaveEditor game={game} onClose={vi.fn()} />);
+    await screen.findByLabelText('金钱');
+    const selection = screen.getByRole('combobox', { name: '存档槽位' });
+    fireEvent.change(selection, { target: { value: 'two' } });
+    await waitFor(() => expect(api.readEditableSave).toHaveBeenLastCalledWith('game', 'two'));
+    await screen.findByLabelText('金钱');
+    fireEvent.click(screen.getByRole('tab', { name: 'Persistent' }));
+    await screen.findByLabelText('persistent.money');
+    fireEvent.click(screen.getByRole('tab', { name: 'Variables' }));
+    await waitFor(() => expect(api.readEditableSave).toHaveBeenLastCalledWith('game', 'two'));
+    await screen.findByLabelText('金钱');
+    fireEvent.click(screen.getByRole('tab', { name: 'Persistent' }));
+    await screen.findByLabelText('persistent.money');
+    vi.mocked(api.listEditableSaves).mockResolvedValue({
+      slots: [one.slot, persistent.slot],
+      warnings: [],
+    });
+    fireEvent.click(screen.getByRole('button', { name: '刷新' }));
+    await waitFor(() => expect(api.listEditableSaves).toHaveBeenCalledTimes(2));
+    await screen.findByLabelText('persistent.money');
+    fireEvent.click(screen.getByRole('tab', { name: 'Variables' }));
+    await waitFor(() => expect(api.readEditableSave).toHaveBeenLastCalledWith('game', 'one'));
+  });
+  it('resigns without edits even when complex pickle fields cannot be displayed', async () => {
+    const normal = doc();
+    normal.slot.format = 'RenPy';
+    normal.fields = [];
+    normal.signature = { status: 'invalid', can_resign: true, reason: null };
+    vi.mocked(api.readEditableSave).mockResolvedValue(normal);
+    vi.mocked(api.resignRenpySave).mockResolvedValue({
+      ...normal,
+      signature: { status: 'local', can_resign: true, reason: null },
+    });
+    render(<SaveEditor game={game} onClose={vi.fn()} />);
+    await screen.findByText('签名：签名无效');
+    expect((screen.getByRole('button', { name: '保存修改' }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+    fireEvent.click(screen.getByRole('button', { name: '重新签名为本机存档' }));
+    fireEvent.click(
+      within(await screen.findByRole('dialog', { name: '确认外部存档来源可信' })).getByRole(
+        'button',
+        { name: '来源可信，继续' },
+      ),
+    );
+    await screen.findByText('签名：本机可信');
+    expect(api.resignRenpySave).toHaveBeenCalledWith('game', 'one', 'revision-1', true);
+    expect(api.applySaveEdits).not.toHaveBeenCalled();
+  });
+  it('requires trust confirmation before the first external write and releases picker grants', async () => {
+    const normal = doc();
+    normal.slot.format = 'RenPy';
+    const external = {
+      ...normal,
+      slot: { ...normal.slot, id: 'external-grant', external: true },
+      signature: { status: 'unsigned' as const, can_resign: true, reason: null },
+    };
+    vi.mocked(api.readEditableSave).mockResolvedValue(normal);
+    vi.mocked(api.chooseExternalRenpySave).mockResolvedValue(external);
+    vi.mocked(api.resignRenpySave).mockResolvedValue({
+      ...external,
+      revision: 'signed',
+      signature: { status: 'local', can_resign: true, reason: null },
+    });
+    const view = render(<SaveEditor game={game} onClose={vi.fn()} />);
+    await screen.findByLabelText('金钱');
+    fireEvent.click(screen.getByRole('button', { name: '选择外部 Ren’Py 存档' }));
+    await screen.findByText('签名：无签名');
+    fireEvent.click(screen.getByRole('button', { name: '重新签名为本机存档' }));
+    const warning = await screen.findByRole('dialog', { name: '确认外部存档来源可信' });
+    expect(api.resignRenpySave).not.toHaveBeenCalled();
+    fireEvent.click(within(warning).getByRole('button', { name: '来源可信，继续' }));
+    await screen.findByText('签名：本机可信');
+    expect(api.resignRenpySave).toHaveBeenCalledWith('game', 'external-grant', 'revision-1', true);
+    fireEvent.click(screen.getByRole('button', { name: '重新签名为本机存档' }));
+    await waitFor(() => expect(api.resignRenpySave).toHaveBeenCalledTimes(2));
+    expect(screen.queryByRole('dialog', { name: '确认外部存档来源可信' })).toBeNull();
+    view.unmount();
+    expect(api.releaseExternalSaves).toHaveBeenCalledWith('game');
+  });
+  it('confirms dirty edits before resigning and preserves the current slot when the picker is cancelled', async () => {
+    const normal = doc();
+    normal.slot.format = 'RenPy';
+    normal.signature = { status: 'foreign', can_resign: true, reason: null };
+    vi.mocked(api.readEditableSave).mockResolvedValue(normal);
+    vi.mocked(api.chooseExternalRenpySave).mockResolvedValue(null);
+    vi.mocked(api.resignRenpySave).mockResolvedValue(normal);
+    render(<SaveEditor game={game} onClose={vi.fn()} />);
+    fireEvent.change(await screen.findByLabelText('金钱'), { target: { value: '9' } });
+    fireEvent.click(screen.getByRole('button', { name: '重新签名为本机存档' }));
+    const confirmation = await screen.findByRole('dialog', { name: '放弃未保存的存档修改？' });
+    expect(api.resignRenpySave).not.toHaveBeenCalled();
+    fireEvent.click(within(confirmation).getByRole('button', { name: '继续编辑' }));
+    expect((screen.getByLabelText('金钱') as HTMLInputElement).value).toBe('9');
+    fireEvent.click(screen.getByRole('button', { name: '选择外部 Ren’Py 存档' }));
+    fireEvent.click(
+      within(await screen.findByRole('dialog', { name: '放弃未保存的存档修改？' })).getByRole(
+        'button',
+        { name: '放弃修改' },
+      ),
+    );
+    await waitFor(() => expect(api.chooseExternalRenpySave).toHaveBeenCalled());
+    await screen.findByText('签名：外来有效');
+  });
+  it('shows missing signing key reason and disables resign without hiding the document', async () => {
+    const normal = doc();
+    normal.slot.format = 'RenPy';
+    normal.signature = { status: 'unknown', can_resign: false, reason: '缺少本机 signing-key' };
+    normal.warnings = ['缺少本机 signing-key'];
+    vi.mocked(api.readEditableSave).mockResolvedValue(normal);
+    render(<SaveEditor game={game} onClose={vi.fn()} />);
+    await screen.findByText('签名：无法判断');
+    expect(screen.getByText('缺少本机 signing-key')).toBeTruthy();
+    expect(
+      (screen.getByRole('button', { name: '重新签名为本机存档' }) as HTMLButtonElement).disabled,
+    ).toBe(true);
   });
 });

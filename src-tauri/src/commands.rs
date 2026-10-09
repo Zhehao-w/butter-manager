@@ -24,6 +24,7 @@ struct AppState {
     duplicate_plans:
         Arc<Mutex<std::collections::HashMap<String, crate::import_duplicate::DuplicatePlan>>>,
     running: Arc<crate::runtime::RunningGames>,
+    external_saves: Arc<crate::save_editor::ExternalSaves>,
 }
 type CommandResult<T> = std::result::Result<T, String>;
 #[tauri::command]
@@ -1020,8 +1021,14 @@ async fn read_editable_save(
     save_id: String,
 ) -> CommandResult<crate::save_editor::Document> {
     let game = with_db(&state, |db| db.game(&game_id))?;
+    let external = state.external_saves.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        crate::save_editor::read(&game, &save_id).map_err(|e| e.to_string())
+        if save_id.starts_with("external-") {
+            external.read(&game, &save_id)
+        } else {
+            crate::save_editor::read(&game, &save_id)
+        }
+        .map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -1033,13 +1040,101 @@ async fn apply_save_edits(
     save_id: String,
     revision: String,
     changes: Vec<crate::save_editor::Change>,
+    source_trusted: Option<bool>,
 ) -> CommandResult<crate::save_editor::Document> {
-    let game = with_db(&state, |db| db.game(&game_id))?;
+    let (game, permit) = save_write_permit(&state, &game_id)?;
+    let external = state.external_saves.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        crate::save_editor::apply(&game, &save_id, &revision, &changes).map_err(|e| e.to_string())
+        let _permit = permit;
+        if save_id.starts_with("external-") {
+            external.write(
+                &game,
+                &save_id,
+                &revision,
+                Some(&changes),
+                source_trusted.unwrap_or(false),
+            )
+        } else {
+            crate::save_editor::apply(&game, &save_id, &revision, &changes)
+        }
+        .map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| e.to_string())?
+}
+fn save_write_permit(
+    state: &AppState,
+    game_id: &str,
+) -> CommandResult<(Game, crate::save_editor::WritePermit)> {
+    crate::save_editor::WritePermit::acquire(state.activity.clone(), || {
+        let game = state
+            .db
+            .lock()
+            .map_err(|_| Error::Validation("数据库锁不可用".into()))?
+            .game(game_id)?;
+        if state.tasks.active() || state.imports.blocks_game(&game) {
+            return Err(Error::Validation(
+                "当前有管理器文件任务或该游戏的未恢复导入操作，请先完成或恢复后再保存存档".into(),
+            ));
+        }
+        Ok(game)
+    })
+    .map_err(|e| e.to_string())
+}
+#[tauri::command]
+async fn resign_renpy_save(
+    state: State<'_, AppState>,
+    game_id: String,
+    save_id: String,
+    revision: String,
+    source_trusted: bool,
+) -> CommandResult<crate::save_editor::Document> {
+    let (game, permit) = save_write_permit(&state, &game_id)?;
+    let external = state.external_saves.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let _permit = permit;
+        if save_id.starts_with("external-") {
+            external.write(&game, &save_id, &revision, None, source_trusted)
+        } else {
+            crate::save_editor::resign(&game, &save_id, &revision)
+        }
+        .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+async fn choose_external_renpy_save(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    game_id: String,
+) -> CommandResult<Option<crate::save_editor::Document>> {
+    let game = with_db(&state, |db| db.game(&game_id))?;
+    let external = state.external_saves.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(file) = app
+            .dialog()
+            .file()
+            .set_title("选择外部 Ren’Py 存档（.save 或 persistent）")
+            .blocking_pick_file()
+        else {
+            return Ok(None);
+        };
+        let path = file.into_path().map_err(|e| e.to_string())?;
+        external
+            .choose(&game, &path)
+            .map(Some)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+fn release_external_saves(state: State<'_, AppState>, game_id: String) -> CommandResult<()> {
+    state
+        .external_saves
+        .release(&game_id)
+        .map_err(|e| e.to_string())
 }
 #[tauri::command]
 async fn open_save_folder(
@@ -1182,6 +1277,7 @@ fn initialize(app: &tauri::AppHandle) -> std::result::Result<(), Box<dyn std::er
         deletion_plans: Arc::new(Mutex::new(std::collections::HashMap::new())),
         duplicate_plans: Arc::new(Mutex::new(std::collections::HashMap::new())),
         running: Arc::new(crate::runtime::RunningGames::default()),
+        external_saves: Arc::new(crate::save_editor::ExternalSaves::default()),
     });
     // Create the WebView after validating and opening this build's data directory.
     let window =
@@ -1279,6 +1375,9 @@ pub fn run() {
             list_editable_saves,
             read_editable_save,
             apply_save_edits,
+            resign_renpy_save,
+            choose_external_renpy_save,
+            release_external_saves,
             choose_save_directory,
             preview_mtool_bat,
             choose_directory,

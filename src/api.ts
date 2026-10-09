@@ -26,8 +26,19 @@ export const api = {
   listEditableSaves: (gameId: string) => invoke<SaveCatalog>('list_editable_saves', { gameId }),
   readEditableSave: (gameId: string, saveId: string) =>
     invoke<SaveDocument>('read_editable_save', { gameId, saveId }),
-  applySaveEdits: (gameId: string, saveId: string, revision: string, changes: SaveChange[]) =>
-    invoke<SaveDocument>('apply_save_edits', { gameId, saveId, revision, changes }),
+  applySaveEdits: (
+    gameId: string,
+    saveId: string,
+    revision: string,
+    changes: SaveChange[],
+    sourceTrusted?: boolean,
+  ) =>
+    invoke<SaveDocument>('apply_save_edits', { gameId, saveId, revision, changes, sourceTrusted }),
+  resignRenpySave: (gameId: string, saveId: string, revision: string, sourceTrusted: boolean) =>
+    invoke<SaveDocument>('resign_renpy_save', { gameId, saveId, revision, sourceTrusted }),
+  chooseExternalRenpySave: (gameId: string) =>
+    invoke<SaveDocument | null>('choose_external_renpy_save', { gameId }),
+  releaseExternalSaves: (gameId: string) => invoke<void>('release_external_saves', { gameId }),
   openDataDirectory: () => invoke<void>('open_data_directory'),
   appearance: () => invoke<Appearance>('get_appearance'),
   saveAppearance: (appearance: Appearance) => invoke<Appearance>('save_appearance', { appearance }),

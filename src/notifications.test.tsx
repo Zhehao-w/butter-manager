@@ -14,19 +14,19 @@ function Fixture() {
     </>
   );
 }
-it('dismisses success after six seconds and errors after ten without resurrecting an older message', () => {
+it('dismisses success after three seconds and errors after six without resurrecting an older message', () => {
   render(<Fixture />);
   fireEvent.click(screen.getByText('成功'));
-  act(() => vi.advanceTimersByTime(5999));
+  act(() => vi.advanceTimersByTime(2999));
   expect(screen.getByRole('status').textContent).toContain('扫描完成');
   act(() => vi.advanceTimersByTime(1));
   expect(screen.queryByRole('status')).toBeNull();
   fireEvent.click(screen.getByText('成功'));
-  act(() => vi.advanceTimersByTime(5000));
+  act(() => vi.advanceTimersByTime(2000));
   fireEvent.click(screen.getByText('失败'));
   act(() => vi.advanceTimersByTime(1000));
   expect(screen.getByRole('alert').textContent).toContain('扫描失败');
-  act(() => vi.advanceTimersByTime(9000));
+  act(() => vi.advanceTimersByTime(5000));
   expect(screen.queryByRole('alert')).toBeNull();
   expect(screen.queryByRole('status')).toBeNull();
 });
@@ -43,7 +43,7 @@ it('pauses while hovered or keyboard-focused, resumes after both leave, and allo
   act(() => vi.advanceTimersByTime(20000));
   expect(screen.getByRole('status')).toBe(toast);
   fireEvent.blur(close);
-  act(() => vi.advanceTimersByTime(6000));
+  act(() => vi.advanceTimersByTime(3000));
   expect(screen.queryByRole('status')).toBeNull();
   fireEvent.click(screen.getByText('失败'));
   fireEvent.click(screen.getByRole('button', { name: '关闭通知' }));
@@ -67,8 +67,8 @@ it('does not postpone expiry when unrelated renders occur', () => {
   const dismiss = vi.fn();
   const notice = { id: 1, message: '完成', kind: 'info' as const };
   const { rerender } = render(<NotificationToast notice={notice} onDismiss={dismiss} />);
-  act(() => vi.advanceTimersByTime(4000));
-  rerender(<NotificationToast notice={{ ...notice }} onDismiss={dismiss} />);
   act(() => vi.advanceTimersByTime(2000));
+  rerender(<NotificationToast notice={{ ...notice }} onDismiss={dismiss} />);
+  act(() => vi.advanceTimersByTime(1000));
   expect(dismiss).toHaveBeenCalledExactlyOnceWith(1);
 });

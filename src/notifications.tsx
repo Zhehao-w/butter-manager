@@ -28,7 +28,7 @@ export function NotificationToast({
   const paused = hovered || focused;
   useEffect(() => {
     if (paused) return;
-    const timer = setTimeout(() => onDismiss(notice.id), notice.kind === 'error' ? 10000 : 6000);
+    const timer = setTimeout(() => onDismiss(notice.id), notice.kind === 'error' ? 6000 : 3000);
     return () => clearTimeout(timer);
   }, [notice.id, notice.kind, paused, onDismiss]);
   return (

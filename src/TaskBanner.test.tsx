@@ -42,7 +42,7 @@ it('keeps active progress and cancellation visible, then fades after completion'
       onViewResults={view}
     />,
   );
-  act(() => vi.advanceTimersByTime(5000));
+  act(() => vi.advanceTimersByTime(3000));
   expect(screen.getByRole('status').classList.contains('fading')).toBe(true);
   expect(
     screen.getByRole('status').closest('.task-banner-slot')?.classList.contains('expanded'),
@@ -65,7 +65,7 @@ it('pauses dismissal while hovering and keeps failures available until dismissed
   act(() => vi.advanceTimersByTime(10000));
   expect(screen.getByRole('status').classList.contains('fading')).toBe(false);
   fireEvent.mouseLeave(screen.getByRole('status'));
-  act(() => vi.advanceTimersByTime(5000));
+  act(() => vi.advanceTimersByTime(3000));
   act(() => vi.advanceTimersByTime(300));
   act(() => vi.advanceTimersByTime(300));
   expect(screen.queryByRole('status')).toBeNull();

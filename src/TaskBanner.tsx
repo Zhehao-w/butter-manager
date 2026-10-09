@@ -44,7 +44,7 @@ export function TaskBanner({
     if (dismissed || collapsed) return;
     setFading(false);
     if (running || paused || page.status === 'failed') return;
-    const timer = setTimeout(() => setFading(true), 5000);
+    const timer = setTimeout(() => setFading(true), 3000);
     return () => clearTimeout(timer);
   }, [page.id, page.status, running, paused, dismissed, collapsed]);
   useEffect(() => {

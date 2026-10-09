@@ -122,6 +122,86 @@ beforeEach(() => {
   vi.mocked(api.cancel).mockResolvedValue();
 });
 describe('batch import flow', () => {
+  it.each([
+    [
+      '妹系罗盘～在无人岛的悠闲慢活～シスターズコンパス～妹たちと無人島でラブラブスローライフ',
+      '姊妹指南针～与姊妹们在无人岛上的甜蜜慢生活～シスターズコンパス～ AI汉化 Ver1.02',
+      '日文主标题一致，一方缺少副标题；请确认',
+    ],
+    ['鸣人的假期 v1.0 内部赞助付费完结版', '鸣人的假期 v1.0', '中文标题一致，附加描述不同；请确认'],
+    ['My Best Deal v4.8 女神的最佳交易', 'My_Best_Deal-4.3.5-pc', '英文标题词组一致；请确认'],
+    [
+      'ReSister ― 与妹妹两人的秘密同居生活 ― v1.1.0 DLC',
+      'ReSister-与妹妹的秘密同居生活 v1.03',
+      '中文标题相近；请确认 · DLC 标记不同，请确认是否为完整更新包',
+    ],
+  ])(
+    'confirms the recommended existing game for %s before creating an update plan',
+    async (title, oldTitle, reason) => {
+      const incoming = {
+        ...candidate,
+        install_path: `D:/Incoming/${title}`,
+        suggested_title: title,
+      };
+      const existing = { ...oldGame, canonical_title: oldTitle, display_title: oldTitle };
+      vi.mocked(api.chooseImportSources).mockResolvedValue([incoming.install_path]);
+      vi.mocked(api.job).mockResolvedValue({ ...page, changes: [incoming] });
+      vi.mocked(api.importMatches).mockResolvedValue({
+        [incoming.install_path]: [
+          {
+            id: 'old',
+            title: oldTitle,
+            version: 'v1.0',
+            path: existing.install_path,
+            reason,
+            auto_associate: false,
+          },
+        ],
+      });
+      render(<ImportPage {...props()} games={[existing]} />);
+      fireEvent.click(screen.getByRole('button', { name: '添加文件夹' }));
+      const associate = await screen.findByRole('button', { name: `关联：${oldTitle}` });
+      expect(screen.getByText(reason)).toBeTruthy();
+      expect(screen.queryByText('已关联库中游戏')).toBeNull();
+      fireEvent.click(screen.getByRole('checkbox', { name: `选择 ${title}` }));
+      const generate = screen.getByRole('button', {
+        name: '生成导入与更新计划（1）',
+      }) as HTMLButtonElement;
+      expect(generate.disabled).toBe(true);
+      fireEvent.click(associate);
+      await screen.findByRole('radiogroup', { name: '存档处理' });
+      expect(generate.disabled).toBe(false);
+      fireEvent.click(generate);
+      await waitFor(() =>
+        expect(api.importPlan).toHaveBeenCalledWith('analysis', [
+          expect.objectContaining({ existing_id: 'old', source: incoming.install_path }),
+        ]),
+      );
+      expect(api.importApply).not.toHaveBeenCalled();
+    },
+  );
+  it('searches and explicitly links an existing game with a long multilingual title', async () => {
+    const title = '阿克梅西亚～后宫怀孕猎人生活～ アクメシア〜ハーレム孕ませ狩人生活〜';
+    const existing = {
+      ...oldGame,
+      display_title: title,
+      canonical_title: title,
+      install_path: `E:/Library/${title}`,
+    };
+    render(<ImportPage {...props()} games={[existing]} />);
+    fireEvent.click(screen.getByRole('button', { name: '添加文件夹' }));
+    fireEvent.click(await screen.findByRole('button', { name: '关联已有游戏…' }));
+    const modal = screen.getByRole('dialog', { name: '关联已有游戏' });
+    fireEvent.change(within(modal).getByRole('textbox', { name: '关联游戏搜索' }), {
+      target: { value: '阿克' },
+    });
+    const option = within(modal).getByRole('button', { name: new RegExp(title.split('～')[0]) });
+    expect(within(option).getByText(title).getAttribute('title')).toBe(title);
+    fireEvent.click(option);
+    expect(screen.queryByRole('dialog', { name: '关联已有游戏' })).toBeNull();
+    expect(screen.getByRole('button', { name: `已关联：${title}` })).toBeTruthy();
+    expect(api.importApply).not.toHaveBeenCalled();
+  });
   it('shows progress only after folder selection, and leaves cancellation unchanged', async () => {
     let finishPicking!: (sources: string[]) => void;
     vi.mocked(api.chooseImportSources).mockImplementation(
@@ -581,30 +661,47 @@ describe('batch import flow', () => {
     });
     expect(viewport().scrollTop).toBe(0);
   });
-  it('requires an explicit scope for a wrapper and keeps cancellation read-only', async () => {
-    const root = 'D:/Wrapped Game';
-    vi.mocked(api.chooseImportSources).mockResolvedValue([root]);
-    vi.mocked(api.discoverImportSources).mockResolvedValue({
-      sources: [],
-      choices: [{ root, children: [`${root}/bin`] }],
-      warnings: [],
-    });
-    render(<ImportPage {...props()} />);
-    fireEvent.click(screen.getByRole('button', { name: '添加文件夹' }));
-    let modal = await screen.findByRole('dialog', { name: '确认文件夹范围' });
-    expect(
-      (within(modal).getByRole('button', { name: '开始分析' }) as HTMLButtonElement).disabled,
-    ).toBe(true);
-    expect(api.importAnalyze).not.toHaveBeenCalled();
-    fireEvent.click(within(modal).getByRole('button', { name: '取消' }));
-    expect(api.importAnalyze).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: '添加文件夹' }));
-    modal = await screen.findByRole('dialog', { name: '确认文件夹范围' });
-    fireEvent.change(within(modal).getByRole('combobox'), { target: { value: 'whole' } });
-    fireEvent.click(within(modal).getByRole('button', { name: '开始分析' }));
-    await waitFor(() => expect(api.importAnalyze).toHaveBeenCalledWith([root]));
-    expect(api.importApply).not.toHaveBeenCalled();
-  });
+  it.each(['whole', 'children'] as const)(
+    'selects wrapper scope %s with one click and keeps cancellation read-only',
+    async (scope) => {
+      const root = 'D:/Wrapped Game';
+      vi.mocked(api.chooseImportSources).mockResolvedValue([root]);
+      vi.mocked(api.discoverImportSources).mockResolvedValue({
+        sources: [],
+        choices: [{ root, children: [`${root}/bin`] }],
+        warnings: [],
+      });
+      render(<ImportPage {...props()} />);
+      fireEvent.click(screen.getByRole('button', { name: '添加文件夹' }));
+      let modal = await screen.findByRole('dialog', { name: '确认文件夹范围' });
+      expect(
+        (within(modal).getByRole('button', { name: '开始分析' }) as HTMLButtonElement).disabled,
+      ).toBe(true);
+      expect(api.importAnalyze).not.toHaveBeenCalled();
+      expect(within(modal).queryByRole('combobox')).toBeNull();
+      expect(
+        within(modal)
+          .getAllByRole('radio')
+          .every((radio) => !(radio as HTMLInputElement).checked),
+      ).toBe(true);
+      fireEvent.click(within(modal).getByRole('button', { name: '取消' }));
+      expect(api.importAnalyze).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole('button', { name: '添加文件夹' }));
+      modal = await screen.findByRole('dialog', { name: '确认文件夹范围' });
+      const option = within(modal).getByRole('radio', {
+        name: scope === 'whole' ? '整个文件夹作为一个游戏' : '分别导入里面的 1 个游戏',
+      });
+      fireEvent.click(option.closest('label')!);
+      expect((option as HTMLInputElement).checked).toBe(true);
+      expect(option.closest('label')?.classList.contains('selected')).toBe(true);
+      expect(api.importAnalyze).not.toHaveBeenCalled();
+      fireEvent.click(within(modal).getByRole('button', { name: '开始分析' }));
+      await waitFor(() =>
+        expect(api.importAnalyze).toHaveBeenCalledWith([scope === 'whole' ? root : `${root}/bin`]),
+      );
+      expect(api.importApply).not.toHaveBeenCalled();
+    },
+  );
   it('preserves existing edits and an unchecked choice when adding more folders', async () => {
     render(<ImportPage {...props()} />);
     fireEvent.click(screen.getByRole('button', { name: '添加文件夹' }));

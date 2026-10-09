@@ -236,10 +236,21 @@ export default function App() {
       return next;
     });
   }
+  function acceptPathChecks(checks: LibraryPathCheck[]) {
+    setPathChecks((current) => {
+      const next = { ...current };
+      for (const check of checks)
+        if (games.some((game) => game.id === check.id && game.install_path === check.install_path))
+          next[check.id] = check;
+      return next;
+    });
+  }
   const scanJob = useJob(
     scanId,
     mergeChanges,
     async (job) => {
+      if (currentScanId.current !== job.id) return;
+      acceptPathChecks(job.path_checks || []);
       if (job.status === 'completed') {
         try {
           const changed = await api.syncScanMtool(job.id);
@@ -248,11 +259,12 @@ export default function App() {
             libraryEpoch.current++;
             const updates = new Map(changed.map((game) => [game.id, game]));
             setGames((current) => current.map((game) => updates.get(game.id) || game));
+            const checked = await api.job(job.id, job.next_cursor);
+            if (currentScanId.current === job.id) acceptPathChecks(checked.path_checks || []);
           }
         } catch (reason) {
           setError(`扫描结果保留，识别信息同步失败：${String(reason)}`);
         }
-        if (currentScanId.current === job.id) void startLibraryCheck(true);
       }
     },
     setError,
@@ -269,15 +281,7 @@ export default function App() {
     (job) => {
       if (job.kind === 'paths') {
         const checks = job.path_checks || [];
-        setPathChecks((current) => {
-          const next = { ...current };
-          for (const check of checks)
-            if (
-              games.some((game) => game.id === check.id && game.install_path === check.install_path)
-            )
-              next[check.id] = check;
-          return next;
-        });
+        acceptPathChecks(checks);
         const issues = checks.filter((check) => check.state !== 'available').length;
         if (!checkQuiet.current || issues || job.status !== 'completed') setShowCheckBanner(true);
         return;
@@ -507,6 +511,7 @@ export default function App() {
       currentScanId.current = id;
       setScanId(id);
       setTaskId(null);
+      setShowCheckBanner(false);
       setToast('');
     });
     setStarting(false);
@@ -779,12 +784,6 @@ export default function App() {
                 description="管理本地游戏、启动方式与存档信息。"
               >
                 <div className="header-actions">
-                  <button
-                    disabled={taskActive || !games.length}
-                    onClick={() => void startLibraryCheck()}
-                  >
-                    {taskJob.page?.kind === 'paths' && processing ? '正在检查…' : '检查目录'}
-                  </button>
                   <button
                     className="primary"
                     disabled={taskActive || !settings?.game_root}

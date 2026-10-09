@@ -529,6 +529,7 @@ fn analyze_inner(
     }
     // HTML is a launch recommendation only when it contains a Twine runtime declaration.
     // Do not suggest readmes, arbitrary web pages, or Electron/NW.js internal pages.
+    let mut executable_evidence = std::collections::HashMap::new();
     for html in html_files {
         if stopped() {
             break;
@@ -554,6 +555,13 @@ fn analyze_inner(
         .is_some()
             && candidate.executables.len() < 32
         {
+            // The runtime check already read this HTML. Reuse its evidence during ranking
+            // and selected-engine resolution instead of reading the same file again.
+            let mut detected = evidence.get(directory).cloned().unwrap_or_default();
+            if detected.engines.is_empty() {
+                detected.engines.insert("HTML");
+            }
+            executable_evidence.insert(html.relative_path.clone(), detected);
             candidate.executables.push(html);
         }
     }
@@ -574,8 +582,16 @@ fn analyze_inner(
             executable.score += 20;
         }
         if let (Some(names), Some(base)) = (signals.get(directory), evidence.get(directory)) {
-            let detected =
-                crate::engine_detection::for_executable(directory, names, filename, base.clone());
+            let detected = executable_evidence
+                .entry(executable.relative_path.clone())
+                .or_insert_with(|| {
+                    crate::engine_detection::for_executable(
+                        directory,
+                        names,
+                        filename,
+                        base.clone(),
+                    )
+                });
             if detected.engines.len() == 1 {
                 executable.score += 30;
             }
@@ -640,12 +656,14 @@ fn analyze_inner(
         let directory = file.parent().unwrap_or(&root);
         if let Some(names) = signals.get(directory) {
             let filename = file.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            let mut detected = crate::engine_detection::for_executable(
-                directory,
-                names,
-                filename,
-                evidence.get(directory).cloned().unwrap_or_default(),
-            );
+            let mut detected = executable_evidence.get(exe).cloned().unwrap_or_else(|| {
+                crate::engine_detection::for_executable(
+                    directory,
+                    names,
+                    filename,
+                    evidence.get(directory).cloned().unwrap_or_default(),
+                )
+            });
             if inspect_files
                 && detected.engines.is_empty()
                 && filename.to_ascii_lowercase().ends_with(".exe")

@@ -1837,10 +1837,31 @@ describe('iteration interactions', () => {
       mtool_target_exe: game.main_executable,
     };
     vi.mocked(api.syncScanMtool).mockResolvedValue([changed]);
-    vi.mocked(api.job).mockResolvedValue({
+    const completed: JobPage = {
       ...job,
       changes: [{ ...candidate, registered_id: game.id, mtool_detected: true }],
-    });
+      path_checks: [
+        {
+          id: game.id,
+          install_path: game.install_path,
+          state: 'missing_launch',
+          message: '旧检查结果',
+        },
+      ],
+    };
+    vi.mocked(api.job)
+      .mockResolvedValueOnce(completed)
+      .mockResolvedValue({
+        ...completed,
+        path_checks: [
+          {
+            id: game.id,
+            install_path: game.install_path,
+            state: 'available',
+            message: '目录和启动文件可访问',
+          },
+        ],
+      });
     render(<App />);
     await waitFor(() =>
       expect((screen.getByRole('button', { name: '扫描目录' }) as HTMLButtonElement).disabled).toBe(
@@ -1853,10 +1874,13 @@ describe('iteration interactions', () => {
     expect(api.syncScanMtool).toHaveBeenCalledWith('scan');
     goLibrary();
     expect(within(screen.getByRole('table')).getByText('MTool')).toBeTruthy();
+    await waitFor(() => expect(screen.queryByText('启动文件缺失')).toBeNull());
+    expect(api.job).toHaveBeenLastCalledWith('scan', job.next_cursor);
+    expect(api.startLibraryCheck).toHaveBeenCalledTimes(1);
     expect(api.register).not.toHaveBeenCalled();
   });
 
-  it('cancels a path check and retains its completed results without removing unchecked records', async () => {
+  it('cancels the unified scan and retains its completed path checks without removing unchecked records', async () => {
     const other = {
       ...game,
       id: 'other',
@@ -1864,11 +1888,11 @@ describe('iteration interactions', () => {
       install_path: 'E:/Butter/other',
     };
     vi.mocked(api.games).mockResolvedValue([game, other]);
-    vi.mocked(api.startLibraryCheck).mockResolvedValueOnce('').mockResolvedValue('paths');
+    vi.mocked(api.startLibraryCheck).mockResolvedValue('');
     let response: JobPage = {
       ...job,
-      id: 'paths',
-      kind: 'paths',
+      id: 'scan',
+      kind: 'scan',
       status: 'running',
       total: 2,
       processed: 1,
@@ -1881,13 +1905,14 @@ describe('iteration interactions', () => {
     vi.mocked(api.cancel).mockResolvedValue();
     render(<App />);
     await waitFor(() =>
-      expect((screen.getByRole('button', { name: '检查目录' }) as HTMLButtonElement).disabled).toBe(
+      expect((screen.getByRole('button', { name: '扫描目录' }) as HTMLButtonElement).disabled).toBe(
         false,
       ),
     );
-    fireEvent.click(screen.getByRole('button', { name: '检查目录' }));
+    expect(screen.queryByRole('button', { name: '检查目录' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '扫描目录' }));
     fireEvent.click(await screen.findByRole('button', { name: '取消任务' }));
-    await waitFor(() => expect(api.cancel).toHaveBeenCalledWith('paths'));
+    await waitFor(() => expect(api.cancel).toHaveBeenCalledWith('scan'));
     response = {
       ...response,
       status: 'cancelled',
@@ -1902,6 +1927,34 @@ describe('iteration interactions', () => {
     };
     await screen.findByText('启动文件缺失');
     expect(screen.getByRole('button', { name: other.display_title })).toBeTruthy();
+    expect(api.removeGame).not.toHaveBeenCalled();
+  });
+
+  it('uses completed scan path checks without starting another full library check', async () => {
+    vi.mocked(api.job).mockResolvedValue({
+      ...job,
+      path_checks: [
+        {
+          id: game.id,
+          install_path: game.install_path,
+          state: 'missing_launch',
+          message: '启动文件不存在',
+        },
+      ],
+    });
+    render(<App />);
+    await waitFor(() =>
+      expect((screen.getByRole('button', { name: '扫描目录' }) as HTMLButtonElement).disabled).toBe(
+        false,
+      ),
+    );
+    expect(screen.queryByRole('button', { name: '检查目录' })).toBeNull();
+    const automaticChecks = vi.mocked(api.startLibraryCheck).mock.calls.length;
+    fireEvent.click(screen.getByRole('button', { name: '扫描目录' }));
+    await screen.findByText('启动文件缺失');
+    await waitFor(() => expect(api.syncScanMtool).toHaveBeenCalledWith('scan'));
+    expect(api.startLibraryCheck).toHaveBeenCalledTimes(automaticChecks);
+    expect(screen.getByText('完成 · 1 个目录，1 项需处理')).toBeTruthy();
     expect(api.removeGame).not.toHaveBeenCalled();
   });
 

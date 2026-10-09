@@ -146,7 +146,7 @@ fn rpg_legacy_jsonex_wrappers_preserve_identities_and_shared_references() {
     .unwrap();
     let slot = list(&game).unwrap().slots.remove(0);
     let document = read(&game, &slot.id).unwrap();
-    apply(&game, &slot.id, &document.revision, &changes).unwrap();
+    apply(&game, &slot.id, &document.revision, &changes, false).unwrap();
     let output = fs::read(&save).unwrap();
     assert_eq!(rpg::decode(&output, "MV").unwrap().value, expected);
     export_fixture("legacy.rpgsave", &output);
@@ -460,16 +460,16 @@ fn associated_slot_write_revision_running_game_unicode_and_no_backups() {
         id: "/party/_gold".into(),
         value: json!(777),
     }];
-    let next = apply(&game, &id, &doc.revision, &changes).unwrap();
+    let next = apply(&game, &id, &doc.revision, &changes, false).unwrap();
     assert_eq!(field(&next.fields, "金钱 ").value, 777);
     assert_eq!(
         fs::read_to_string(root.join("save/file2.rpgsave")).unwrap(),
         original
     );
-    assert!(apply(&game, &id, &doc.revision, &changes).is_err());
+    assert!(apply(&game, &id, &doc.revision, &changes, false).is_err());
     assert_eq!(fs::read_dir(root.join("save")).unwrap().count(), 2);
     fs::write(&slot, &original).unwrap();
-    assert!(apply(&game, &id, &next.revision, &changes).is_err());
+    assert!(apply(&game, &id, &next.revision, &changes, false).is_err());
     #[cfg(windows)]
     {
         use std::os::windows::fs::OpenOptionsExt;
@@ -479,7 +479,7 @@ fn associated_slot_write_revision_running_game_unicode_and_no_backups() {
             .share_mode(1)
             .open(&slot)
             .unwrap();
-        assert!(apply(&game, &id, &doc.revision, &changes).is_err());
+        assert!(apply(&game, &id, &doc.revision, &changes, false).is_err());
         assert_eq!(fs::read_to_string(&slot).unwrap(), original);
         assert_eq!(fs::read_dir(root.join("save")).unwrap().count(), 2);
     }
@@ -507,6 +507,105 @@ fn member(data: &[u8], name: &str) -> Vec<u8> {
         .read_to_end(&mut bytes)
         .unwrap();
     bytes
+}
+#[test]
+fn associated_renpy_trust_is_required_for_the_checked_revision_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let game = renpy_game(dir.path());
+    let sample = &fixtures()["fixtures"][5];
+    let foreign = p256::ecdsa::SigningKey::from(p256::SecretKey::from_slice(&[9; 32]).unwrap());
+    for persistent in [false, true] {
+        let path = dir.path().join("Ren'Py Data/fixture").join(if persistent {
+            "persistent"
+        } else {
+            "one.save"
+        });
+        let log = raw(sample, if persistent { "persistent" } else { "log" });
+        for (status, signature) in [
+            ("foreign", renpy::fixture_signature(&foreign, &log).unwrap()),
+            ("unsigned", String::new()),
+            ("invalid", "signature damaged damaged\n".into()),
+            ("unknown", "signature AAE= AAE=\n".into()),
+        ] {
+            let original = if persistent {
+                let mut bytes = rpg::deflate(&log, 3).unwrap();
+                bytes.extend_from_slice(signature.as_bytes());
+                bytes
+            } else {
+                zip(&log, &signature)
+            };
+            fs::write(&path, &original).unwrap();
+            let slot = list(&game)
+                .unwrap()
+                .slots
+                .into_iter()
+                .find(|s| s.format == if persistent { "Persistent" } else { "RenPy" })
+                .unwrap();
+            let doc = read(&game, &slot.id).unwrap();
+            assert_eq!(doc.signature.as_ref().unwrap().status, status);
+            let changes = [change(
+                field(
+                    &doc.fields,
+                    if persistent { "money" } else { "store.money" },
+                ),
+                json!(29),
+            )];
+            for error in [
+                apply(&game, &slot.id, &doc.revision, &changes, false).unwrap_err(),
+                resign(&game, &slot.id, &doc.revision, false).unwrap_err(),
+            ] {
+                assert!(error.to_string().contains("来源可信"));
+            }
+            assert_eq!(fs::read(&path).unwrap(), original);
+
+            // An explicit confirmation can re-sign this revision; new local signatures need none.
+            let signed = resign(&game, &slot.id, &doc.revision, true).unwrap();
+            assert_eq!(signed.signature.as_ref().unwrap().status, "local");
+            assert_eq!(
+                renpy::fixture_log(&fs::read(&path).unwrap(), persistent).unwrap(),
+                log
+            );
+            let edited = apply(&game, &slot.id, &signed.revision, &changes, false).unwrap();
+            assert_eq!(
+                field(
+                    &edited.fields,
+                    if persistent { "money" } else { "store.money" }
+                )
+                .value,
+                29
+            );
+            let local = resign(&game, &slot.id, &edited.revision, false).unwrap();
+            assert_eq!(local.signature.unwrap().status, "local");
+
+            // Confirmation of the former revision cannot overwrite changed content.
+            fs::write(&path, &original).unwrap();
+            assert!(resign(&game, &slot.id, &signed.revision, true)
+                .unwrap_err()
+                .to_string()
+                .contains("更新"));
+            let changed = read(&game, &slot.id).unwrap();
+            assert!(resign(&game, &slot.id, &changed.revision, false).is_err());
+            // A timestamp-only change also invalidates the expected revision.
+            OpenOptions::new()
+                .write(true)
+                .open(&path)
+                .unwrap()
+                .set_times(
+                    fs::FileTimes::new().set_modified(
+                        std::time::SystemTime::now() + std::time::Duration::from_secs(5),
+                    ),
+                )
+                .unwrap();
+            assert!(apply(&game, &slot.id, &changed.revision, &changes, true)
+                .unwrap_err()
+                .to_string()
+                .contains("更新"));
+            let refreshed = read(&game, &slot.id).unwrap();
+            assert_ne!(refreshed.revision, changed.revision);
+            assert!(apply(&game, &slot.id, &refreshed.revision, &changes, false).is_err());
+            apply(&game, &slot.id, &refreshed.revision, &changes, true).unwrap();
+        }
+    }
 }
 fn without_signatures(data: &[u8]) -> Vec<u8> {
     let mut archive = ZipArchive::new(Cursor::new(data)).unwrap();
@@ -757,6 +856,10 @@ fn external_picker_grants_game_binding_revision_expiry_failure_and_no_backups() 
         member(&fs::read(&path).unwrap(), "log"),
         member(&original, "log")
     );
+    // An external local-trusted save uses the same rules as an associated save.
+    let updated = grants
+        .write(&game, id, &updated.revision, None, false)
+        .unwrap();
     #[cfg(windows)]
     {
         use std::os::windows::fs::OpenOptionsExt;

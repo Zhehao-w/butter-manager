@@ -141,9 +141,15 @@ async fn import_matches(
     let scan = state.tasks.get(&scan_id).map_err(|e| e.to_string())?;
     let games = with_db(&state, |db| db.games())?;
     tauri::async_runtime::spawn_blocking(move || {
+        let mut matching = importer::MatchIndex::new(&games);
         scan.candidates()
             .into_iter()
-            .map(|c| (c.install_path.clone(), importer::matches(&c, &games)))
+            .map(|c| {
+                (
+                    c.install_path.clone(),
+                    matching.matches(&c, &|| scan.stop()),
+                )
+            })
             .collect()
     })
     .await
@@ -416,12 +422,16 @@ async fn sync_scan_mtool(state: State<'_, AppState>, scan_id: String) -> Command
         if job.kind != "scan" || job.page(0).status != "completed" {
             return Err("仅使用完整扫描同步默认启动方式".into());
         }
-        let result = db
+        let changed = db
             .lock()
             .map_err(|_| "数据库锁不可用")?
             .sync_mtool_defaults(&job.candidates())
-            .map_err(|e| e.to_string());
-        result
+            .map_err(|e| e.to_string())?;
+        // Defaults can change after the scan. Recheck only those records in the same task.
+        for game in &changed {
+            job.publish_path_check(crate::maintenance::check_game(game));
+        }
+        Ok(changed)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -652,8 +662,7 @@ fn save_settings(state: State<'_, AppState>, settings: Settings) -> CommandResul
 #[tauri::command]
 fn start_scan(state: State<'_, AppState>) -> CommandResult<String> {
     let _gate = state.activity.lock().map_err(|_| "操作锁不可用")?;
-    let (settings, registered) =
-        with_db(&state, |db| Ok((db.settings()?, db.registered_paths()?)))?;
+    let (settings, games) = with_db(&state, |db| Ok((db.settings()?, db.games()?)))?;
     let workers = settings.scan_workers;
     if settings.game_root.is_empty() {
         return Err("请先配置 Game Root".into());
@@ -665,7 +674,7 @@ fn start_scan(state: State<'_, AppState>) -> CommandResult<String> {
     let id = job.id.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            jobs::run_scan(&job, workers, &registered)
+            jobs::run_scan(&job, workers, &games)
         }));
         job.finish(match result {
             Ok(result) => result.map(|_| vec![]).map_err(|e| e.to_string()),
@@ -1055,7 +1064,13 @@ async fn apply_save_edits(
                 source_trusted.unwrap_or(false),
             )
         } else {
-            crate::save_editor::apply(&game, &save_id, &revision, &changes)
+            crate::save_editor::apply(
+                &game,
+                &save_id,
+                &revision,
+                &changes,
+                source_trusted.unwrap_or(false),
+            )
         }
         .map_err(|e| e.to_string())
     })
@@ -1096,7 +1111,7 @@ async fn resign_renpy_save(
         if save_id.starts_with("external-") {
             external.write(&game, &save_id, &revision, None, source_trusted)
         } else {
-            crate::save_editor::resign(&game, &save_id, &revision)
+            crate::save_editor::resign(&game, &save_id, &revision, source_trusted)
         }
         .map_err(|e| e.to_string())
     })

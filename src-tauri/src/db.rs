@@ -89,6 +89,7 @@ impl Database {
         operation: &str,
         old: &crate::importer::VersionConfig,
         new: &crate::importer::VersionConfig,
+        confirmed_title: &str,
     ) -> Result<()> {
         if self.version_operation(operation)?.as_deref() == Some("committed") {
             if self.version_config(id)? != *new {
@@ -102,6 +103,12 @@ impl Database {
         let tx = self.connection.transaction()?;
         Self::write_version(&tx, id, new)?;
         tx.execute("INSERT INTO version_history(operation,game_id,old_version,new_version,status) VALUES(?1,?2,?3,?4,'committed')", params![operation,id,old.version,new.version])?;
+        let title = confirmed_title.trim();
+        if !title.is_empty() {
+            let normalized = normalize_alias(title);
+            tx.execute("INSERT INTO aliases(id,game_id,alias,normalized_alias,source) SELECT ?1,?2,?3,?4,'confirmed_import' WHERE NOT EXISTS(SELECT 1 FROM aliases WHERE game_id=?2 AND normalized_alias=?4)",
+                params![Uuid::new_v4().to_string(),id,title,normalized])?;
+        }
         tx.commit()?;
         Ok(())
     }

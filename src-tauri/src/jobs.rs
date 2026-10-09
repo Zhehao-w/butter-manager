@@ -271,7 +271,15 @@ impl Job {
     }
     pub fn publish_path_check(&self, result: LibraryPathCheck) {
         let mut data = self.data.lock().unwrap();
-        data.path_checks.push(result);
+        if let Some(previous) = data
+            .path_checks
+            .iter_mut()
+            .find(|check| check.id == result.id)
+        {
+            *previous = result;
+        } else {
+            data.path_checks.push(result);
+        }
         data.last_progress = Instant::now();
     }
     pub fn candidate(&self, path: &str) -> Option<ScanCandidate> {
@@ -474,30 +482,43 @@ pub fn run_path_check(job: &Arc<Job>, games: &[Game]) -> Result<()> {
     }
 }
 
-pub fn run_scan(
-    job: &Arc<Job>,
-    workers: usize,
-    registered: &HashMap<String, String>,
-) -> Result<()> {
+pub fn run_scan(job: &Arc<Job>, workers: usize, games: &[Game]) -> Result<()> {
     if ![1, 2, 4].contains(&workers) {
         return Err(Error::Validation(
             "扫描并发可选 1、2、4；8 线程留待真实测量".into(),
         ));
     }
+    let registered = games
+        .iter()
+        .map(|game| Ok((paths::path_key(Path::new(&game.install_path))?, game)))
+        .collect::<Result<HashMap<_, _>>>()?;
     job.stage("发现目录", 0);
     let (directories, warnings) =
         scanner::discover_root(Path::new(&job.root), &|| job.stop(), &mut |path| {
             if let Ok(mut candidate) = scanner::pending_candidate(path) {
                 candidate.registered_id = paths::path_key(path)
                     .ok()
-                    .and_then(|key| registered.get(&key).cloned());
+                    .and_then(|key| registered.get(&key).map(|game| game.id.clone()));
                 job.publish(candidate);
             }
         })?;
     for warning in warnings {
         job.warn(warning);
     }
-    job.stage("分析启动程序", directories.len());
+    let discovered = directories
+        .iter()
+        .map(|path| paths::path_key(path))
+        .collect::<Result<HashSet<_>>>()?;
+    // Missing games and games outside Game Root must still be checked, without rescanning them.
+    let remaining = registered
+        .iter()
+        .filter(|(key, _)| !discovered.contains(*key))
+        .map(|(_, game)| *game)
+        .collect::<Vec<_>>();
+    job.stage(
+        "扫描目录与检查启动文件",
+        directories.len() + remaining.len(),
+    );
     let next = AtomicUsize::new(0);
     std::thread::scope(|scope| {
         for _ in 0..workers {
@@ -505,7 +526,13 @@ pub fn run_scan(
                 while !job.stop() {
                     let index = next.fetch_add(1, Ordering::Relaxed);
                     let Some(path) = directories.get(index) else {
-                        break;
+                        let Some(game) = remaining.get(index - directories.len()) else {
+                            break;
+                        };
+                        job.progress(&game.id, Path::new(&game.install_path));
+                        job.publish_path_check(crate::maintenance::check_game(game));
+                        job.completed_one(&game.id);
+                        continue;
                     };
                     let key = path.display().to_string();
                     let candidate = scanner::analyze_quick_controlled(
@@ -522,16 +549,26 @@ pub fn run_scan(
                             value
                         }
                     };
-                    candidate.registered_id = paths::path_key(path)
+                    if let Some(game) = paths::path_key(path)
                         .ok()
-                        .and_then(|key| registered.get(&key).cloned());
+                        .and_then(|key| registered.get(&key))
+                    {
+                        candidate.registered_id = Some(game.id.clone());
+                        if !job.interrupted(&key) {
+                            job.publish_path_check(crate::maintenance::check_game(game));
+                        }
+                    }
                     job.publish(candidate);
                     job.completed_one(&key);
                 }
             });
         }
     });
-    Ok(())
+    if job.stop() {
+        Err(Error::Validation("扫描已取消，已完成的结果保留".into()))
+    } else {
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -621,6 +658,114 @@ mod tests {
     }
 
     #[test]
+    fn scan_checks_registered_missing_and_external_directories_in_one_task() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("library");
+        std::fs::create_dir(&root).unwrap();
+        let mut games = Vec::new();
+        for name in ["available", "manual", "unconfigured", "new"] {
+            let path = root.join(name);
+            std::fs::create_dir(&path).unwrap();
+            std::fs::write(
+                path.join("game.html"),
+                b"<!doctype html><html><body>fixture</body></html>",
+            )
+            .unwrap();
+            if name != "new" {
+                let mut game = crate::maintenance::tests::fixture_game(&path);
+                game.id = name.into();
+                if name == "manual" {
+                    game.main_executable = Some("missing.exe".into());
+                }
+                if name == "unconfigured" {
+                    game.main_executable = None;
+                }
+                games.push(game);
+            }
+        }
+        for name in ["missing", "outside"] {
+            let path = temp.path().join(name);
+            if name == "outside" {
+                std::fs::create_dir(&path).unwrap();
+                std::fs::write(path.join("game.html"), b"fixture").unwrap();
+            }
+            let mut game = crate::maintenance::tests::fixture_game(&path);
+            game.id = name.into();
+            games.push(game);
+        }
+        let manager = TaskManager::default();
+        let job = manager.begin("scan", root.display().to_string()).unwrap();
+        run_scan(&job, 2, &games).unwrap();
+        job.finish(Ok(vec![]));
+        let page = job.page(0);
+        assert_eq!((page.total, page.processed), (6, 6));
+        assert_eq!(job.candidates().len(), 4);
+        assert_eq!(page.path_checks.len(), 5);
+        for (id, expected) in [
+            ("available", "available"),
+            ("manual", "missing_launch"),
+            ("unconfigured", "unconfigured"),
+            ("missing", "missing_directory"),
+            ("outside", "available"),
+        ] {
+            assert_eq!(
+                page.path_checks
+                    .iter()
+                    .find(|check| check.id == id)
+                    .unwrap()
+                    .state,
+                expected
+            );
+        }
+        assert!(job
+            .candidate(&root.join("new").display().to_string())
+            .unwrap()
+            .registered_id
+            .is_none());
+        assert_eq!(
+            job.candidate(&root.join("manual").display().to_string())
+                .unwrap()
+                .registered_id
+                .as_deref(),
+            Some("manual")
+        );
+        // A post-scan default update replaces only that game's check, rather than duplicating it.
+        let mut updated = games
+            .iter()
+            .find(|game| game.id == "manual")
+            .unwrap()
+            .clone();
+        updated.main_executable = Some("game.html".into());
+        job.publish_path_check(crate::maintenance::check_game(&updated));
+        assert_eq!(job.page(0).path_checks.len(), 5);
+        assert_eq!(
+            job.page(0)
+                .path_checks
+                .iter()
+                .find(|check| check.id == "manual")
+                .unwrap()
+                .state,
+            "available"
+        );
+        assert_eq!(
+            games
+                .iter()
+                .find(|game| game.id == "manual")
+                .unwrap()
+                .main_executable
+                .as_deref(),
+            Some("missing.exe")
+        );
+
+        let cancelled = manager.begin("scan", root.display().to_string()).unwrap();
+        cancelled.publish_path_check(crate::maintenance::check_game(&games[0]));
+        cancelled.request_cancel();
+        assert!(run_scan(&cancelled, 2, &games).is_err());
+        cancelled.finish(Err("cancelled".into()));
+        assert_eq!(cancelled.page(0).status, "cancelled");
+        assert_eq!(cancelled.page(0).path_checks.len(), 1);
+    }
+    #[test]
     fn record_maintenance_updates_retained_scan_registration_without_losing_overrides_or_results() {
         let manager = TaskManager::default();
         let job = manager.begin("scan", "root".into()).unwrap();
@@ -695,7 +840,7 @@ mod tests {
         let skipped = scanner::pending_candidate(&root.join("skip")).unwrap();
         job.publish(skipped.clone());
         job.skip(&skipped.install_path).unwrap();
-        run_scan(&job, 2, &HashMap::new()).unwrap();
+        run_scan(&job, 2, &[]).unwrap();
         job.finish(Ok(vec![]));
         assert_eq!(
             job.candidate(&skipped.install_path).unwrap().status,
@@ -741,7 +886,7 @@ mod tests {
             let job = manager
                 .begin("scan", root.path().display().to_string())
                 .unwrap();
-            run_scan(&job, workers, &HashMap::new()).unwrap();
+            run_scan(&job, workers, &[]).unwrap();
             job.finish(Ok(vec![]));
             let page = job.page(0);
             assert_eq!(page.processed, 25);

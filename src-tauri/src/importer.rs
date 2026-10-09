@@ -13,6 +13,9 @@ use std::time::UNIX_EPOCH;
 
 #[path = "import_matching.rs"]
 mod import_matching;
+#[path = "import_recommendations.rs"]
+mod import_recommendations;
+pub use import_recommendations::MatchIndex;
 #[path = "updater.rs"]
 mod updater;
 #[cfg(test)]
@@ -96,40 +99,9 @@ pub struct Match {
     pub reason: String,
     pub auto_associate: bool,
 }
+#[cfg(test)]
 pub fn matches(candidate: &ScanCandidate, games: &[Game]) -> Vec<Match> {
-    let incoming = import_matching::Name::new(&candidate.suggested_title);
-    let mut result = vec![];
-    for game in games {
-        let names = [&game.canonical_title, &game.display_title]
-            .into_iter()
-            .chain(game.aliases.iter());
-        let folder = Path::new(&game.install_path)
-            .file_name()
-            .map(|value| value.to_string_lossy().into_owned());
-        let names = names.map(String::as_str).chain(folder.as_deref());
-        let best = names
-            .filter_map(|name| incoming.compare(&import_matching::Name::new(name)))
-            .max_by_key(|(score, _)| *score);
-        if let Some((score, reason)) = best {
-            result.push((
-                score,
-                Match {
-                    id: game.id.clone(),
-                    title: game.display_title.clone(),
-                    version: game.current_version.clone(),
-                    path: game.install_path.clone(),
-                    reason: if candidate.engine == "QSP" && game.engine == "QSP" {
-                        format!("{reason} · 同为 QSP")
-                    } else {
-                        reason.into()
-                    },
-                    auto_associate: score >= 95,
-                },
-            ));
-        }
-    }
-    result.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.id.cmp(&b.1.id)));
-    result.into_iter().map(|(_, matched)| matched).collect()
+    MatchIndex::new(games).matches(candidate, &|| false)
 }
 
 pub fn analyze(job: &Arc<Job>, sources: &[String], workers: usize) -> Result<()> {
@@ -642,6 +614,7 @@ impl ImportStore {
         };
         let mut sources: Vec<PathBuf> = vec![];
         let mut targets = HashSet::new();
+        let mut matching = MatchIndex::new(games);
         job.stage("检查文件与生成导入更新计划", selections.len());
         for (mut selection, candidate) in selections.into_iter().zip(candidates) {
             stopped(job)?;
@@ -719,7 +692,7 @@ impl ImportStore {
             }
             if selection.existing_id.is_none()
                 && !selection.new_override
-                && !matches(&candidate, games).is_empty()
+                && !matching.matches(&candidate, &|| job.stop()).is_empty()
             {
                 blockers.push("名称匹配到已有游戏；请先关联或明确选择改为新游戏".into());
             }
@@ -2403,6 +2376,99 @@ mod tests {
                 None,
             ),
             ("Night Bloom v0.723", "Night Bloom v0.698", Some(true)),
+            ("Night Bloom アクメシア〜狩人生活〜", "Night Bloom アクメシア〜魔法生活〜", None),
+            (
+                "妹系罗盘～在无人岛的悠闲慢活～シスターズコンパス～妹たちと無人島でラブラブスローライフ",
+                "姊妹指南针～与姊妹们在无人岛上的甜蜜慢生活～シスターズコンパス～ AI汉化 Ver1.02",
+                Some(false),
+            ),
+            (
+                "鸣人的假期 v1.0 内部赞助付费完结版",
+                "鸣人的假期 v1.0",
+                Some(false),
+            ),
+            (
+                "My Best Deal v4.8 女神的最佳交易",
+                "My_Best_Deal-4.3.5-pc",
+                Some(false),
+            ),
+            (
+                "ReSister ― 与妹妹两人的秘密同居生活 ― v1.1.0 DLC",
+                "ReSister-与妹妹的秘密同居生活 v1.03",
+                Some(false),
+            ),
+            ("シスターズコンパス～妹たちと無人島でラブラブスローライフ", "シスターズコンパス～別の世界で新しい物語", None),
+            ("My Best Deal v4.8", "My Best Dealings v4.3", None),
+            ("My Best Deal 2 v4.8", "My Best Deal 3 v4.3", None),
+            ("与妹妹的秘密同居日记", "与妹妹的秘密同居生活", None),
+            ("ReSister Other Story", "ReSister Same Story", None),
+            (
+                "公主协同效应 V1.0.33 内嵌汉化版+去码补丁",
+                "公主协同效应 プリンセスシナジー v1.0.33",
+                Some(false),
+            ),
+            (
+                "公主协同效应 プリンセスシナジー v1.0.33",
+                "公主协同效应 V1.0.32 内嵌汉化版+去码补丁",
+                Some(false),
+            ),
+            (
+                "公主协同效应 v1.0.33 [汉化版] [去码补丁]",
+                "公主协同效应 v1.0.32",
+                Some(false),
+            ),
+            (
+                "公主协同效应 汉化版 プリンセスシナジー",
+                "公主协同效应 プリンセスストーリー",
+                None,
+            ),
+            ("公主协同效应 2 汉化版", "公主协同效应 3", None),
+            ("公主协同效应 第二部 汉化版", "公主协同效应 第一部", None),
+            ("公主协同效应 汉化版", "公主协同效应外传", None),
+            ("公主协同效应 汉化版", "公主协同效应重制版", None),
+            ("公主协同效应内嵌汉化版", "公主协同效应", None),
+            ("公主效应 汉化版", "公主效应 プリンセスシナジー", None),
+            (
+                "公主协同效应 Alpha Story 汉化版",
+                "公主协同效应 Other Story",
+                None,
+            ),
+            (
+                "阿克梅西亚～后宫播种猎人生活～V1.2.0 アクメシア〜ハーレム孕ませ狩人生活〜",
+                "阿克梅西亚～后宫怀孕猎人生活～ アクメシア〜ハーレム孕ませ狩人生活〜",
+                Some(false),
+            ),
+            (
+                "新译名 v1.2 アクメシア〜ハーレム孕ませ狩人生活〜",
+                "アクメシア〜ハーレム孕ませ狩人生活〜 v1.1",
+                Some(false),
+            ),
+            ("新译名 アクメシア 第二部", "旧译名 アクメシア 第一部", None),
+            (
+                "新译名 アクメシア〜狩人生活〜 2",
+                "旧译名 アクメシア〜狩人生活〜 3",
+                None,
+            ),
+            (
+                "新译名 アクメシア〜狩人生活〜 第二部",
+                "旧译名 アクメシア〜狩人生活〜 第一部",
+                None,
+            ),
+            (
+                "新译名 アクメシア〜狩人生活〜",
+                "旧译名外传 アクメシア〜狩人生活〜",
+                None,
+            ),
+            (
+                "新译名 アクメシア〜狩人生活〜",
+                "旧译名 アクメシア〜魔法生活〜",
+                None,
+            ),
+            (
+                "新译名 アクメシア Alpha Story",
+                "旧译名 アクメシア Other Story",
+                None,
+            ),
         ] {
             games[0].display_title = old.into();
             games[0].canonical_title = old.into();

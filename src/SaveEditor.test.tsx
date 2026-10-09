@@ -47,6 +47,23 @@ function doc(id = 'one'): SaveDocument {
     warnings: [],
   };
 }
+function renpyDoc(
+  id = 'one',
+  status: NonNullable<SaveDocument['signature']>['status'] = 'foreign',
+): SaveDocument {
+  const document = doc(id);
+  document.slot.format = 'RenPy';
+  document.signature = { status, can_resign: true, reason: null };
+  return document;
+}
+async function confirmSource() {
+  fireEvent.click(
+    within(await screen.findByRole('dialog', { name: '确认外部存档来源可信' })).getByRole(
+      'button',
+      { name: '来源可信，继续' },
+    ),
+  );
+}
 beforeEach(() => {
   vi.resetAllMocks();
   vi.mocked(api.releaseExternalSaves).mockResolvedValue();
@@ -63,6 +80,127 @@ beforeEach(() => {
 });
 afterEach(() => vi.restoreAllMocks());
 describe('Save Editor Lite', () => {
+  it.each(['foreign', 'unsigned', 'invalid', 'unknown'] as const)(
+    'confirms %s associated saves and remembers the revision returned by successful writes',
+    async (status) => {
+      const original = renpyDoc('one', status);
+      vi.mocked(api.readEditableSave).mockResolvedValue(original);
+      // Keep the status non-local to exercise the session confirmation cache independently.
+      const saved = { ...original, revision: 'revision-2', fields: [field('金钱', 9, 'number')] };
+      vi.mocked(api.applySaveEdits).mockResolvedValue(saved);
+      vi.mocked(api.resignRenpySave).mockResolvedValue({ ...saved, revision: 'revision-3' });
+      render(<SaveEditor game={game} onClose={vi.fn()} />);
+      fireEvent.change(await screen.findByLabelText('金钱'), { target: { value: '9' } });
+      fireEvent.click(screen.getByRole('button', { name: '保存修改 (1)' }));
+      expect(api.applySaveEdits).not.toHaveBeenCalled();
+      await confirmSource();
+      await screen.findByText('已保存，请回游戏重新读档。');
+      expect(api.applySaveEdits).toHaveBeenCalledWith(
+        'game',
+        'one',
+        'revision-1',
+        [{ id: '金钱', value: 9 }],
+        true,
+      );
+      fireEvent.click(screen.getByRole('button', { name: '重新签名为本机存档' }));
+      await screen.findByText(/已重新签名为本机存档，内容未修改/);
+      expect(api.resignRenpySave).toHaveBeenLastCalledWith('game', 'one', 'revision-2', true);
+      fireEvent.click(screen.getByRole('button', { name: '重新签名为本机存档' }));
+      await waitFor(() =>
+        expect(api.resignRenpySave).toHaveBeenLastCalledWith('game', 'one', 'revision-3', true),
+      );
+      expect(screen.queryByRole('dialog', { name: '确认外部存档来源可信' })).toBeNull();
+    },
+  );
+  it.each([false, true])(
+    'does not reuse confirmation after refreshing a changed revision or switching slots (external=%s)',
+    async (external) => {
+      const one = renpyDoc(),
+        two = renpyDoc('two');
+      one.slot.external = two.slot.external = external;
+      const documents = { one, two };
+      vi.mocked(api.listEditableSaves).mockResolvedValue({
+        slots: [one.slot, two.slot],
+        warnings: [],
+      });
+      vi.mocked(api.readEditableSave).mockImplementation(
+        async (_game, id) => documents[id as keyof typeof documents],
+      );
+      vi.mocked(api.resignRenpySave).mockRejectedValue('写回失败');
+      render(<SaveEditor game={game} onClose={vi.fn()} />);
+      await screen.findByText('签名：外来有效');
+      const resign = () =>
+        fireEvent.click(screen.getByRole('button', { name: '重新签名为本机存档' }));
+      resign();
+      await confirmSource();
+      await screen.findByRole('alert');
+      resign();
+      await waitFor(() => expect(api.resignRenpySave).toHaveBeenCalledTimes(2));
+      await screen.findByRole('alert');
+      expect(screen.queryByRole('dialog', { name: '确认外部存档来源可信' })).toBeNull();
+      fireEvent.change(screen.getByRole('combobox', { name: '存档槽位' }), {
+        target: { value: 'two' },
+      });
+      await waitFor(() =>
+        expect(
+          (screen.getByRole('combobox', { name: '存档槽位' }) as HTMLSelectElement).value,
+        ).toBe('two'),
+      );
+      resign();
+      await confirmSource();
+      await screen.findByRole('alert');
+      expect(api.resignRenpySave).toHaveBeenLastCalledWith('game', 'two', 'revision-1', true);
+      fireEvent.change(screen.getByRole('combobox', { name: '存档槽位' }), {
+        target: { value: 'one' },
+      });
+      await waitFor(() =>
+        expect(
+          (screen.getByRole('combobox', { name: '存档槽位' }) as HTMLSelectElement).value,
+        ).toBe('one'),
+      );
+      resign();
+      await screen.findByRole('alert');
+      expect(api.resignRenpySave).toHaveBeenCalledTimes(4);
+      documents.one = {
+        ...one,
+        revision: 'changed-revision',
+        slot: { ...one.slot, modified: 2000 },
+      };
+      fireEvent.click(screen.getByRole('button', { name: '刷新' }));
+      await waitFor(() => expect(api.readEditableSave).toHaveBeenCalledTimes(4));
+      await waitFor(() =>
+        expect((screen.getByRole('button', { name: '刷新' }) as HTMLButtonElement).disabled).toBe(
+          false,
+        ),
+      );
+      resign();
+      expect(api.resignRenpySave).toHaveBeenCalledTimes(4);
+      await confirmSource();
+      await screen.findByRole('alert');
+      expect(api.resignRenpySave).toHaveBeenLastCalledWith('game', 'one', 'changed-revision', true);
+    },
+  );
+  it.each([false, true])(
+    'saves local-trusted RenPy files without confirmation (external=%s)',
+    async (external) => {
+      const local = renpyDoc('one', 'local');
+      local.slot.external = external;
+      vi.mocked(api.readEditableSave).mockResolvedValue(local);
+      vi.mocked(api.applySaveEdits).mockResolvedValue({ ...local, revision: 'new-local' });
+      render(<SaveEditor game={game} onClose={vi.fn()} />);
+      fireEvent.change(await screen.findByLabelText('金钱'), { target: { value: '9' } });
+      fireEvent.click(screen.getByRole('button', { name: '保存修改 (1)' }));
+      await screen.findByText('已保存，请回游戏重新读档。');
+      expect(api.applySaveEdits).toHaveBeenCalledWith(
+        'game',
+        'one',
+        'revision-1',
+        [{ id: '金钱', value: 9 }],
+        false,
+      );
+      expect(screen.queryByRole('dialog', { name: '确认外部存档来源可信' })).toBeNull();
+    },
+  );
   it('offers RenPy Variables and Persistent tabs with dirty slot-switch confirmation', async () => {
     const normal = doc();
     normal.slot.format = 'RenPy';

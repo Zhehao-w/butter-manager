@@ -41,7 +41,7 @@ fn main() -> Result<()> {
         let job = manager.begin("scan", paths::path_text(&root)?)?;
         let task = Arc::clone(&job);
         let handle = std::thread::spawn(move || {
-            let result = jobs::run_scan(&task, workers, &HashMap::new());
+            let result = jobs::run_scan(&task, workers, &[]);
             task.finish(result.map(|_| vec![]).map_err(|e| e.to_string()));
         });
         let started = Instant::now();
@@ -113,6 +113,17 @@ fn main() -> Result<()> {
                 "{}",
                 serde_json::json!({"registered": loaded.len(), "validation_ms": validation_ms,
                 "transaction_ms": write_ms, "batch_query_ms": started.elapsed().as_millis()})
+            );
+            let checked = manager.begin("scan", paths::path_text(&root)?)?;
+            let result = jobs::run_scan(&checked, workers, &loaded);
+            checked.finish(result.map(|_| vec![]).map_err(|e| e.to_string()));
+            let page = checked.page(0);
+            assert_eq!(page.path_checks.len(), loaded.len());
+            println!(
+                "{}",
+                serde_json::json!({"fixture": true, "workers": workers,
+                "combined_scan_ms": page.elapsed_ms, "directories": page.total,
+                "checked_games": page.path_checks.len(), "status": page.status})
             );
         }
     }

@@ -451,6 +451,7 @@ export function ImportPage({
     ? virtualizer.getVirtualItems().map((v) => ({ index: v.index, start: v.start, size: v.size }))
     : Array.from({ length: count }, (_, index) => ({ index, start: 0, size: 0 }));
   const pendingPlans = plans.filter((p) => !['completed', 'withdrawn'].includes(p.status));
+  const pendingCount = pendingPlans.reduce((count, plan) => count + plan.items.length, 0);
   const recordCount = plans.reduce(
     (count, plan) => count + plan.items.filter(isImportRecord).length,
     0,
@@ -535,7 +536,7 @@ export function ImportPage({
         {(
           [
             ['new', '新的导入', candidates.length],
-            ['pending', '待确认', pendingPlans.length],
+            ['pending', '待确认', pendingCount],
             ['completed', '导入记录', recordCount],
           ] as const
         ).map(([key, label, total]) => (
@@ -1353,34 +1354,47 @@ export function ImportPage({
       {sourceReview && (
         <Modal
           variant="confirm"
+          className="modal-source-scope"
           showClose={false}
           title="确认文件夹范围"
           onClose={() => {
             if (!starting) setSourceReview(null);
           }}
         >
-          <p>这些文件夹可能包含包装层或共用资源，请选择导入范围。这里只分析文件，不会移动。</p>
+          <p className="source-scope-hint">请选择导入范围。此步仅分析，不移动文件。</p>
           {sourceReview.choices.map((choice) => (
-            <label className="source-scope" key={choice.root}>
+            <div className="source-scope" key={choice.root}>
               <strong>{leaf(choice.root)}</strong>
               <span className="path">{choice.root}</span>
-              <select
-                disabled={starting}
+              <div
+                className="source-scope-options"
+                role="radiogroup"
                 aria-label={`导入范围：${choice.root}`}
-                value={sourceScopes[choice.root] || ''}
-                onChange={(event) =>
-                  setSourceScopes((current) => ({
-                    ...current,
-                    [choice.root]: event.target.value as 'whole' | 'children',
-                  }))
-                }
               >
-                <option value="" disabled>
-                  请选择导入范围
-                </option>
-                <option value="whole">整个文件夹作为一个游戏</option>
-                <option value="children">分别导入里面的 {choice.children.length} 个游戏</option>
-              </select>
+                {(['whole', 'children'] as const).map((scope) => (
+                  <label
+                    className={`source-scope-option${sourceScopes[choice.root] === scope ? ' selected' : ''}`}
+                    key={scope}
+                  >
+                    <input
+                      type="radio"
+                      name={`source-scope-${choice.root}`}
+                      value={scope}
+                      checked={sourceScopes[choice.root] === scope}
+                      disabled={starting}
+                      onChange={() =>
+                        setSourceScopes((current) => ({ ...current, [choice.root]: scope }))
+                      }
+                    />
+                    <Icon name={scope === 'whole' ? 'folder' : 'grid'} size={18} />
+                    <span>
+                      {scope === 'whole'
+                        ? '整个文件夹作为一个游戏'
+                        : `分别导入里面的 ${choice.children.length} 个游戏`}
+                    </span>
+                  </label>
+                ))}
+              </div>
               <details>
                 <summary>识别到的游戏文件夹</summary>
                 {choice.children.map((child) => (
@@ -1389,7 +1403,7 @@ export function ImportPage({
                   </p>
                 ))}
               </details>
-            </label>
+            </div>
           ))}
           {sourceReview.warnings.map((warning) => (
             <p className="muted" key={warning}>
@@ -1488,7 +1502,12 @@ export function ImportPage({
         </Modal>
       )}
       {linkSource && (
-        <Modal variant="confirm" title="关联已有游戏" onClose={() => setLinkSource(null)}>
+        <Modal
+          variant="confirm"
+          className="modal-import-link"
+          title="关联已有游戏"
+          onClose={() => setLinkSource(null)}
+        >
           <p>选择要更新的游戏。编号、名称与历史保留；生成计划后再确认执行。</p>
           <SearchField
             label="关联游戏搜索"
@@ -1517,8 +1536,7 @@ export function ImportPage({
               </button>
             ))}
           </div>
-          <p className="muted">最多显示 50 项，可搜索缩小范围。</p>
-          <button onClick={() => setLinkSource(null)}>关闭</button>
+          <p className="muted import-link-hint">最多显示 50 项，可搜索缩小范围。</p>
         </Modal>
       )}
     </section>

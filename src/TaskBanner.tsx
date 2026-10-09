@@ -66,7 +66,7 @@ export function TaskBanner({
       : page.phase
     : page.status === 'completed'
       ? page.kind === 'scan'
-        ? `完成 · ${page.total} 个目录`
+        ? `完成 · ${page.total} 个目录${issues ? `，${issues} 项需处理` : ''}`
         : `完成 · ${page.processed} 项，${issues} 项需处理`
       : page.status === 'cancelled'
         ? '已取消 · 已完成的结果保留'

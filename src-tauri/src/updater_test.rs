@@ -609,9 +609,11 @@ fn preview_requires_explicit_save_review_and_does_not_touch_either_game() {
 #[test]
 fn database_commit_failure_restores_files_and_configuration_then_can_resume() {
     let f = Fixture::new();
+    let aliases = f.db.lock().unwrap().game(&f.id).unwrap().aliases;
     let id = f.plan(true, true);
     f.db.lock().unwrap().fail_version_commit(true).unwrap();
     assert!(f.apply(&id).is_err());
+    assert_eq!(f.db.lock().unwrap().game(&f.id).unwrap().aliases, aliases);
     assert_eq!(
         f.db.lock().unwrap().game(&f.id).unwrap().current_version,
         "v1"
@@ -632,6 +634,52 @@ fn database_commit_failure_restores_files_and_configuration_then_can_resume() {
     assert_eq!(
         f.db.lock().unwrap().game(&f.id).unwrap().current_version,
         "v2"
+    );
+}
+#[test]
+fn confirmed_import_alias_is_atomic_idempotent_and_survives_reopen_and_rollback() {
+    let mut f = Fixture::new();
+    let original = f.db.lock().unwrap().game(&f.id).unwrap();
+    let config = f.db.lock().unwrap().version_config(&f.id).unwrap();
+    let title = "新译名 シスターズコンパス v1.2";
+    let renamed = f.source.parent().unwrap().join(title);
+    fs::rename(&f.source, &renamed).unwrap();
+    f.source = renamed;
+    let cancelled = f.plan(true, true);
+    f.store.discard_preview(&cancelled).unwrap();
+    assert_eq!(
+        f.db.lock().unwrap().game(&f.id).unwrap().aliases,
+        original.aliases
+    );
+    let id = f.plan(true, true);
+    f.apply(&id).unwrap();
+    f.apply(&id).unwrap();
+    let mut game = f.db.lock().unwrap().game(&f.id).unwrap();
+    assert_eq!(
+        game.aliases.iter().filter(|alias| *alias == title).count(),
+        1
+    );
+    assert!(original
+        .aliases
+        .iter()
+        .all(|alias| game.aliases.contains(alias)));
+    let reopened = Database::open(&f.store.directory.parent().unwrap().join("fixture.db")).unwrap();
+    assert_eq!(reopened.game(&f.id).unwrap().aliases, game.aliases);
+    let future = scanner::pending_candidate(
+        &f.source
+            .parent()
+            .unwrap()
+            .join("新译名 シスターズコンパス v1.3"),
+    )
+    .unwrap();
+    assert!(matches(&future, std::slice::from_ref(&game))[0].auto_associate);
+    f.rollback(&id).unwrap();
+    game = f.db.lock().unwrap().game(&f.id).unwrap();
+    assert_eq!(game.display_title, original.display_title);
+    assert_eq!(f.db.lock().unwrap().version_config(&f.id).unwrap(), config);
+    assert_eq!(
+        game.aliases.iter().filter(|alias| *alias == title).count(),
+        1
     );
 }
 #[test]
@@ -675,11 +723,23 @@ fn update_preserves_uuid_metadata_local_and_external_saves_and_records_history_o
         2 * b"old progress".len() as u64
     );
     assert!(!stage_path(&preview, 0).exists());
+    // Merely confirming a plan cannot change aliases. Remember the source only at commit.
+    assert_eq!(
+        f.db.lock().unwrap().game(&f.id).unwrap().aliases,
+        before.aliases
+    );
     assert_eq!(f.apply(&id).unwrap(), vec![f.id.clone()]);
     let after = f.db.lock().unwrap().game(&f.id).unwrap();
     assert_eq!(after.id, before.id);
     assert_eq!(after.display_title, before.display_title);
-    assert_eq!(after.aliases, before.aliases);
+    assert!(before
+        .aliases
+        .iter()
+        .all(|alias| after.aliases.contains(alias)));
+    assert!(after
+        .aliases
+        .contains(&preview.items[0].candidate.suggested_title));
+    assert_eq!(after.aliases.len(), before.aliases.len() + 1);
     assert_eq!(after.save_paths, before.save_paths);
     assert_eq!(after.created_at, before.created_at);
     assert_eq!(after.last_launched_at, before.last_launched_at);

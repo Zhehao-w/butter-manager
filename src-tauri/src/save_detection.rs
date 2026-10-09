@@ -222,6 +222,89 @@ fn identity_path(name: &str) -> Option<PathBuf> {
     }
     Some(relative)
 }
+
+/// Batch matching reads only conventional, bounded static config; it never opens saves.
+pub(crate) fn matching_identity(root: &Path, work: &str, executable: Option<&str>) -> Vec<String> {
+    let Ok(root) = dunce::canonicalize(root) else {
+        return vec![];
+    };
+    let base = if work == "." {
+        PathBuf::new()
+    } else {
+        let Ok(base) = relative_path(work) else {
+            return vec![];
+        };
+        base
+    };
+    let mut identities = Vec::new();
+    let mut bases = vec![base];
+    if !bases[0].as_os_str().is_empty() {
+        bases.push(PathBuf::new());
+    }
+    for base in bases {
+        if let Some(text) = path_text(&base.join("game/options.rpy"))
+            .ok()
+            .and_then(|path| small_text(&root, &path))
+        {
+            for key in ["config.save_directory", "build.name"] {
+                if key == "config.save_directory" && text.contains("config.savedir") {
+                    continue;
+                }
+                if let Some(value) = assignment(&text, key)
+                    .and_then(literal)
+                    .filter(|value| identity_path(value).is_some())
+                {
+                    identities.push(format!(
+                        "renpy:{key}:{}",
+                        crate::paths::normalize_alias(&value)
+                    ));
+                }
+            }
+        }
+        if let Some(text) = path_text(&base.join("project.godot"))
+            .ok()
+            .and_then(|path| small_text(&root, &path))
+        {
+            let application = text
+                .split("[application]")
+                .nth(1)
+                .unwrap_or("")
+                .split("\n[")
+                .next()
+                .unwrap_or("");
+            if let Some(value) = assignment(application, "config/name")
+                .and_then(literal)
+                .filter(|value| identity_path(value).is_some())
+            {
+                identities.push(format!("godot:{}", crate::paths::normalize_alias(&value)));
+            }
+        }
+    }
+    if let Some(executable) = executable.and_then(|path| relative_path(path).ok()) {
+        if let Some(stem) = executable.file_stem() {
+            let info = executable
+                .parent()
+                .unwrap_or(Path::new(""))
+                .join(format!("{}_Data/app.info", stem.to_string_lossy()));
+            if let Some(text) = path_text(&info)
+                .ok()
+                .and_then(|path| small_text(&root, &path))
+            {
+                let lines: Vec<_> = text.trim_start_matches('\u{feff}').lines().collect();
+                if lines.len() == 2 && lines.iter().all(|value| identity_path(value).is_some()) {
+                    identities.push(format!(
+                        "unity:{}:{}",
+                        crate::paths::normalize_alias(lines[0]),
+                        crate::paths::normalize_alias(lines[1])
+                    ));
+                }
+            }
+        }
+    }
+    identities.sort();
+    identities.dedup();
+    identities
+}
 fn external_rule(
     engine: &str,
     custom: bool,

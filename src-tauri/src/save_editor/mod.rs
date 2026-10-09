@@ -398,15 +398,21 @@ fn validate_changes(fields: &[Field], changes: &[Change]) -> Result<()> {
     }
     Ok(())
 }
-pub fn apply(game: &Game, id: &str, expected: &str, changes: &[Change]) -> Result<Document> {
+pub fn apply(
+    game: &Game,
+    id: &str,
+    expected: &str,
+    changes: &[Change],
+    source_trusted: bool,
+) -> Result<Document> {
     let _guard = WRITES.lock().map_err(|_| invalid("存档写入锁不可用"))?;
     let (slot, path) = resolve(game, id)?;
-    write_document(game, slot, &path, expected, changes, false)
+    write_document(game, slot, &path, expected, changes, false, source_trusted)
 }
-pub fn resign(game: &Game, id: &str, expected: &str) -> Result<Document> {
+pub fn resign(game: &Game, id: &str, expected: &str, source_trusted: bool) -> Result<Document> {
     let _guard = WRITES.lock().map_err(|_| invalid("存档写入锁不可用"))?;
     let (slot, path) = resolve(game, id)?;
-    write_document(game, slot, &path, expected, &[], true)
+    write_document(game, slot, &path, expected, &[], true, source_trusted)
 }
 fn write_document(
     game: &Game,
@@ -415,11 +421,16 @@ fn write_document(
     expected: &str,
     changes: &[Change],
     resign: bool,
+    source_trusted: bool,
 ) -> Result<Document> {
     plain(path)?;
     let original = read_limited(path, FILE_LIMIT)?;
     if revision(path, &original)? != expected {
         return Err(invalid("存档已被游戏或其他程序更新；请刷新后重新修改"));
+    }
+    if slot.format == "RenPy" || slot.format == "Persistent" {
+        // Confirmation applies only to the exact bytes/revision checked above.
+        renpy::require_source_trust(game, &original, slot.format == "Persistent", source_trusted)?;
     }
     if resign {
         if slot.format != "RenPy" && slot.format != "Persistent" {
@@ -601,11 +612,6 @@ impl ExternalSaves {
         changes: Option<&[Change]>,
         trusted: bool,
     ) -> Result<Document> {
-        if !trusted {
-            return Err(invalid(
-                "请先确认外部存档来源可信；重新签名后游戏可能不再提示外来存档警告",
-            ));
-        }
         let _guard = WRITES.lock().map_err(|_| invalid("存档写入锁不可用"))?;
         let (slot, path, granted_revision) = self.resolve(game, id)?;
         if granted_revision != expected {
@@ -618,6 +624,7 @@ impl ExternalSaves {
             expected,
             changes.unwrap_or_default(),
             changes.is_none(),
+            trusted,
         )?;
         if let Some(grant) = self
             .0

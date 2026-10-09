@@ -32,7 +32,10 @@ export function SaveEditor({ game, onClose }: { game: Game; onClose: () => void 
   const [notice, setNotice] = useState('');
   const [pending, setPending] = useState<null | (() => void)>(null);
   const [pendingTrust, setPendingTrust] = useState<null | (() => void)>(null);
-  const trusted = useRef(new Set<string>());
+  const trusted = useRef(new Map<string, string>());
+  function sourceTrusted(doc: SaveDocument) {
+    return trusted.current.get(doc.slot.id) === doc.revision;
+  }
   const lastNormalSlot = useRef('');
   const externalSlots = useRef<SaveCatalog['slots']>([]);
   const alive = useRef(true);
@@ -119,16 +122,18 @@ export function SaveEditor({ game, onClose }: { game: Game; onClose: () => void 
           changes.push({ id: field.id, value });
         } else changes.push({ id: field.id, value: draft });
       }
-      const next = document.slot.external
-        ? await api.applySaveEdits(
-            game.id,
-            document.slot.id,
-            document.revision,
-            changes,
-            trusted.current.has(document.slot.id),
-          )
-        : await api.applySaveEdits(game.id, document.slot.id, document.revision, changes);
+      const next =
+        document.slot.format === 'RenPy' || document.slot.format === 'Persistent'
+          ? await api.applySaveEdits(
+              game.id,
+              document.slot.id,
+              document.revision,
+              changes,
+              sourceTrusted(document),
+            )
+          : await api.applySaveEdits(game.id, document.slot.id, document.revision, changes);
       if (!alive.current) return;
+      trusted.current.set(next.slot.id, next.revision);
       setDocument(next);
       setDrafts({});
       setNotice('已保存，请回游戏重新读档。');
@@ -137,8 +142,9 @@ export function SaveEditor({ game, onClose }: { game: Game; onClose: () => void 
   function trustBeforeWrite(action: () => void) {
     if (
       document &&
-      (document.slot.external || (document.signature && document.signature.status !== 'local')) &&
-      !trusted.current.has(document.slot.id)
+      (document.slot.format === 'RenPy' || document.slot.format === 'Persistent') &&
+      document.signature?.status !== 'local' &&
+      !sourceTrusted(document)
     )
       setPendingTrust(() => action);
     else action();
@@ -164,9 +170,10 @@ export function SaveEditor({ game, onClose }: { game: Game; onClose: () => void 
         game.id,
         document.slot.id,
         document.revision,
-        trusted.current.has(document.slot.id),
+        sourceTrusted(document),
       );
       if (!alive.current) return;
+      trusted.current.set(next.slot.id, next.revision);
       setDocument(next);
       setDrafts({});
       setNotice('已重新签名为本机存档，内容未修改。签名不保证不同游戏版本的兼容性。');
@@ -465,7 +472,7 @@ export function SaveEditor({ game, onClose }: { game: Game; onClose: () => void 
             <button
               className="primary"
               onClick={() => {
-                if (document) trusted.current.add(document.slot.id);
+                if (document) trusted.current.set(document.slot.id, document.revision);
                 const action = pendingTrust;
                 setPendingTrust(null);
                 action();

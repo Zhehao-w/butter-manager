@@ -20,6 +20,7 @@ fn parse(value: &str) -> Parsed {
     let lower = value.to_ascii_lowercase();
     let bytes = lower.as_bytes();
     let mut found = Vec::new();
+    let mut prefixed = Vec::new();
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] != b'v' {
@@ -57,41 +58,46 @@ fn parse(value: &str) -> Parsed {
             return Parsed::Ambiguous;
         }
         found.push(value[i..end].to_owned());
+        prefixed.push(i..end);
         i = end;
     }
-    if found.is_empty() {
-        let mut start = 0;
-        while start < bytes.len() {
-            if !bytes[start].is_ascii_digit() {
-                start += 1;
-                continue;
-            }
-            let (numeric_end, groups) = number(bytes, start);
-            let preceding = value[..start].chars().next_back();
-            let boundary = preceding.is_none_or(|c| {
-                !c.is_ascii() || c.is_ascii_whitespace() || matches!(c, '-' | '_' | '(' | '[')
-            });
-            let token = &value[start..numeric_end];
-            let first = token.split('.').next().unwrap_or("");
-            if boundary && groups >= 2 && first.len() <= 3 && !date_like(token) {
-                let end = qualifier_end(value, numeric_end);
-                if groups > 4 || !simple_tail(&value[end..]) {
-                    return Parsed::Ambiguous;
-                }
-                found.push(value[start..end].into());
-            }
-            start = numeric_end;
+    let mut start = 0;
+    while start < bytes.len() {
+        // Prefix candidates (including their qualifiers) were already collected.
+        if let Some(range) = prefixed.iter().find(|range| range.contains(&start)) {
+            start = range.end;
+            continue;
         }
+        if !bytes[start].is_ascii_digit() {
+            start += 1;
+            continue;
+        }
+        let (numeric_end, groups) = number(bytes, start);
+        let preceding = value[..start].chars().next_back();
+        let boundary = preceding.is_none_or(|c| {
+            !c.is_ascii() || c.is_ascii_whitespace() || matches!(c, '-' | '_' | '(' | '[')
+        });
+        let token = &value[start..numeric_end];
+        let first = token.split('.').next().unwrap_or("");
+        if boundary && groups >= 2 && first.len() <= 3 && !date_like(token) {
+            let end = qualifier_end(value, numeric_end);
+            if groups > 4 || !simple_tail(&value[end..]) {
+                return Parsed::Ambiguous;
+            }
+            found.push(value[start..end].into());
+        }
+        start = numeric_end;
     }
     let key = |s: &str| {
         s.trim_start_matches(|c: char| !c.is_ascii_digit())
             .to_ascii_lowercase()
     };
-    found.dedup_by(|a, b| key(a) == key(b));
-    match found.len() {
-        0 => Parsed::Absent,
-        1 => Parsed::Simple(found.remove(0)),
-        _ => Parsed::Ambiguous,
+    match found.first() {
+        None => Parsed::Absent,
+        Some(first) if found.iter().all(|other| key(other) == key(first)) => {
+            Parsed::Simple(first.clone())
+        }
+        Some(_) => Parsed::Ambiguous,
     }
 }
 fn without_archive_suffix(value: &str) -> String {
@@ -253,6 +259,26 @@ pub fn suggest(folder: &str, executable: Option<&str>) -> (String, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn mixed_candidates_conflict_without_losing_prefixes_or_qualifiers() {
+        for (text, expected) in [
+            ("Game v1.2 2.0", "Unknown"),
+            ("Game Ver1.06 1.04", "Unknown"),
+            ("Game v1.2 1.2", "v1.2"),
+            ("Game v1.2", "v1.2"),
+            ("Game 1.2-pc", "1.2"),
+            ("Game 2026.10.05", "Unknown"),
+            ("Chapter1_Ep.2-pc", "Unknown"),
+            ("Game 1.2 v1.2 1.2", "v1.2"),
+            ("Game Ver-1.2 beta3 1.2 beta3", "Ver-1.2 beta3"),
+            ("Game v1.2-rc1 1.2-rc2", "Unknown"),
+            ("Game v1.2.Fix4 1.2.Fix4.zip", "v1.2.Fix4"),
+            ("Game v1.2public 1.2public-pc", "v1.2public"),
+            ("Game v1.2 2026.10.05 Chapter1 Ep.2 DLC2-pc", "v1.2"),
+        ] {
+            assert_eq!(suggest(text, Some("Game.exe")).0, expected, "{text}");
+        }
+    }
     #[test]
     fn actual_directory_naming_patterns() {
         for (text, expected) in [

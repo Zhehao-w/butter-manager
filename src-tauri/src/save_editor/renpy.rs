@@ -312,6 +312,24 @@ fn sign_with_local_key(key: &SigningKey, log: &[u8]) -> Result<String> {
         STANDARD.encode(signature.to_bytes())
     ))
 }
+pub(super) fn require_source_trust(
+    game: &Game,
+    data: &[u8],
+    persistent: bool,
+    confirmed: bool,
+) -> Result<()> {
+    if !confirmed {
+        // Inspect the container/signature without requiring pickle deserialization.
+        let container = unpack(data, persistent)?;
+        let keys = key_paths(game).and_then(|paths| local_keys(&paths));
+        if inspect_signature(&container.log, &container.signatures, &keys).status != "local" {
+            return Err(invalid(
+                "请先确认此版本的存档来源可信；重新签名后游戏可能不再提示外来存档警告",
+            ));
+        }
+    }
+    Ok(())
+}
 pub(super) fn read(game: &Game, data: &[u8], persistent: bool) -> Result<View> {
     let container = unpack(data, persistent)?;
     let keys = key_paths(game).and_then(|paths| local_keys(&paths));

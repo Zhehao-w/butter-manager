@@ -64,13 +64,27 @@ describe('library status and preferences', () => {
     });
     const { rerender } = render(
       <LibraryFilters
-        games={[statusGame]}
+        games={[
+          statusGame,
+          { ...statusGame, id: 'unknown', engine: 'Unknown' },
+          { ...statusGame, id: 'kiri', engine: 'KiriKiri' },
+          { ...statusGame, id: 'wolf', engine: 'WOLF RPG Editor' },
+        ]}
         value={result.current.value}
         onChange={result.current.setValue}
       />,
     );
     fireEvent.click(screen.getByRole('button', { name: '筛选' }));
     const dialog = screen.getByRole('dialog', { name: '筛选游戏' });
+    const engines = within(within(dialog).getByRole('group', { name: '游戏引擎' })).getAllByRole(
+      'checkbox',
+    );
+    expect(engines.map((input) => input.closest('label')?.textContent)).toEqual([
+      'KiriKiri',
+      'Unity',
+      'WOLF RPG Editor',
+      '未识别',
+    ]);
     fireEvent.click(within(dialog).getByRole('checkbox', { name: '正在玩' }));
     expect(result.current.value).toEqual(emptyFilters());
     fireEvent.click(within(dialog).getByRole('button', { name: '完成' }));

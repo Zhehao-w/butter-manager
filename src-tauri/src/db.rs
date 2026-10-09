@@ -429,7 +429,7 @@ impl Database {
         }
         for candidate in candidates
             .iter()
-            .filter(|c| c.status == "ready" && c.qsp.is_some())
+            .filter(|c| c.status == "ready" && c.qsp.is_some() && c.engine == "QSP")
         {
             let Some(id) = &candidate.registered_id else {
                 continue;
@@ -1639,11 +1639,31 @@ mod tests {
         assert_eq!(saved.main_executable, original.main_executable);
         assert!(saved.external_player.is_none());
         assert!(db.sync_mtool_defaults(&[scan.clone()]).unwrap().is_empty());
+        std::fs::create_dir_all(root.join("www/js")).unwrap();
+        std::fs::write(root.join("www/js/rpg_core.js"), b"fixture").unwrap();
+        let mut conflicting =
+            crate::scanner::analyze_quick_controlled(&root, &|| false, &|_| {}).unwrap();
+        assert_eq!(conflicting.engine, "Unknown");
+        conflicting.registered_id = Some(id.clone());
+        assert!(db
+            .sync_mtool_defaults(&[conflicting.clone()])
+            .unwrap()
+            .is_empty());
+        assert_eq!(db.game(&id).unwrap().engine, "QSP");
         let mut edit = draft(&saved);
         edit.engine = "Custom Engine".into();
         db.edit_game(edit).unwrap();
         assert!(db.sync_mtool_defaults(&[scan]).unwrap().is_empty());
+        assert!(db
+            .sync_mtool_defaults(&[conflicting.clone()])
+            .unwrap()
+            .is_empty());
+        db.supplement_metadata(&[(id.clone(), conflicting)], &|| false)
+            .unwrap();
         assert_eq!(db.game(&id).unwrap().engine, "Custom Engine");
+        let saved = db.game(&id).unwrap();
+        assert_eq!(saved.launch_type, original.launch_type);
+        assert_eq!(saved.main_executable, original.main_executable);
     }
 
     #[test]

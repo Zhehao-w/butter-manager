@@ -24,25 +24,47 @@ pub fn is_link(metadata: &fs::Metadata) -> bool {
 
 pub(crate) fn helper(name: &str) -> bool {
     let name = name.to_lowercase();
+    let stem = Path::new(&name)
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy();
+    // Exact tool stems only: a game title containing "config" is still selectable.
     [
-        "unins",
-        "uninstall",
-        "setup",
-        "install",
-        "update",
-        "patcher",
-        "crash",
-        "vc_redist",
-        "vcredist",
-        "dxsetup",
-        "anticheat",
-        "unitycrash",
-        "inject",
-        "mtool",
-        "helper",
+        "keyconfig",
+        "key_config",
+        "config",
+        "configuration",
+        "settings",
+        "setting",
+        "option",
+        "options",
+        "configure",
+        "configtool",
+        "キー設定",
+        "環境設定",
+        "按键设置",
+        "键位设置",
     ]
-    .iter()
-    .any(|s| name.contains(s))
+    .contains(&stem.as_ref())
+        || [
+            "unins",
+            "uninstall",
+            "setup",
+            "install",
+            "update",
+            "patcher",
+            "crash",
+            "vc_redist",
+            "vcredist",
+            "dxsetup",
+            "anticheat",
+            "unitycrash",
+            "inject",
+            "mtool",
+            "helper",
+        ]
+        .iter()
+        .any(|s| name.contains(s))
 }
 
 pub(crate) fn excluded_name(name: &str) -> bool {
@@ -87,6 +109,9 @@ pub(crate) fn resource_directory(name: &str) -> bool {
             "fonts",
             "locales",
             "renpy",
+            "system",
+            "resources",
+            "tyrano",
         ]
         .contains(&name)
 }
@@ -255,6 +280,15 @@ pub fn analyze_controlled(
     analyze_inner(path, deep, true, None, stop, progress)
 }
 
+pub fn analyze_selected_controlled(
+    path: &Path,
+    executable: Option<&str>,
+    stop: &dyn Fn() -> bool,
+    progress: &dyn Fn(&Path),
+) -> Result<ScanCandidate> {
+    analyze_inner(path, false, true, executable, stop, progress)
+}
+
 pub fn analyze_quick_controlled(
     path: &Path,
     stop: &dyn Fn() -> bool,
@@ -298,6 +332,7 @@ fn analyze_inner(
     };
     let mut signals = std::collections::HashMap::new();
     let mut qsp_files = vec![];
+    let mut html_files = vec![];
     let mut stack = vec![(root.clone(), 0)];
     while let Some((directory, depth)) = stack.pop() {
         if stop() {
@@ -370,6 +405,8 @@ fn analyze_inner(
                 && !generated_launcher
                 && ((!name.ends_with(".exe")
                     && !name.ends_with(".qsp")
+                    && !name.ends_with(".html")
+                    && !name.ends_with(".htm")
                     && (!name.ends_with(".bat") || !inspect_files))
                     || (name.ends_with(".exe") && helper(&name)))
             {
@@ -433,6 +470,21 @@ fn analyze_inner(
                     } else {
                         candidate.status = "incomplete".into();
                     }
+                } else if (name.ends_with(".html") || name.ends_with(".htm"))
+                    && html_files.len() < 8
+                {
+                    html_files.push(ExeCandidate {
+                        relative_path: relative,
+                        architecture: "Unknown".into(),
+                        score: 60 - depth,
+                        size_bytes: metadata.len(),
+                        modified_ms: metadata
+                            .modified()
+                            .ok()
+                            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                            .map(|d| d.as_millis())
+                            .unwrap_or(0),
+                    });
                 } else if inspect_files && name.ends_with(".bat") && candidate.bats.len() < 8 {
                     let file = crate::paths::contained_file(&root, &relative, "bat")?;
                     let mut bat = analyze_bat(&file, relative);
@@ -464,6 +516,89 @@ fn analyze_inner(
         signals.insert(directory, names);
         stack.extend(children);
     }
+    let stopped = || stop() || started.elapsed() >= budget;
+    let mut evidence = std::collections::HashMap::new();
+    for (directory, names) in &signals {
+        if stopped() {
+            break;
+        }
+        evidence.insert(
+            directory.clone(),
+            crate::engine_detection::quick(directory, names),
+        );
+    }
+    // HTML is a launch recommendation only when it contains a Twine runtime declaration.
+    // Do not suggest readmes, arbitrary web pages, or Electron/NW.js internal pages.
+    for html in html_files {
+        if stopped() {
+            break;
+        }
+        let path = root.join(crate::paths::relative_path(&html.relative_path)?);
+        let directory = path.parent().unwrap_or(&root);
+        // A packaged browser game should launch its wrapper EXE, not its internal HTML.
+        if signals.get(directory).is_some_and(|names| {
+            ["nw.dll", "nw.exe", "electron.exe", "resources"]
+                .iter()
+                .any(|name| names.contains(*name))
+        }) && candidate
+            .executables
+            .iter()
+            .any(|exe| root.join(&exe.relative_path).parent() == Some(directory))
+        {
+            continue;
+        }
+        if crate::engine_detection::html_engine(
+            path.parent().unwrap_or(&root),
+            path.file_name().unwrap().to_str().unwrap_or(""),
+        )
+        .is_some()
+            && candidate.executables.len() < 32
+        {
+            candidate.executables.push(html);
+        }
+    }
+    for executable in &mut candidate.executables {
+        if stopped() {
+            break;
+        }
+        let path = root.join(crate::paths::relative_path(&executable.relative_path)?);
+        let directory = path.parent().unwrap_or(&root);
+        let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        let stem = path
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_lowercase();
+        if stem.chars().count() >= 4 && candidate.suggested_title.to_lowercase().contains(&stem) {
+            // Localized game titles outrank unrelated launchers without reading EXE contents.
+            executable.score += 20;
+        }
+        if let (Some(names), Some(base)) = (signals.get(directory), evidence.get(directory)) {
+            let detected =
+                crate::engine_detection::for_executable(directory, names, filename, base.clone());
+            if detected.engines.len() == 1 {
+                executable.score += 30;
+            }
+            if base
+                .main
+                .as_deref()
+                .is_some_and(|main| main.eq_ignore_ascii_case(filename))
+            {
+                executable.score += 70;
+            }
+        }
+        if evidence
+            .get(&root)
+            .and_then(|e| e.main.as_deref())
+            .is_some_and(|main| {
+                main.replace('\\', "/")
+                    .eq_ignore_ascii_case(&executable.relative_path.replace('\\', "/"))
+            })
+            && directory != root
+        {
+            executable.score += 70;
+        }
+    }
     candidate.executables.sort_by(|a, b| {
         b.score
             .cmp(&a.score)
@@ -481,8 +616,16 @@ fn analyze_inner(
             candidate.status = "incomplete".into();
             break;
         }
-        match crate::paths::contained_file(&root, &executable.relative_path, "exe") {
-            Ok(file) => executable.architecture = architecture(&file),
+        match crate::paths::launch_file(&root, &executable.relative_path) {
+            Ok(file)
+                if executable
+                    .relative_path
+                    .to_ascii_lowercase()
+                    .ends_with(".exe") =>
+            {
+                executable.architecture = architecture(&file)
+            }
+            Ok(_) => {}
             Err(_) => candidate.status = "incomplete".into(),
         }
     }
@@ -490,16 +633,39 @@ fn analyze_inner(
         .executables
         .first()
         .map(|v| v.relative_path.as_str());
-    candidate.working_directory = executable_directory(executable)?;
+    candidate.working_directory = executable_directory(preferred_executable.or(executable))?;
+    let mut engine_conflict = false;
     if let Some(exe) = preferred_executable.or(executable) {
         let file = root.join(crate::paths::relative_path(exe)?);
         let directory = file.parent().unwrap_or(&root);
         if let Some(names) = signals.get(directory) {
-            candidate.engine = detect_engine(
+            let filename = file.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            let mut detected = crate::engine_detection::for_executable(
                 directory,
                 names,
-                file.file_stem().and_then(|s| s.to_str()).unwrap_or(""),
+                filename,
+                evidence.get(directory).cloned().unwrap_or_default(),
             );
+            if inspect_files
+                && detected.engines.is_empty()
+                && filename.to_ascii_lowercase().ends_with(".exe")
+            {
+                progress(&file);
+                crate::engine_detection::detailed(
+                    directory,
+                    filename,
+                    names,
+                    &mut detected,
+                    &stopped,
+                );
+            }
+            if detected.conflicting() {
+                engine_conflict = true;
+                candidate
+                    .warnings
+                    .push("发现多个引擎特征，保留未识别；请核对启动文件或手动填写引擎".into());
+            }
+            candidate.engine = detected.engine();
         }
     }
     (candidate.suggested_version, candidate.version_source) =
@@ -552,7 +718,14 @@ fn analyze_inner(
                 .collect(),
             recommended_player,
         });
-        candidate.engine = "QSP".into();
+        if candidate.engine != "Unknown" && candidate.engine != "QSP" {
+            candidate
+                .warnings
+                .push("QSP 文件与其他引擎特征冲突，保留未识别".into());
+            candidate.engine = "Unknown".into();
+        } else if !engine_conflict {
+            candidate.engine = "QSP".into();
+        }
         candidate.working_directory = ".".into();
     }
     if !stop() {
@@ -564,6 +737,12 @@ fn analyze_inner(
         );
     }
     candidate.elapsed_ms = started.elapsed().as_millis() as u64;
+    if started.elapsed() >= budget && candidate.status == "ready" {
+        candidate.status = "incomplete".into();
+        candidate
+            .warnings
+            .push("已达到分析预算，保留已有结果；可单独重试或手动配置".into());
+    }
     if stop() {
         candidate.status = "skipped".into();
     }
@@ -584,74 +763,6 @@ fn qsp_player_rank(file: &str) -> i32 {
     } else {
         0
     }
-}
-
-/// Match the suggested executable's directory, using combined runtime signatures.
-/// Never read a binary or enumerate the asset tree for engine detection.
-fn detect_engine(
-    directory: &Path,
-    names: &std::collections::HashSet<String>,
-    stem: &str,
-) -> String {
-    let mut engines = vec![];
-    for (markers, engine) in [
-        (["js/rmmz_core.js", "www/js/rmmz_core.js"], "RPG Maker MZ"),
-        (["js/rpg_core.js", "www/js/rpg_core.js"], "RPG Maker MV"),
-    ] {
-        if (names.contains("js") || names.contains("www"))
-            && markers.iter().any(|m| marker_exists(directory, m))
-        {
-            engines.push(engine);
-        }
-    }
-    let stem = stem.to_lowercase();
-    if names.contains(&format!("{stem}_data")) && marker_exists(directory, "UnityPlayer.dll") {
-        engines.push("Unity");
-    }
-    if names.contains(&format!("{stem}.pck")) && marker_exists(directory, &format!("{stem}.pck")) {
-        engines.push("Godot");
-    }
-    if names.contains("renpy") && names.contains("game") {
-        engines.push("Ren'Py");
-    }
-    if names.contains("rpg_rt.ldb") && names.contains("rpg_rt.lmt") {
-        engines.push("RPG Maker (legacy)");
-    }
-    if names.contains("game.ini")
-        && (names
-            .iter()
-            .any(|s| s.starts_with("rgss") && s.ends_with(".dll"))
-            || names.iter().any(|s| {
-                s.ends_with(".rgssad") || s.ends_with(".rgss2a") || s.ends_with(".rgss3a")
-            }))
-    {
-        engines.push("RPG Maker (legacy)");
-    }
-    if engines.is_empty()
-        && marker_exists(directory, "nw.dll")
-        && marker_exists(directory, "package.json")
-    {
-        engines.push("NW.js");
-    }
-    if engines.len() == 1 {
-        engines[0].into()
-    } else {
-        "Unknown".into()
-    }
-}
-
-fn marker_exists(directory: &Path, marker: &str) -> bool {
-    let mut path = directory.to_path_buf();
-    for part in marker.split('/') {
-        path.push(part);
-        let Ok(metadata) = fs::symlink_metadata(&path) else {
-            return false;
-        };
-        if is_link(&metadata) {
-            return false;
-        }
-    }
-    path.is_file()
 }
 
 pub fn analyze_directory(path: &Path) -> Result<ScanCandidate> {
@@ -852,7 +963,17 @@ mod tests {
         let godot = temp.path().join("godot-fixture");
         fs::create_dir(&godot).unwrap();
         fs::write(godot.join("start.exe"), b"fixture").unwrap();
-        fs::write(godot.join("start.pck"), b"fixture").unwrap();
+        fs::write(
+            godot.join("start.pck"),
+            [
+                b"GDPC".as_slice(),
+                &2u32.to_le_bytes(),
+                &4u32.to_le_bytes(),
+                &[0u8; 8],
+            ]
+            .concat(),
+        )
+        .unwrap();
         assert_eq!(analyze_directory(&godot).unwrap().engine, "Godot");
     }
     #[test]

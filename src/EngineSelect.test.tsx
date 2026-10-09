@@ -16,6 +16,8 @@ describe('engine selector', () => {
   it('keeps all options available when switching between selected engines', () => {
     render(<Editor />);
     const select = screen.getByRole('combobox', { name: '游戏引擎' }) as HTMLSelectElement;
+    expect(screen.getByRole('option', { name: 'KiriKiri' })).toBeTruthy();
+    expect(select.options[select.options.length - 2].value).toBe('Unknown');
     fireEvent.change(select, { target: { value: 'QSP' } });
     expect(select.value).toBe('QSP');
     expect(screen.getByRole('option', { name: 'Unity' })).toBeTruthy();

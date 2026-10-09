@@ -1,5 +1,12 @@
 # Dot-source this script to enable the project-local Rust and Windows C++ tools.
 $taskProjectRoot = Split-Path -Parent $PSScriptRoot
+# Keep development downloads, state and temporary files separate from app data.
+# pnpm 11 reads storeDir/cacheDir from pnpm-workspace.yaml; stateDir is session-only.
+$taskTempRoot = Join-Path $taskProjectRoot '.tools\tmp'
+New-Item -ItemType Directory -Path $taskTempRoot -Force | Out-Null
+$env:TEMP = $taskTempRoot
+$env:TMP = $taskTempRoot
+$env:PNPM_CONFIG_STATE_DIR = Join-Path $taskProjectRoot '.tools\pnpm-state'
 $taskCargoRoot = Join-Path $taskProjectRoot '.tools\cargo'
 if (Test-Path -LiteralPath (Join-Path $taskCargoRoot 'bin\cargo.exe')) {
     $env:CARGO_HOME = $taskCargoRoot

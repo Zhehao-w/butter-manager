@@ -12,6 +12,8 @@ use tauri::{Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
 struct AppState {
+    #[cfg(windows)]
+    _data_guard: crate::data_directory::InstanceGuard,
     appearance: Mutex<crate::appearance::Appearance>,
     db: Arc<Mutex<Database>>,
     tasks: Arc<TaskManager>,
@@ -24,6 +26,17 @@ struct AppState {
     running: Arc<crate::runtime::RunningGames>,
 }
 type CommandResult<T> = std::result::Result<T, String>;
+#[tauri::command]
+fn open_data_directory(state: State<'_, AppState>) -> CommandResult<()> {
+    if !cfg!(windows) {
+        return Err("打开文件夹仅支持 Windows".into());
+    }
+    std::process::Command::new("explorer.exe")
+        .arg(&state.data)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("无法打开数据目录：{error}"))
+}
 #[tauri::command]
 fn get_appearance(state: State<'_, AppState>) -> CommandResult<crate::appearance::Appearance> {
     let _guard = state.appearance.lock().map_err(|_| "外观设置锁不可用")?;
@@ -785,9 +798,15 @@ fn start_game_analysis(state: State<'_, AppState>, id: String) -> CommandResult<
     tauri::async_runtime::spawn_blocking(move || {
         job.stage("分析 EXE / BAT", 1);
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            scanner::analyze_controlled(
+            scanner::analyze_selected_controlled(
                 Path::new(&game.install_path),
-                false,
+                if game.launch_type == "MTOOL" {
+                    game.mtool_target_exe
+                        .as_deref()
+                        .or(game.main_executable.as_deref())
+                } else {
+                    game.main_executable.as_deref()
+                },
                 &|| job.stop(),
                 &|current| job.progress(&game.install_path, current),
             )
@@ -983,6 +1002,46 @@ fn open_game_folder(state: State<'_, AppState>, id: String) -> CommandResult<()>
     with_db(&state, |db| launcher::open_folder(&db.game(&id)?))
 }
 #[tauri::command]
+async fn list_editable_saves(
+    state: State<'_, AppState>,
+    game_id: String,
+) -> CommandResult<crate::save_editor::Catalog> {
+    let game = with_db(&state, |db| db.game(&game_id))?;
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::save_editor::list(&game).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+async fn read_editable_save(
+    state: State<'_, AppState>,
+    game_id: String,
+    save_id: String,
+) -> CommandResult<crate::save_editor::Document> {
+    let game = with_db(&state, |db| db.game(&game_id))?;
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::save_editor::read(&game, &save_id).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+async fn apply_save_edits(
+    state: State<'_, AppState>,
+    game_id: String,
+    save_id: String,
+    revision: String,
+    changes: Vec<crate::save_editor::Change>,
+) -> CommandResult<crate::save_editor::Document> {
+    let game = with_db(&state, |db| db.game(&game_id))?;
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::save_editor::apply(&game, &save_id, &revision, &changes).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+#[tauri::command]
 async fn open_save_folder(
     state: State<'_, AppState>,
     id: String,
@@ -1097,42 +1156,73 @@ async fn choose_launch_file(
     .await
     .map_err(|e| e.to_string())?
 }
+fn initialize(app: &tauri::AppHandle) -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let data = app.path().app_local_data_dir()?;
+    crate::data_directory::ensure_writable(&data)?;
+    let data = dunce::canonicalize(data)?;
+    #[cfg(windows)]
+    let data_guard = crate::data_directory::InstanceGuard::acquire(&data)?;
+    std::fs::create_dir_all(app.path().app_cache_dir()?)?;
+    std::fs::create_dir_all(app.path().app_log_dir()?)?;
+    let appearance = crate::appearance::load(&data).unwrap_or_else(|error| {
+        eprintln!("Unable to load appearance settings: {error}");
+        crate::appearance::Appearance::default()
+    });
+    app.manage(AppState {
+        #[cfg(windows)]
+        _data_guard: data_guard,
+        appearance: Mutex::new(appearance),
+        db: Arc::new(Mutex::new(Database::open(
+            &data.join(crate::data_directory::DATABASE),
+        )?)),
+        tasks: Arc::new(TaskManager::default()),
+        activity: Arc::new(Mutex::new(0)),
+        imports: Arc::new(ImportStore::open(data.join("imports"))?),
+        data,
+        deletion_plans: Arc::new(Mutex::new(std::collections::HashMap::new())),
+        duplicate_plans: Arc::new(Mutex::new(std::collections::HashMap::new())),
+        running: Arc::new(crate::runtime::RunningGames::default()),
+    });
+    // Create the WebView after validating and opening this build's data directory.
+    let window =
+        tauri::WebviewWindowBuilder::from_config(app, &app.config().app.windows[0])?.build()?;
+    #[cfg(windows)]
+    style_native_title_bar(&window);
+    window.set_icon(crate::appearance::icon(appearance.icon))?;
+    if let Err(error) = crate::window_placement::position(&window) {
+        eprintln!("Unable to position startup window: {error}");
+        let _ = window.center();
+    }
+    window.show()?;
+    let _ = window.set_focus();
+    Ok(())
+}
+
 pub fn run() {
+    let mut context = tauri::generate_context!();
+    if let Some(root) = crate::data_directory::development_override(
+        cfg!(windows),
+        cfg!(debug_assertions) || tauri::is_dev(),
+    ) {
+        context.config_mut().app.app_directories_override = Some(
+            tauri::utils::config::AppDirectoriesOverride::Root(root.into()),
+        );
+    }
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            #[cfg(windows)]
-            if let Some(window) = app.get_webview_window("main") {
-                style_native_title_bar(&window);
-            }
-            let data = app.path().app_local_data_dir()?;
-            std::fs::create_dir_all(&data)?;
-            let appearance = crate::appearance::load(&data).unwrap_or_else(|error| {
-                eprintln!("Unable to load appearance settings: {error}");
-                crate::appearance::Appearance::default()
-            });
-            if let Some(window) = app.get_webview_window("main") {
-                window.set_icon(crate::appearance::icon(appearance.icon))?;
-            }
-            app.manage(AppState {
-                appearance: Mutex::new(appearance),
-                db: Arc::new(Mutex::new(Database::open(&data.join("library.sqlite3"))?)),
-                tasks: Arc::new(TaskManager::default()),
-                activity: Arc::new(Mutex::new(0)),
-                imports: Arc::new(ImportStore::open(data.join("imports"))?),
-                data,
-                deletion_plans: Arc::new(Mutex::new(std::collections::HashMap::new())),
-                duplicate_plans: Arc::new(Mutex::new(std::collections::HashMap::new())),
-                running: Arc::new(crate::runtime::RunningGames::default()),
-            });
-            if let Some(window) = app.get_webview_window("main") {
-                if let Err(error) = crate::window_placement::position(&window) {
-                    eprintln!("Unable to position startup window: {error}");
-                    let _ = window.center();
+            let handle = app.handle().clone();
+            std::thread::spawn(move || {
+                if let Err(error) = initialize(&handle) {
+                    handle
+                        .dialog()
+                        .message(format!("butter-manager 无法启动：{error}"))
+                        .title("启动失败")
+                        .kind(tauri_plugin_dialog::MessageDialogKind::Error)
+                        .blocking_show();
+                    handle.exit(1);
                 }
-                window.show()?;
-                let _ = window.set_focus();
-            }
+            });
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -1141,6 +1231,7 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            open_data_directory,
             get_appearance,
             save_appearance,
             list_games,
@@ -1185,13 +1276,16 @@ pub fn run() {
             start_metadata_refresh,
             open_game_folder,
             open_save_folder,
+            list_editable_saves,
+            read_editable_save,
+            apply_save_edits,
             choose_save_directory,
             preview_mtool_bat,
             choose_directory,
             choose_launch_file,
             suggest_version
         ])
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("butter-manager 启动失败");
 }
 

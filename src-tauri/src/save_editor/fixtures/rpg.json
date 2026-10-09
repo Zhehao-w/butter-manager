@@ -1,0 +1,37 @@
+{
+  "source": "Synthetic values encoded by bundled official StorageManager/pako and LZString; no game saves.",
+  "value": {
+    "@": "Object",
+    "variables": {
+      "@": "Game_Variables",
+      "_data": [
+        null,
+        4,
+        "勇者 🎮",
+        false
+      ]
+    },
+    "switches": {
+      "@": "Game_Switches",
+      "_data": [
+        null,
+        true
+      ]
+    },
+    "party": {
+      "@": "Game_Party",
+      "_gold": 10,
+      "_items": {},
+      "_weapons": {},
+      "_armors": {}
+    },
+    "unknown": {
+      "@": "Custom",
+      "keep": [
+        "preserve"
+      ]
+    }
+  },
+  "mv": "TjRJZ0FpQmNJUElFWUNzQ21CakFMaUFOQ0FiZ1F3Q2NCTFBPQUd5UUdjcFFKb0J4UEFXeVFIMEExUWs4cXJFVmdDWjQwZUtBRzBBZGdGY3laVEFCWnNnY2FWQW9BRUFDUUR3YmdPdjJzQU16eGxLU0FMb0JmYkpRRHVSTkNnQVd2U0xTZ2hHTFZnR1ZydGg5V3lEaFVVaEpHVGswQWlrVGN4QUFCMEkwQUU4YWNCYzNOZ0FGZUtUL0FITUFleklCS0FCR0FBWi9HeVFtYWlkbzFrc2tQQmk4aVJyZ09zSW1QSUkyMDJpcENRQnJDVHpMQ1dTNkVBQmhLVW8wUEtZK1FhUWtHUEZZZ2lva0Fod2tFRE5USUFBQQ==",
+  "mz": "eAFdT8K7CsOCQBDDvBXDmcO6CgXCq8KrBAtLBcOBRkLDmCTCq8OGw5zCi8K7S8KCwoTCgMKNWAjDvsKCf8OgXwnCln7CgmcgwoJ2OzPCuzPCsw1MwoDDgzzDmVPDqsKBQcKFNsOHRMKQA8OedMOKDCXDhcKrL8OLIMOOw5Ajw7DCtSrChWBjBsKPw4vDuXk8DV7Ct8OrHcOYBsKFwqPCqGXDoMOqw5zCp8K7P8KbZU/DvsK5eFt2RwbCrT/DvAQvOibCrG/CtcOIwoDCj8KGYcOMPcOJT8K9wpASw5fChEbCqx7CocKVw5p2IGjCpSrClMKuVW83LcKdw5cyfFgQwplQH8KMJUfCtiLCiMOaw7YNw7bCsFnCqQ=="
+}

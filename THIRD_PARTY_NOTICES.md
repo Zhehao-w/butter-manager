@@ -14,4 +14,6 @@ Lucide 图标来源地址与 SHA-256 保存在 [sources.json](src/assets/lucide/
 
 本文记录仓库直接打包的资源。Node.js 与 Rust 依赖各自保留其上游许可，可通过锁文件追溯对应版本。
 
+Save Editor Lite 新增 Rust 依赖 `lz-str`（MIT）、`zip`（MIT）、`flate2`、`base64`、`sha1`、`sha2`、`p256`（后五者 MIT OR Apache-2.0），版本及传递依赖见 `src-tauri/Cargo.lock`。实现参考 RPG Maker StorageManager 与 Ren’Py 存档格式，不打包游戏引擎源代码或 Python 运行环境。测试夹具只包含合成数据与测试专用密钥。
+
 2026-10-08 外观切换功能新增用户提供的两张透明 PNG。它们与原版图片分别保留；提供者于同日要求将全部改动推送至 GitHub，包含这些资源。新版附件的生成方式未单独记录，见 [资源说明](src/assets/README.md)。

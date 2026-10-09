@@ -1,5 +1,7 @@
 # butter-manager
 
+Save Editor Lite v0.1 已接入游戏详情的存档位置，支持标准 RPG Maker MV/MZ 和带可验证签名的 Ren’Py 简单字段编辑；运行中的游戏可编辑，保存后重新读档。具体范围、签名限制和真实游戏验收见 [存档编辑器说明](docs/save-editor-lite.md)。
+
 Windows 本地轻量游戏库与启动器，基于 Tauri / Rust / React / SQLite。当前版本 **0.3.0**，采用 [MIT 许可](LICENSE)。当前流程以本文和 [v0.3 实施说明](docs/v0.3-implementation.md) 为准。
 
 Lightweight Windows game library manager with local importing, version tracking, save management, and MTool/QSP launcher support.
@@ -13,12 +15,17 @@ Lightweight Windows game library manager with local importing, version tracking,
 - 游戏状态为从未玩过、正在玩、已通关。成功启动后标记正在玩，已通关状态保留；可在详情手动修改。
 - 支持状态、引擎、启动方式组合筛选，以及名称、别名、路径搜索和需处理筛选。视图及各页面排序在本机保存，搜索和筛选只保留本次会话。
 - 目录检查只检查目录和启动文件，不遍历资源树、不自动移除记录。新游戏需选择扫描候选再登记；扫描不覆盖已有名称、版本和历史。
+- 扫描结果支持“未入库”一键筛选，可与搜索组合；固定宽度的批量选择按钮在“全选”和“全不选”之间切换，作用于当前结果的全部项目，包含未滚动到的行。全选跳过已入库及暂不可选的游戏，筛选范围外的勾选与手动配置保留。
 - 删除游戏文件和从库中移除均使用独立确认弹窗，操作按钮固定在底部；删除检查完成后保持弹窗高度。仅移除库记录时，游戏和存档文件保留。扫描页返回时复用已测量的卡片高度，保留选择、编辑与滚动位置。
 - 启动恢复导入记录及清单采用缓冲读取，避免大清单逐字节读取拖慢窗口显示；保留全部恢复校验，不扫描完整游戏资源。
 - 扫描和检查使用悬浮进度横幅，不挤压列表。完成或取消后停留 5 秒，再先渐隐 300ms、后收起位置 300ms；悬停或聚焦时暂停倒计时，失败提示保留至手动关闭。扫描横幅提供“查看扫描结果”。
 - 窗口按鼠标所在屏幕的可用区域居中；不可获取时退回主屏幕。侧栏顶部显示应用图标与署名 by Zhehao-w，并以细线分隔导航；选中导航保持统一字重，通过浅蓝背景、图标颜色与药丸竖线强调。设置位于插画下方，版本号显示在入口右侧；应用图标、介绍与许可位于设置页最下方，无独立关于页面。
 
 设置中的“外观”可独立切换原版／新版应用图标和侧栏立绘，选择后自动保存，重启恢复。立绘保持原有半透明及渐隐效果；当前 EXE 文件图标固定使用新版，应用内与窗口图标随设置切换。实现边界与后续文件图标方案见 [外观说明](docs/appearance.md)。
+
+引擎识别先检查常见目录和小配置，包括 System 下的 RGSS、WOLF、NScripter、TyranoScript 与 Twine。单独分析时，仅对仍未知的游戏读取 EXE 版本信息、嵌入式 Godot 包头或 ASAR 索引，不执行游戏、不解包资源；`.xp3`、Electron、NW.js 不单独确认具体引擎。多种引擎特征冲突时保留未识别，手动引擎与已有启动配置保留；详情分析结果需明确选择“使用识别引擎”并保存，才会替换资料中的引擎。
+
+独立 HTML 启动的游戏归为 HTML；带 NW.js/Electron 的游戏仍按实际游戏框架识别。HTML 检查最多读取开头和末尾各 128 KiB，不加载完整故事资源。多 EXE 建议排除常见配置工具，并优先匹配游戏目录名称；手选启动项保持不变。KiriKiri 仍通过 EXE 元数据和实际资源组合确认。筛选中的“未识别”排在引擎列表末尾。
 
 ## 导入与更新
 
@@ -58,6 +65,8 @@ Lightweight Windows game library manager with local importing, version tracking,
 
 ## 本地开发
 
+Windows Release 默认使用 EXE 旁的 `data/` 保存库、配置、导入恢复记录与 WebView2 用户数据，目录不可写时明确报错。Windows 开发版使用独立的 `data-dev/`。应用只读取当前数据目录，不再检测或迁移旧 AppData 资料。目录结构与验证步骤见 [Portable 说明](docs/portable.md)。
+
 需要 Windows C++ Build Tools（桌面 C++ 工作负载及 Windows SDK）、WebView2、Node.js / pnpm 和 Rust MSVC 工具链。系统依赖安装方法见 [Tauri 官方 Windows 环境说明](https://v2.tauri.app/start/prerequisites/#windows)。
 
 开发与自动检查使用 `.node-version` 中的 Node.js 24.19.0、`package.json` 指定的 pnpm 11.25.0、`rust-toolchain.toml` 中的 Rust 1.99.0；依赖版本由两个锁文件固定。
@@ -71,6 +80,8 @@ pnpm tauri dev
 ```
 
 安装 Rust 时使用 MSVC 默认主机。已有项目本地工具链的开发者可先执行 `. ./scripts/Use-Toolchain.ps1`；新环境直接使用已安装的系统工具链，无需复制 `.tools`。
+
+开发依赖及下载缓存使用项目内 `.tools/pnpm-store` 和 `.tools/pnpm-cache`（配置位于 `pnpm-workspace.yaml`）。本地工具脚本还将当前终端的 pnpm 状态、临时文件定位到 `.tools/pnpm-state` 和 `.tools/tmp`，Rust 工具及依赖位于 `.tools/cargo`、`.tools/rustup`，构建输出保留在 `src-tauri/target`。这些目录均忽略提交，不属于正式便携版的 `data/`，不会修改系统或其他应用的缓存设置。
 
 ```powershell
 pnpm tauri build --no-bundle -- --locked

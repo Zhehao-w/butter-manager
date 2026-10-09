@@ -16,6 +16,11 @@ name = "butter-manager"
 path = "src/main.rs"
 required-features = ["desktop"]
 
+[[example]]
+name = "portable_probe"
+path = "examples/portable_probe.rs"
+required-features = ["desktop"]
+
 [features]
 default = ["desktop"]
 desktop = ["dep:tauri", "dep:tauri-build", "dep:tauri-plugin-dialog"]
@@ -33,6 +38,13 @@ uuid = { version = "1", features = ["v4", "serde"] }
 unicode-normalization = "0.1"
 thiserror = "2"
 dunce = "1"
+lz-str = "0.2.1"
+flate2 = "1"
+zip = { version = "2.4", default-features = false, features = ["deflate-flate2", "flate2"] }
+base64 = "0.22"
+sha2 = "0.10"
+sha1 = "0.10"
+p256 = { version = "0.13", features = ["ecdsa"] }
 
 [dev-dependencies]
 tempfile = "3"
@@ -40,4 +52,4 @@ tempfile = "3"
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62.2", features = ["Win32_System_Com", "Win32_UI_Shell", "Win32_Foundation"] }
 windows-core = "0.62.2"
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Threading", "Win32_System_Registry", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Graphics_Dwm", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Threading", "Win32_System_Registry", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }

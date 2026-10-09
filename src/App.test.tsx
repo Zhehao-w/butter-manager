@@ -7,6 +7,7 @@ import type { Game, JobPage, ScanCandidate, Settings } from './types';
 vi.mock('@tauri-apps/api/core', () => ({ isTauri: () => true }));
 vi.mock('./api', () => ({
   api: {
+    openDataDirectory: vi.fn().mockResolvedValue(undefined),
     appearance: vi.fn(),
     saveAppearance: vi.fn(),
     importPlans: vi.fn().mockResolvedValue([]),
@@ -210,6 +211,59 @@ function openConfig(section: 'MTool' | '设置') {
   fireEvent.click(screen.getByRole('button', { name: section }));
 }
 describe('iteration interactions', () => {
+  it.each([true, false])(
+    'allows incomplete scan registration only with an available launch file: %s',
+    async (hasFile) => {
+      vi.mocked(api.job).mockResolvedValue({
+        ...job,
+        changes: [
+          { ...candidate, status: 'incomplete', executables: hasFile ? candidate.executables : [] },
+        ],
+      });
+      render(<App />);
+      await waitFor(() =>
+        expect(
+          (screen.getByRole('button', { name: '扫描目录' }) as HTMLButtonElement).disabled,
+        ).toBe(false),
+      );
+      fireEvent.click(screen.getByRole('button', { name: '扫描目录' }));
+      openScan();
+      await screen.findByText('扫描未完整完成');
+      const row = screen.getByText(candidate.suggested_title).closest('.scan-item') as HTMLElement;
+      const checkbox = within(row).getByRole('checkbox') as HTMLInputElement;
+      expect(checkbox.disabled).toBe(!hasFile);
+      expect(checkbox.checked).toBe(false);
+      if (hasFile) {
+        fireEvent.click(checkbox);
+        fireEvent.click(screen.getByRole('button', { name: '加入游戏库' }));
+        await waitFor(() =>
+          expect(api.register).toHaveBeenCalledWith('scan', [
+            expect.objectContaining({ executable: 'main-v1.2.exe', exe_override: false }),
+          ]),
+        );
+      } else {
+        expect(
+          (screen.getByRole('button', { name: '加入游戏库' }) as HTMLButtonElement).disabled,
+        ).toBe(true);
+        expect(api.register).not.toHaveBeenCalled();
+      }
+    },
+  );
+  it('opens the active data directory from About and reports errors without leaving Settings', async () => {
+    render(<App />);
+    await screen.findByRole('button', { name: '扫描目录' });
+    openConfig('设置');
+    const about = screen.getByRole('region', { name: '关于应用' });
+    const button = within(about).getByRole('button', { name: '打开数据目录' });
+    fireEvent.click(button);
+    await waitFor(() => expect(api.openDataDirectory).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect((button as HTMLButtonElement).disabled).toBe(false));
+    vi.mocked(api.openDataDirectory).mockRejectedValueOnce(new Error('无法打开数据目录'));
+    fireEvent.click(button);
+    await screen.findByText('Error: 无法打开数据目录');
+    expect(screen.getByRole('region', { name: '设置页面' })).toBeTruthy();
+  });
+
   it('loads appearance and saves independent icon and illustration choices immediately', async () => {
     vi.mocked(api.appearance).mockResolvedValue({ icon: 'original', illustration: 'new' });
     const { container } = render(<App />);
@@ -520,6 +574,30 @@ describe('iteration interactions', () => {
     fireEvent.change(screen.getByRole('textbox', { name: '新游戏版本' }), {
       target: { value: 'Manual' },
     });
+    fireEvent.click(screen.getByRole('button', { name: '未入库' }));
+    expect(screen.getByRole('button', { name: '未入库' }).getAttribute('aria-pressed')).toBe(
+      'true',
+    );
+    expect(rows().length).toBe(1);
+    expect(rows()[0].textContent).toContain('新游戏');
+    fireEvent.click(screen.getByRole('button', { name: '全不选' }));
+    expect(screen.getByText('已选 0 项')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '全选' }));
+    expect(screen.getByText('已选 1 项')).toBeTruthy();
+    goLibrary();
+    openScan();
+    expect(screen.getByRole('button', { name: '未入库' }).getAttribute('aria-pressed')).toBe(
+      'true',
+    );
+    fireEvent.change(screen.getByRole('textbox', { name: '搜索扫描结果' }), {
+      target: { value: 'old' },
+    });
+    expect(screen.getByText('没有匹配的扫描结果')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '未入库' }));
+    fireEvent.change(screen.getByRole('textbox', { name: '搜索扫描结果' }), {
+      target: { value: '' },
+    });
+    expect(rows().length).toBe(2);
     fireEvent.change(screen.getByRole('textbox', { name: '搜索扫描结果' }), {
       target: { value: 'old' },
     });
@@ -966,7 +1044,7 @@ describe('iteration interactions', () => {
     expect(await screen.findByText('已入库')).toBeTruthy();
     expect(api.startScan).toHaveBeenCalledTimes(1);
   });
-  it('continuously scrolls scan results and preserves overrides, choices and position across navigation', async () => {
+  it('bulk-selects all filtered scan results beyond the virtual viewport and preserves overrides and navigation', async () => {
     mockLibraryViewport();
     const all = Array.from({ length: 101 }, (_, i) => ({
       ...candidate,
@@ -989,6 +1067,21 @@ describe('iteration interactions', () => {
     await screen.findByText('Game 000');
     expect(screen.queryByRole('navigation', { name: /扫描结果.*分页/ })).toBeNull();
     expect(scroll.querySelectorAll('.scan-item').length).toBeLessThan(25);
+    fireEvent.click(screen.getByRole('button', { name: '全不选' }));
+    expect(screen.getByText('已选 0 项')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '全选' }));
+    expect(screen.getByText('已选 101 项')).toBeTruthy();
+    fireEvent.change(screen.getByRole('textbox', { name: '搜索扫描结果' }), {
+      target: { value: 'Game 00' },
+    });
+    expect(screen.queryByText('仅当前结果')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '全不选' }));
+    expect(screen.getByText('已选 91 项（当前显示 0 项）')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '全选' }));
+    expect(screen.getByText('已选 101 项（当前显示 10 项）')).toBeTruthy();
+    fireEvent.change(screen.getByRole('textbox', { name: '搜索扫描结果' }), {
+      target: { value: '' },
+    });
     fireEvent.click(
       within(scroll.querySelector('.scan-item') as HTMLElement).getByRole('button', {
         name: '更改启动文件',
@@ -1021,6 +1114,90 @@ describe('iteration interactions', () => {
       ).checked,
     ).toBe(true);
     expect(api.startScan).toHaveBeenCalledTimes(1);
+  });
+
+  it('bulk selection skips registered games and unresolved launch configurations when registering', async () => {
+    const items = [
+      candidate,
+      {
+        ...candidate,
+        install_path: 'E:/Butter/registered',
+        suggested_title: '已入库',
+        registered_id: game.id,
+      },
+      {
+        ...candidate,
+        install_path: 'E:/Butter/incomplete',
+        suggested_title: '可入库',
+        status: 'incomplete',
+      },
+      {
+        ...candidate,
+        install_path: 'E:/Butter/unresolved',
+        suggested_title: '未找到启动文件',
+        status: 'incomplete',
+        executables: [],
+      },
+      {
+        ...candidate,
+        install_path: 'E:/Butter/qsp',
+        suggested_title: '多个QSP文件',
+        qsp: { game_files: ['a.qsp', 'b.qsp'], players: [], recommended_player: null },
+        executables: [],
+      },
+    ];
+    vi.mocked(api.job).mockResolvedValue({
+      ...job,
+      changes: items,
+      next_cursor: 5,
+      change_count: 5,
+      total: 5,
+      processed: 5,
+    });
+    render(<App />);
+    await waitFor(() =>
+      expect((screen.getByRole('button', { name: '扫描目录' }) as HTMLButtonElement).disabled).toBe(
+        false,
+      ),
+    );
+    fireEvent.click(screen.getByRole('button', { name: '扫描目录' }));
+    openScan();
+    await screen.findByText('可入库');
+    expect(screen.queryByRole('button', { name: '全不选' })).toBeNull();
+    expect(screen.getByRole('button', { name: '全选' }).getAttribute('aria-pressed')).toBe('false');
+    fireEvent.click(screen.getByRole('button', { name: '全选' }));
+    expect(screen.getByText('已选 2 项')).toBeTruthy();
+    expect(screen.getByRole('button', { name: '全不选' }).getAttribute('aria-pressed')).toBe(
+      'true',
+    );
+    const row = screen.getByText(candidate.suggested_title).closest('.scan-item') as HTMLElement;
+    fireEvent.click(within(row).getByRole('checkbox'));
+    expect(screen.getByRole('button', { name: '全选' }).getAttribute('aria-pressed')).toBe('false');
+    expect(screen.getByText('已选 1 项')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '全选' }));
+    fireEvent.click(screen.getByRole('button', { name: '全不选' }));
+    expect(screen.getByRole('button', { name: '全选' }).getAttribute('aria-pressed')).toBe('false');
+    fireEvent.click(screen.getByRole('button', { name: '全选' }));
+    expect(screen.getByText('已选 2 项')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '全选' })).toBeNull();
+    expect(
+      within(screen.getByRole('group', { name: '批量选择扫描结果' })).getAllByRole('button'),
+    ).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: '加入游戏库' }));
+    await waitFor(() =>
+      expect(api.register).toHaveBeenCalledWith('scan', [
+        expect.objectContaining({
+          install_path: candidate.install_path,
+          executable: 'main-v1.2.exe',
+          exe_override: false,
+        }),
+        expect.objectContaining({
+          install_path: 'E:/Butter/incomplete',
+          executable: 'main-v1.2.exe',
+          exe_override: false,
+        }),
+      ]),
+    );
   });
 
   it('requires exact confirmation, preserves data on cancel/error and clears session preview and settings on success', async () => {
@@ -1426,12 +1603,29 @@ describe('iteration interactions', () => {
       change_count: 1,
     };
     vi.mocked(api.startGameAnalysis).mockResolvedValue('detail-analysis-2');
+    fireEvent.change(within(modal).getByRole('combobox', { name: '游戏引擎' }), {
+      target: { value: 'Unity' },
+    });
+    response.changes = [{ ...candidate, registered_id: game.id, engine: 'WOLF RPG Editor' }];
     fireEvent.click(within(modal).getByRole('button', { name: '分析启动配置' }));
     await within(modal).findByText('分析结束，可查看下方详情。');
     expect(within(modal).getByText('main-v1.2.exe · Unknown')).toBeTruthy();
     expect((within(modal).getByRole('textbox', { name: '版本' }) as HTMLInputElement).value).toBe(
       'Final',
     );
+    const engine = within(modal).getByRole('combobox', { name: '游戏引擎' }) as HTMLSelectElement;
+    expect(engine.value).toBe('Unity');
+    expect(api.saveGame).not.toHaveBeenCalled();
+    fireEvent.click(within(modal).getByRole('button', { name: '使用识别引擎' }));
+    expect(engine.value).toBe('WOLF RPG Editor');
+    expect(api.saveGame).not.toHaveBeenCalled();
+    expect(
+      (
+        within(modal).getByRole('combobox', {
+          name: /^启动文件（相对游戏目录）/,
+        }) as HTMLInputElement
+      ).value,
+    ).toBe(game.main_executable);
   });
 
   it('checks paths on startup, filters problems and blocks a missing game launch without deleting it', async () => {

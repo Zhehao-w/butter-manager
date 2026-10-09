@@ -1,5 +1,5 @@
 import type { ScanCandidate, ExternalPlayer } from './types';
-import { suggestedPlayer } from './qsp';
+import { qspConfig, suggestedPlayer } from './qsp';
 
 export type ScanSort =
   | 'unregistered-first'
@@ -15,6 +15,18 @@ export type ScanChoice = {
   versionManual?: boolean;
 };
 const collator = new Intl.Collator('zh-CN', { numeric: true, sensitivity: 'base' });
+export function canSelectScanCandidate(candidate: ScanCandidate, choice?: ScanChoice): boolean {
+  if (candidate.registered_id) return false;
+  const exe = choice?.exe === undefined ? suggestedPlayer(candidate) : choice.exe;
+  const qsp = choice?.external_player ?? qspConfig(candidate);
+  return (
+    (candidate.status === 'ready' ||
+      (candidate.status === 'incomplete' && !!exe) ||
+      !!choice?.exe ||
+      !!qsp?.game_file) &&
+    (!qsp || !!qsp.game_file)
+  );
+}
 export const folderName = (path: string) =>
   path
     .replace(/[\\/]+$/, '')

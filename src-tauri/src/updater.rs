@@ -62,6 +62,9 @@ pub struct UpdateData {
     /// Keep the original configuration calculation for journals created before this fix.
     #[serde(default)]
     inherit_launch_config: bool,
+    /// Older in-flight/completed journals may contain a loader on a non-MTool version.
+    #[serde(default)]
+    mtool_loader_launch_scoped: bool,
     #[serde(default)]
     incoming_saves: Vec<SaveSnapshot>,
     #[serde(default)]
@@ -681,20 +684,30 @@ fn selection_configuration(
         .into(),
         external_player: selection.external_player.clone(),
         mtool_target: selection.mtool.then(|| selection.executable.clone()),
-        mtool_loader: previous.and_then(|old| match &selection.mtool_loader {
-            Some(value) => (!value.is_empty()).then(|| value.clone()),
-            None => old.mtool_loader.clone(),
-        }),
+        mtool_loader: if selection.mtool && selection.external_player.is_none() {
+            previous.and_then(|old| match &selection.mtool_loader {
+                Some(value) => (!value.is_empty()).then(|| value.clone()),
+                None => old.mtool_loader.clone(),
+            })
+        } else {
+            None
+        },
     })
 }
 pub(super) fn configuration(item: &Item) -> Result<VersionConfig> {
-    selection_configuration(
-        &item.selection,
-        item.update
-            .as_ref()
-            .filter(|update| update.inherit_launch_config)
-            .map(|update| &update.old),
-    )
+    let previous = item
+        .update
+        .as_ref()
+        .filter(|update| update.inherit_launch_config);
+    let mut config = selection_configuration(&item.selection, previous.map(|update| &update.old))?;
+    if let Some(update) = previous.filter(|update| !update.mtool_loader_launch_scoped) {
+        // Preserve the configuration already published (or staged) by an older journal.
+        config.mtool_loader = match &item.selection.mtool_loader {
+            Some(value) => (!value.is_empty()).then(|| value.clone()),
+            None => update.old.mtool_loader.clone(),
+        };
+    }
+    Ok(config)
 }
 
 fn validate_update_launch(
@@ -1281,6 +1294,7 @@ impl ImportStore {
             cleanup_ready: false,
             lightweight: true,
             inherit_launch_config: true,
+            mtool_loader_launch_scoped: true,
             incoming_saves,
             rollback_originals: vec![],
         })
@@ -1334,6 +1348,11 @@ impl ImportStore {
                 .as_mut()
                 .unwrap()
                 .inherit_launch_config = true;
+            plan.items[index]
+                .update
+                .as_mut()
+                .unwrap()
+                .mtool_loader_launch_scoped = true;
             if plan.items[index].update.as_ref().unwrap().lightweight {
                 let originals = local_originals(
                     Path::new(&plan.items[index].selection.source),

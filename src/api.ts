@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import type { SaveCatalog, SaveDocument, SaveChange } from './saveEditorTypes';
 import type {
   Appearance,
   Game,
@@ -22,6 +23,12 @@ import type {
   VersionHistory,
 } from './types';
 export const api = {
+  listEditableSaves: (gameId: string) => invoke<SaveCatalog>('list_editable_saves', { gameId }),
+  readEditableSave: (gameId: string, saveId: string) =>
+    invoke<SaveDocument>('read_editable_save', { gameId, saveId }),
+  applySaveEdits: (gameId: string, saveId: string, revision: string, changes: SaveChange[]) =>
+    invoke<SaveDocument>('apply_save_edits', { gameId, saveId, revision, changes }),
+  openDataDirectory: () => invoke<void>('open_data_directory'),
   appearance: () => invoke<Appearance>('get_appearance'),
   saveAppearance: (appearance: Appearance) => invoke<Appearance>('save_appearance', { appearance }),
   versionHistory: (id: string) => invoke<VersionHistory[]>('version_history', { id }),

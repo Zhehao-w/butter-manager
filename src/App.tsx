@@ -28,7 +28,7 @@ import type { LibrarySort } from './library';
 import { activeJob, useJob } from './useJob';
 import { TaskBanner } from './TaskBanner';
 import { ProgressBar } from './ProgressBar';
-import { scanResults, directoryTime } from './scan';
+import { scanResults, directoryTime, canSelectScanCandidate } from './scan';
 import type { ScanSort, ScanChoice } from './scan';
 import type {
   Appearance,
@@ -51,6 +51,7 @@ import { ImportPage } from './ImportPage';
 import { QspConfiguration } from './QspConfiguration';
 import { EngineSelect } from './EngineSelect';
 import { FolderErrorDialog } from './FolderErrorDialog';
+import { SaveEditor } from './SaveEditor';
 import { useLibraryLayout, useSavedSort } from './preferences';
 import {
   PlayBadge,
@@ -74,7 +75,7 @@ const statusText: Record<string, string> = {
   pending: '待分析',
   ready: '待确认',
   skipped: '已跳过',
-  incomplete: '可手选启动文件',
+  incomplete: '扫描未完整完成',
   error: '需检查目录',
 };
 type SettingsSection = 'library' | 'mtool';
@@ -160,6 +161,7 @@ export default function App() {
   const libraryEpoch = useRef(0);
   const currentScanId = useRef<string | null>(null);
   const [scanSearch, setScanSearch] = useState('');
+  const [scanUnregisteredOnly, setScanUnregisteredOnly] = useState(false);
   const [scanSort, setScanSort] = useSavedSort<ScanSort>('scan', 'unregistered-first', [
     'name-asc',
     'name-desc',
@@ -498,6 +500,7 @@ export default function App() {
       setSelected(new Set());
       autoSelected.current.clear();
       setScanSearch('');
+      setScanUnregisteredOnly(false);
       setExpandedCandidates(new Set());
       viewScroll.current.scan = 0;
       if (scanScroll.current) scanScroll.current.scrollTop = 0;
@@ -587,13 +590,26 @@ export default function App() {
     : filtered.map((game) => ({ game, row: null }));
   const preview = useMemo(() => Object.values(candidates), [candidates]);
   const scanFiltered = useMemo(
-    () => scanResults(preview, scanSearch, scanSort, choices),
-    [preview, scanSearch, scanSort, choices],
+    () =>
+      scanResults(preview, scanSearch, scanSort, choices).filter(
+        (candidate) => !scanUnregisteredOnly || !candidate.registered_id,
+      ),
+    [preview, scanSearch, scanSort, choices, scanUnregisteredOnly],
   );
   const registeredGames = useMemo(() => new Map(games.map((game) => [game.id, game])), [games]);
   const visibleSelections = scanFiltered.filter((candidate) =>
     selected.has(candidate.install_path),
   ).length;
+  const scanSelectable = useMemo(
+    () =>
+      scanFiltered.filter((candidate) =>
+        canSelectScanCandidate(candidate, choices[candidate.install_path]),
+      ),
+    [scanFiltered, choices],
+  );
+  const scanAllSelected =
+    visibleSelections > 0 &&
+    scanSelectable.every((candidate) => selected.has(candidate.install_path));
   const virtualScan = scanFiltered.length > 50;
   const scanItemKey = useMemo(
     () => (index: number) => scanFiltered[index].install_path,
@@ -615,7 +631,7 @@ export default function App() {
   useLayoutEffect(() => {
     viewScroll.current.scan = 0;
     if (scanScroll.current) scanScroll.current.scrollTop = 0;
-  }, [scanSearch, scanSort]);
+  }, [scanSearch, scanSort, scanUnregisteredOnly]);
   const scanRows = virtualScan
     ? scanVirtualizer.getVirtualItems().map((row) => ({ candidate: scanFiltered[row.index], row }))
     : scanFiltered.map((candidate) => ({ candidate, row: null }));
@@ -1145,6 +1161,16 @@ export default function App() {
                   value={scanSearch}
                   onChange={setScanSearch}
                 />
+                <button
+                  type="button"
+                  className={`library-filter-button ${scanUnregisteredOnly ? 'active' : ''}`}
+                  aria-pressed={scanUnregisteredOnly}
+                  disabled={!preview.length}
+                  onClick={() => setScanUnregisteredOnly((current) => !current)}
+                >
+                  <Icon name="filter" size={16} />
+                  未入库
+                </button>
                 <SortField
                   label="扫描结果排序"
                   value={scanSort}
@@ -1157,6 +1183,33 @@ export default function App() {
                   <option value="modified-desc">目录修改时间 · 最新</option>
                   <option value="modified-asc">目录修改时间 · 最早</option>
                 </SortField>
+                <div className="scan-selection-actions" role="group" aria-label="批量选择扫描结果">
+                  <button
+                    type="button"
+                    aria-pressed={scanAllSelected}
+                    title={
+                      scanAllSelected
+                        ? '取消当前筛选结果的所有勾选'
+                        : '选择当前筛选结果中所有可入库的游戏'
+                    }
+                    disabled={
+                      taskActive || staleRoot || (!scanSelectable.length && !visibleSelections)
+                    }
+                    onClick={() =>
+                      setSelected((current) => {
+                        const next = new Set(current);
+                        if (scanAllSelected) {
+                          for (const candidate of scanFiltered) next.delete(candidate.install_path);
+                        } else {
+                          for (const candidate of scanSelectable) next.add(candidate.install_path);
+                        }
+                        return next;
+                      })
+                    }
+                  >
+                    {scanAllSelected ? '全不选' : '全选'}
+                  </button>
+                </div>
               </div>
               {staleRoot && (
                 <p className="notice">扫描结果来自之前的游戏目录，请重新扫描后入库。</p>
@@ -1184,12 +1237,18 @@ export default function App() {
                     <h3>
                       {scanSearch
                         ? '没有匹配的扫描结果'
-                        : scanning
-                          ? '正在查找游戏…'
-                          : '没有扫描结果'}
+                        : scanUnregisteredOnly
+                          ? '没有未入库的游戏'
+                          : scanning
+                            ? '正在查找游戏…'
+                            : '没有扫描结果'}
                     </h3>
                     <p>
-                      {scanSearch ? '试试其他文件夹名称、路径或版本。' : '扫描结果将在这里显示。'}
+                      {scanSearch
+                        ? '试试其他文件夹名称、路径或版本。'
+                        : scanUnregisteredOnly
+                          ? '关闭“未入库”可查看已入库游戏。'
+                          : '扫描结果将在这里显示。'}
                     </p>
                   </div>
                 ) : null}
@@ -1348,6 +1407,7 @@ export default function App() {
                 autoSelected.current.clear();
                 showPreview(false, true);
                 setScanSearch('');
+                setScanUnregisteredOnly(false);
                 setExpandedCandidates(new Set());
                 setSearch('');
                 setSettingsOpen(false);
@@ -1592,9 +1652,7 @@ function CandidateRow({
   const qsp = registeredGame
     ? (registeredGame.external_player ?? null)
     : (choice?.external_player ?? qspConfig(candidate));
-  const canSelect =
-    (candidate.status === 'ready' || !!choice?.exe || !!qsp?.game_file) &&
-    (!qsp || !!qsp.game_file);
+  const canSelect = canSelectScanCandidate(candidate, choice);
   return (
     <div className="scan-item">
       <div className="candidate-heading">
@@ -2083,6 +2141,9 @@ function SettingsPage({
             <span className="mode">v0.3.0</span>
           </div>
           <p>本地游戏库 · 整理游戏、批量导入、保留存档更新与快捷启动。</p>
+          <BrowseButton disabled={busy} onClick={() => void toolAction(api.openDataDirectory)}>
+            打开数据目录
+          </BrowseButton>
           <details className="icon-credits">
             <summary>开源图标：Lucide · 许可说明</summary>
             <CodeBlock>{iconLicense}</CodeBlock>
@@ -2147,6 +2208,7 @@ function GameDetail({
   const [aliases, setAliases] = useState(game.aliases.join('\n'));
   const [saves, setSaves] = useState(game.save_paths.join('\n'));
   const [saveToOpen, setSaveToOpen] = useState('');
+  const [saveEditorOpen, setSaveEditorOpen] = useState(false);
   const saveLocations = lines(saves);
   const selectedSave = saveLocations.includes(saveToOpen) ? saveToOpen : saveLocations[0];
   const previousSaves = useRef(game.save_paths.join('\n'));
@@ -2473,7 +2535,7 @@ function GameDetail({
               {(analysis?.qsp || draft.engine === 'QSP') &&
                 draft.launch_type !== 'EXTERNAL_PLAYER' && (
                   <div className="qsp-detection-hint">
-                    <span className="muted">目录中发现 .qsp 文件，已识别为 QSP。</span>
+                    <span className="muted">目录中发现 .qsp 文件，可选择 QSP 启动。</span>
                     <button type="button" onClick={useQsp}>
                       使用 QSP 启动
                     </button>
@@ -2653,6 +2715,14 @@ function GameDetail({
                   </label>
                 )}
                 <div className="save-location-actions full">
+                  <button
+                    type="button"
+                    className="save-editor-entry"
+                    onClick={() => setSaveEditorOpen(true)}
+                  >
+                    <Icon name="save" size={16} />
+                    编辑存档
+                  </button>
                   <BrowseButton
                     type="button"
                     disabled={!selectedSave}
@@ -2712,6 +2782,20 @@ function GameDetail({
       {analysis && (
         <details className="analysis" open>
           <summary>查看分析详情</summary>
+          <p>
+            识别引擎：{analysis.engine === 'Unknown' ? '未识别' : analysis.engine}{' '}
+            {analysis.status === 'ready' &&
+              analysis.engine !== 'Unknown' &&
+              analysis.engine !== draft.engine && (
+                <button
+                  type="button"
+                  disabled={busy || launching || analyzing}
+                  onClick={() => field('engine', analysis.engine)}
+                >
+                  使用识别引擎
+                </button>
+              )}
+          </p>
           <Warnings warnings={analysis.warnings} />
           <ul>
             {analysis.executables.map((exe) => (
@@ -2770,6 +2854,7 @@ function GameDetail({
           <p>暂无运行记录。</p>
         )}
       </details>
+      {saveEditorOpen && <SaveEditor game={game} onClose={() => setSaveEditorOpen(false)} />}
     </Modal>
   );
 }

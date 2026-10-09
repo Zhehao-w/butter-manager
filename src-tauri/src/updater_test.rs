@@ -167,6 +167,7 @@ impl Fixture {
             "incoming_saves",
             "rollback_originals",
             "inherit_launch_config",
+            "mtool_loader_launch_scoped",
         ] {
             update.remove(field);
         }
@@ -301,6 +302,171 @@ fn explicit_update_launch_overrides_and_automatic_loader_choice_do_not_change_ro
         f.rollback(&id).unwrap();
         assert_eq!(f.db.lock().unwrap().version_config(&f.id).unwrap(), before);
     }
+}
+
+#[test]
+fn mtool_to_direct_update_discards_loader_and_restores_old_configuration_on_rollback() {
+    assert_launch_mode_transition(true, "DIRECT");
+}
+
+#[test]
+fn mtool_to_qsp_update_discards_loader_and_restores_old_configuration_on_rollback() {
+    assert_launch_mode_transition(true, "EXTERNAL_PLAYER");
+}
+
+#[test]
+fn direct_to_mtool_update_accepts_loader_override_or_automatic_detection_and_rolls_back() {
+    assert_launch_mode_transition(false, "MTOOL");
+}
+
+fn assert_launch_mode_transition(old_mtool: bool, launch_type: &str) {
+    for loader in [None, Some("loaders/replacement.dll"), Some("")] {
+        let mut f = manual_launch_fixture(old_mtool);
+        let before = f.db.lock().unwrap().version_config(&f.id).unwrap();
+        if launch_type == "EXTERNAL_PLAYER" {
+            fs::write(f.source.join("冒険.qsp"), b"new qsp game").unwrap();
+        }
+        let id = f.plan_with(true, true, |selection| {
+            selection.executable = "replacement/Game.exe".into();
+            selection.mtool = launch_type == "MTOOL";
+            selection.mtool_loader = loader.map(str::to_owned);
+            if launch_type == "EXTERNAL_PLAYER" {
+                selection.external_player = Some(crate::domain::ExternalPlayer {
+                    player_type: "QSP".into(),
+                    scope: "GAME_LOCAL".into(),
+                    game_file: Some("冒険.qsp".into()),
+                });
+            }
+        });
+        assert!(f.store.get(&id).unwrap().items[0].blockers.is_empty());
+        if launch_type == "EXTERNAL_PLAYER" {
+            let mut item = f.store.get(&id).unwrap().items.remove(0);
+            item.selection.mtool = true;
+            let config = super::updater::configuration(&item).unwrap();
+            assert_eq!(config.launch_type, "EXTERNAL_PLAYER");
+            assert!(config.mtool_loader.is_none());
+        }
+        f.apply(&id).unwrap();
+        let updated = f.db.lock().unwrap().version_config(&f.id).unwrap();
+        assert_eq!(updated.launch_type, launch_type);
+        assert_eq!(updated.working_directory, before.working_directory);
+        assert_eq!(
+            updated.mtool_loader.as_deref(),
+            if launch_type == "MTOOL" {
+                loader.filter(|value| !value.is_empty())
+            } else {
+                None
+            }
+        );
+        if let Some(player) = &updated.external_player {
+            assert_eq!(player.game_file.as_deref(), Some("冒険.qsp"));
+        }
+        f.store = ImportStore::open(f.store.directory.clone()).unwrap();
+        f.rollback(&id).unwrap();
+        assert_eq!(f.db.lock().unwrap().version_config(&f.id).unwrap(), before);
+    }
+}
+
+#[test]
+fn unscoped_loader_journals_resume_and_roll_back_without_reinterpreting_committed_configuration() {
+    for launch_type in ["DIRECT", "EXTERNAL_PLAYER"] {
+        for checkpoint in [None, Some("update_copy")] {
+            let mut f = manual_launch_fixture(true);
+            let before = f.db.lock().unwrap().version_config(&f.id).unwrap();
+            if launch_type == "EXTERNAL_PLAYER" {
+                fs::write(f.source.join("冒険.qsp"), b"new qsp game").unwrap();
+            }
+            let id = f.plan_with(true, true, |selection| {
+                selection.executable = "replacement/Game.exe".into();
+                if launch_type == "EXTERNAL_PLAYER" {
+                    selection.external_player = Some(crate::domain::ExternalPlayer {
+                        player_type: "QSP".into(),
+                        scope: "GAME_LOCAL".into(),
+                        game_file: Some("冒険.qsp".into()),
+                    });
+                }
+            });
+            if let Some(state) = checkpoint {
+                let job = f
+                    .tasks
+                    .begin("import_apply", paths::path_text(&f.root).unwrap())
+                    .unwrap();
+                let mut plan = f.store.get(&id).unwrap();
+                FAIL_CHECKPOINT.with(|failure| *failure.borrow_mut() = Some(state.into()));
+                assert!(f.store.update_one(&mut plan, 0, &job, &f.db).is_err());
+                job.finish(Err("simulated crash".into()));
+                assert_eq!(f.store.get(&id).unwrap().items[0].state, state);
+            }
+            use_unscoped_loader_journal(&mut f, &id);
+            f.apply(&id).unwrap();
+            let updated = f.db.lock().unwrap().version_config(&f.id).unwrap();
+            assert_eq!(updated.launch_type, launch_type);
+            assert_eq!(
+                updated.mtool_loader,
+                if checkpoint.is_some() {
+                    before.mtool_loader.clone()
+                } else {
+                    None
+                }
+            );
+            if checkpoint.is_some() {
+                // Reopen a completed old journal too: rollback compares its historical config.
+                use_unscoped_loader_journal(&mut f, &id);
+            }
+            f.rollback(&id).unwrap();
+            assert_eq!(f.db.lock().unwrap().version_config(&f.id).unwrap(), before);
+        }
+    }
+}
+
+fn use_unscoped_loader_journal(f: &mut Fixture, id: &str) {
+    let mut record = serde_json::to_value(f.store.get(id).unwrap()).unwrap();
+    record["items"][0]["update"]
+        .as_object_mut()
+        .unwrap()
+        .remove("mtool_loader_launch_scoped");
+    fs::write(
+        f.store.directory.join(format!("{id}.json")),
+        serde_json::to_vec(&record).unwrap(),
+    )
+    .unwrap();
+    f.store = ImportStore::open(f.store.directory.clone()).unwrap();
+    assert!(f.store.recovery_issues().is_empty());
+}
+
+#[test]
+fn moved_data_directory_preserves_unfinished_update_recovery_and_rollback() {
+    let mut f = manual_launch_fixture(true);
+    let before = f.db.lock().unwrap().version_config(&f.id).unwrap();
+    let id = f.plan_with(true, true, |selection| {
+        selection.executable = "replacement/Game.exe".into();
+        selection.mtool = true;
+    });
+    let job = f
+        .tasks
+        .begin("import_apply", paths::path_text(&f.root).unwrap())
+        .unwrap();
+    let mut plan = f.store.get(&id).unwrap();
+    FAIL_CHECKPOINT.with(|failure| *failure.borrow_mut() = Some("update_publish".into()));
+    assert!(f.store.update_one(&mut plan, 0, &job, &f.db).is_err());
+    job.finish(Err("simulated crash".into()));
+    let old_data = f.store.directory.parent().unwrap().to_path_buf();
+    // Close the fixture's SQLite connection before moving its directory, including WAL/SHM.
+    drop(Arc::try_unwrap(f.db).ok().unwrap().into_inner().unwrap());
+    let moved = f._temp.path().join("moved manager 日本語/data");
+    fs::create_dir_all(moved.parent().unwrap()).unwrap();
+    fs::rename(&old_data, &moved).unwrap();
+    f.db = Arc::new(Mutex::new(
+        Database::open(&moved.join("fixture.db")).unwrap(),
+    ));
+    f.store = ImportStore::open(moved.join("imports")).unwrap();
+    assert!(f.store.recovery_issues().is_empty());
+    assert!(f.store.has_pending_files());
+    assert_eq!(f.store.get(&id).unwrap().items[0].state, "update_publish");
+    f.apply(&id).unwrap();
+    f.rollback(&id).unwrap();
+    assert_eq!(f.db.lock().unwrap().version_config(&f.id).unwrap(), before);
+    assert!(f.old().join("original/Game.exe").is_file());
 }
 
 #[test]

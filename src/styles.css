@@ -479,6 +479,28 @@ button.game-link:focus-visible {
   gap: var(--toolbar-gap);
   margin-bottom: 18px;
 }
+.scan-selection-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  margin-left: auto;
+}
+.scan-selection-actions button {
+  width: 88px;
+  height: var(--toolbar-control-height);
+  white-space: nowrap;
+}
+.scan-selection-actions button[aria-pressed='true'] {
+  color: #1767bf;
+  background: #e2efff;
+  border-color: #9fbfe9;
+  box-shadow: inset 0 2px 4px #306caa1f;
+}
+.scan-selection-actions button[aria-pressed='true']:hover:not(:disabled) {
+  background: #dbeaff;
+  border-color: #84afe5;
+}
 .sort-control {
   display: flex;
   align-items: center;
@@ -2291,7 +2313,7 @@ tbody tr:not(:last-child) td {
 }
 .library-filter-groups {
   display: grid;
-  gap: 24px;
+  gap: 20px;
 }
 .library-filter-groups fieldset {
   margin: 0;
@@ -2375,6 +2397,28 @@ tbody tr:not(:last-child) td {
   line-height: 1.4;
   font-weight: 500;
   overflow-wrap: anywhere;
+}
+.filter-options-engines {
+  gap: 8px;
+}
+.filter-options-engines .filter-option {
+  grid-template-columns: 16px 26px minmax(0, 1fr);
+  gap: 8px;
+  min-height: 48px;
+  padding: 8px 10px;
+  border-radius: 11px;
+}
+.filter-options-engines .filter-option input {
+  width: 16px;
+  height: 16px;
+}
+.filter-options-engines .filter-option-icon {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+}
+.filter-options-engines .filter-option-label {
+  font-size: 13px;
 }
 .filter-options-modes .filter-option {
   grid-template-columns: 18px 30px minmax(0, 1fr);
@@ -3441,4 +3485,249 @@ textarea,
 .folder-error-actions {
   margin-top: 24px;
   flex-wrap: wrap;
+}
+.modal.save-editor {
+  width: min(920px, calc(100vw - 48px));
+  height: min(750px, calc(100dvh - 40px));
+}
+.save-editor .modal-scroll-shell > .modal-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  scrollbar-gutter: auto;
+  padding: 14px 26px;
+}
+.save-editor .modal-body > :not(.save-editor-fields) {
+  flex-shrink: 0;
+}
+.save-editor .modal-header {
+  padding: 14px 26px;
+}
+.save-editor .modal-scroll-shell {
+  padding: 0;
+}
+.save-editor .modal-footer {
+  display: flex;
+  flex: none;
+  padding: 12px 26px;
+  border-top: 1px solid var(--line);
+  background: #f6f9ff;
+  gap: 20px;
+  align-items: center;
+}
+.save-editor .modal-footer > button {
+  flex-shrink: 0;
+  min-width: 112px;
+}
+button.save-editor-entry {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #fff;
+  background: #8164ce;
+  border-color: #785cc2;
+  box-shadow: 0 3px 9px #8164ce20;
+}
+button.save-editor-entry:hover:not(:disabled) {
+  color: #fff;
+  background: #7355bf;
+  border-color: #6a4cb5;
+}
+button.save-editor-entry:active:not(:disabled) {
+  background: #6647b0;
+}
+.save-editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.save-editor-toolbar label {
+  margin: 0;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.save-editor-toolbar select {
+  flex: 1;
+  min-width: 0;
+  width: 0;
+  height: 34px;
+  padding: 5px 10px;
+}
+.save-editor-toolbar button {
+  min-height: 34px;
+  padding: 5px 12px;
+}
+.save-editor-metadata {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin: 8px 0 10px;
+  min-width: 0;
+}
+.save-editor-metadata img {
+  max-width: 72px;
+  max-height: 40px;
+  object-fit: contain;
+  border-radius: 8px;
+}
+.save-editor-metadata-text {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  font-size: 12px;
+}
+.save-editor-metadata-text > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.save-editor-metadata-text > span:first-child {
+  flex-shrink: 0;
+}
+.save-editor-filters {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.save-editor-filters .search {
+  min-width: min(220px, 100%);
+}
+.save-editor-filters .search input {
+  height: 34px;
+  padding: 5px 38px;
+}
+.save-editor-tabs {
+  display: flex;
+  gap: 3px;
+  padding: 3px;
+  background: #e7f0ff;
+  border: 1px solid #cddfff;
+  border-radius: 11px;
+  width: fit-content;
+}
+.save-editor-tabs button {
+  min-height: 28px;
+  padding: 3px 10px;
+  border-radius: 8px;
+  border-color: transparent;
+  background: transparent;
+}
+.save-editor-tabs button[aria-selected='true'] {
+  background: white;
+  border-color: #bcd4ff;
+  color: #1672ff;
+}
+.save-editor-fields {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid #dce8ff;
+  border-radius: 14px;
+  background: #fff;
+  margin-top: 10px;
+  scrollbar-gutter: stable;
+}
+.save-editor-field {
+  height: var(--save-editor-row-height);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 6px 14px;
+  border-bottom: 1px solid #edf3ff;
+  box-sizing: border-box;
+}
+.save-editor-field.is-changed {
+  background: #f0f6ff;
+}
+.save-editor-field-info {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+.save-editor-field-info label,
+.save-editor-field-info span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.save-editor-field-info > span {
+  font-size: 11px;
+}
+.save-editor-field-info strong {
+  font-weight: 500;
+}
+.save-editor-field input:not([type='checkbox']) {
+  width: min(180px, 35%);
+  height: 32px;
+  padding: 5px 9px;
+  flex-shrink: 0;
+}
+.save-editor-field input.save-editor-switch {
+  appearance: none;
+  width: 38px;
+  height: 22px;
+  border-radius: 14px;
+  padding: 0;
+  flex: 0 0 38px;
+  background: #d7e3f4;
+  border: none;
+  cursor: pointer;
+  position: relative;
+  transition: background 150ms;
+}
+.save-editor-switch::after {
+  content: '';
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  top: 3px;
+  left: 3px;
+  border-radius: 50%;
+  background: white;
+  box-shadow: 0 1px 3px #5678a644;
+  transition: transform 150ms;
+}
+.save-editor-field input.save-editor-switch:checked {
+  background: #287fff;
+}
+.save-editor-switch:checked::after {
+  transform: translateX(16px);
+}
+.save-editor-readonly {
+  max-width: 220px;
+  font-size: 12px;
+  color: #7890b1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.save-editor-dirty {
+  margin-left: 10px;
+  font-size: 10px;
+  color: #2175ed;
+  background: #deebff;
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+.save-editor-warning {
+  font-size: 12px;
+  line-height: 1.6;
+  color: #97702c;
+  padding: 9px 12px;
+  background: #fff6e7;
+  border-radius: 10px;
+}
+.save-editor-success {
+  color: #15907f;
+  font-size: 13px;
+}
+.save-editor-hint {
+  flex: 1;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
 }

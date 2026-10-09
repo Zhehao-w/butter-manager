@@ -2,16 +2,21 @@ import { useState } from 'react';
 import { Icon } from './ui';
 
 const engines = [
-  'Unknown',
   'Unity',
   "Ren'Py",
   'RPG Maker MV',
   'RPG Maker MZ',
   'RPG Maker (legacy)',
   'Godot',
+  'WOLF RPG Editor',
+  'KiriKiri',
+  'NScripter',
+  'TyranoScript',
+  'Twine',
   'NW.js',
   'HTML',
   'QSP',
+  'Unknown',
 ];
 const customOption = '__custom_engine__';
 

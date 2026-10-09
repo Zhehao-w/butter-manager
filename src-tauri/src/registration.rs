@@ -51,8 +51,12 @@ pub fn prepare(
         .executables
         .first()
         .map(|v| v.relative_path.as_str());
+    // An incomplete resource scan does not invalidate an already captured launcher.
+    // Keep normal path and snapshot validation; never treat a failed/pending scan as ready.
+    let usable_snapshot = candidate.status == "ready"
+        || (candidate.status == "incomplete" && selection.executable.is_some());
     if !selection.exe_override
-        && (candidate.status != "ready" || selection.executable.as_deref() != suggested_exe)
+        && (!usable_snapshot || selection.executable.as_deref() != suggested_exe)
     {
         return Err(Error::Validation("请明确手工选择启动文件".into()));
     }
@@ -114,6 +118,55 @@ pub fn prepare(
 mod tests {
     use super::*;
     use crate::scanner;
+    #[test]
+    fn incomplete_scan_registers_captured_launcher_without_bypassing_validation() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = dunce::canonicalize(temp.path()).unwrap();
+        let path = root.join("游戏");
+        std::fs::create_dir(&path).unwrap();
+        std::fs::write(path.join("Game.exe"), b"fixture").unwrap();
+        let mut candidate = scanner::analyze_quick_controlled(&path, &|| false, &|_| {}).unwrap();
+        candidate.status = "incomplete".into();
+        let mut selection = RegistrationSelection {
+            install_path: candidate.install_path.clone(),
+            executable: Some("Game.exe".into()),
+            external_player: None,
+            exe_override: false,
+            version: "Unknown".into(),
+            version_override: false,
+        };
+        let entry = prepare(&root, candidate.clone(), selection.clone()).unwrap();
+        let db_path = root.join("library.sqlite3");
+        let mut db = crate::db::Database::open(&db_path).unwrap();
+        let id = db
+            .register_entries(&[entry], &|| false, &|_, _| {})
+            .unwrap()
+            .remove(0);
+        drop(db);
+        assert_eq!(
+            crate::db::Database::open(&db_path)
+                .unwrap()
+                .game(&id)
+                .unwrap()
+                .main_executable
+                .as_deref(),
+            Some("Game.exe")
+        );
+        selection.executable = None;
+        assert!(prepare(&root, candidate.clone(), selection.clone()).is_err());
+        selection.executable = Some("../outside.exe".into());
+        assert!(prepare(&root, candidate.clone(), selection.clone()).is_err());
+        selection.executable = Some("Game.exe".into());
+        for status in ["pending", "error", "skipped"] {
+            let mut failed = candidate.clone();
+            failed.status = status.into();
+            assert!(prepare(&root, failed, selection.clone()).is_err());
+        }
+        std::fs::write(path.join("Game.exe"), b"changed fixture").unwrap();
+        assert!(prepare(&root, candidate.clone(), selection.clone()).is_err());
+        std::fs::remove_file(path.join("Game.exe")).unwrap();
+        assert!(prepare(&root, candidate, selection).is_err());
+    }
     #[test]
     fn qsp_without_player_can_register_but_ambiguous_game_file_requires_selection() {
         let temp = tempfile::tempdir().unwrap();

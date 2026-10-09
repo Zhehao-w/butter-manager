@@ -24,6 +24,9 @@ src-tauri/gen/
 *.p12
 *.pfx
 /data/
+/data-dev/
+**/data/
+**/data-dev/
 /imports/
 
 # Native build outputs and machine-specific files

@@ -13,6 +13,7 @@
     "windows": [
       {
         "label": "main",
+        "create": false,
         "title": "butter-manager",
         "theme": "Light",
         "backgroundColor": "#edf5ff",

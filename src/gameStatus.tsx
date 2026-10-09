@@ -90,8 +90,8 @@ export function LibraryFilters({
   const count = value.statuses.length + value.engines.length + value.modes.length;
   const engines = useMemo(
     () =>
-      [...new Set([...games.map((g) => g.engine), ...value.engines])].sort((a, b) =>
-        a.localeCompare(b, 'zh-CN'),
+      [...new Set([...games.map((g) => g.engine), ...value.engines])].sort(
+        (a, b) => Number(a === 'Unknown') - Number(b === 'Unknown') || a.localeCompare(b, 'zh-CN'),
       ),
     [games, value.engines],
   );
@@ -173,7 +173,7 @@ export function LibraryFilters({
                           onChange={() => toggle(group, key)}
                         />
                         <span className="filter-option-icon">
-                          <Icon name={appearance.icon} size={23} />
+                          <Icon name={appearance.icon} size={group === 'engines' ? 19 : 23} />
                         </span>
                         <span className="filter-option-label">{label}</span>
                       </label>

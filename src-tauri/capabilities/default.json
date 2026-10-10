@@ -3,5 +3,11 @@
   "identifier": "main",
   "description": "Only the local main window; filesystem and launch actions are Rust commands.",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": [
+    "core:default",
+    "core:window:allow-close",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-start-dragging"
+  ]
 }

@@ -16,6 +16,7 @@
         "create": false,
         "title": "butter-manager",
         "theme": "Light",
+        "decorations": false,
         "backgroundColor": "#edf5ff",
         "visible": false,
         "center": true,

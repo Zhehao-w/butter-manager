@@ -187,10 +187,102 @@ h3 {
   font-weight: 600;
 }
 .app-shell {
+  position: relative;
+  isolation: isolate;
   display: grid;
-  grid-template-columns: 220px minmax(0, 1fr);
+  grid-template-columns: 232px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   height: 100dvh;
   overflow: hidden;
+  background:
+    radial-gradient(ellipse at 12% 0%, #f4eefa80, transparent 55%),
+    linear-gradient(135deg, #edf5ff, #e8f2ff);
+}
+.app-shell::before {
+  content: '';
+  position: absolute;
+  z-index: 0;
+  inset: 0 0 auto;
+  height: 210px;
+  background: url('./assets/header-decoration.png') center -18px / 88% auto no-repeat;
+  opacity: 0.38;
+  mask-image: linear-gradient(to right, #000 82%, transparent 85%);
+  -webkit-mask-image: linear-gradient(to right, #000 82%, transparent 85%);
+  pointer-events: none;
+}
+.app-shell::after {
+  content: '';
+  position: absolute;
+  z-index: 0;
+  top: -65px;
+  right: 22px;
+  width: clamp(190px, 18vw, 270px);
+  aspect-ratio: 1;
+  background: url('./assets/header-butterfly.png') center / contain no-repeat;
+  opacity: 0.32;
+  pointer-events: none;
+}
+.app-shell-desktop {
+  padding-top: 32px;
+}
+.window-titlebar {
+  position: absolute;
+  z-index: 4;
+  inset: 0 0 auto;
+  height: 32px;
+  display: flex;
+  align-items: stretch;
+  user-select: none;
+}
+.window-drag-region {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding-left: 9px;
+  font-size: 11px;
+}
+.window-drag-region > * {
+  pointer-events: none;
+}
+.window-drag-region img {
+  width: 16px;
+  height: 16px;
+}
+.window-controls {
+  display: flex;
+}
+.window-controls button {
+  width: 46px;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.window-controls svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1;
+  color: #20242c;
+}
+.window-controls button:hover:not(:disabled) {
+  background: #7993ba22;
+}
+.window-controls .window-close:hover:not(:disabled) {
+  color: #fff;
+  background: #d74150;
+}
+.window-controls .window-close:hover:not(:disabled) svg {
+  color: #fff;
+}
+.window-controls button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -3px;
 }
 .app-header,
 .header-actions,
@@ -474,7 +566,7 @@ button.game-link:focus-visible {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow: visible;
   padding: 0;
   border: 0;
   box-shadow: none;
@@ -798,12 +890,6 @@ pre {
   font-size: 11px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-}
-.app-footer {
-  color: #96969e;
-  font-size: 11px;
-  text-align: center;
-  margin-top: 24px;
 }
 .sr-only {
   position: absolute;
@@ -1206,7 +1292,7 @@ fieldset {
 }
 @media (max-width: 1000px) {
   .app-shell {
-    grid-template-columns: 180px minmax(0, 1fr);
+    grid-template-columns: 192px minmax(0, 1fr);
   }
   .panel {
     padding: 20px;
@@ -1249,15 +1335,19 @@ button {
   --sidebar-inset: 16px;
   position: sticky;
   top: 0;
-  height: 100vh;
-  overflow-y: auto;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
-  padding: 24px var(--sidebar-inset) 16px;
-  background: linear-gradient(155deg, #f6faff, #e7f2ff);
-  border-right: 1px solid #dceaff;
+  padding: 24px var(--sidebar-inset) 12px;
+  background: transparent;
+  border-right: 0;
 }
 .brand {
+  position: relative;
+  z-index: 3;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -1283,6 +1373,8 @@ button {
   color: var(--text-secondary);
 }
 .sidebar-nav {
+  position: relative;
+  z-index: 3;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -1302,10 +1394,22 @@ button {
   color: #4c6286;
   position: relative;
 }
-.sidebar-nav button.active,
 .sidebar-bottom > button.active {
   color: var(--accent);
-  background: linear-gradient(100deg, #d7eaff, #e3efff);
+  background: linear-gradient(100deg, #d7eaff99, #e3efff66);
+}
+.sidebar-nav button.active {
+  color: var(--accent);
+  background: linear-gradient(100deg, #d7eaff66, #e3efff33);
+  border-color: #bdd7fa80;
+}
+.sidebar-nav button:not(.active):hover:not(:disabled),
+.sidebar-nav button:not(.active):active:not(:disabled),
+.sidebar-bottom > button:not(.active):hover:not(:disabled),
+.sidebar-bottom > button:not(.active):active:not(:disabled) {
+  color: var(--accent);
+  background: #ffffff1f;
+  border-color: #aacbfa80;
 }
 .update-save-review {
   margin-top: 12px;
@@ -1377,7 +1481,7 @@ button {
 }
 .sidebar-bottom {
   position: relative;
-  z-index: 1;
+  z-index: 3;
   margin-top: auto;
   padding-top: 8px;
   flex: none;
@@ -1385,11 +1489,15 @@ button {
 .sidebar-bottom > button {
   min-height: 46px;
   padding: 10px 16px;
-  background: #ffffff55;
-  border-color: #dce8f7;
+  background: #f7faff66;
+  border-color: transparent;
+}
+.sidebar-bottom > button:not(.active):hover:not(:disabled),
+.sidebar-bottom > button:not(.active):active:not(:disabled) {
+  background: #ffffff66;
 }
 .sidebar-bottom > button.active {
-  border-color: #bfd8fa;
+  border-color: #bdd7fa80;
 }
 .sidebar-art {
   position: relative;
@@ -1413,6 +1521,27 @@ button {
   mask-image: linear-gradient(to bottom, #000 92%, transparent);
   -webkit-mask-image: linear-gradient(to bottom, #000 92%, transparent);
 }
+.sidebar-art-decorated {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+  margin: 0;
+}
+.sidebar-art-decorated img {
+  inset: auto;
+  left: -20%;
+  bottom: 0;
+  width: 140%;
+  height: auto;
+  /* Anchor the artwork to the sidebar edge independently of the settings button. */
+  max-height: 100%;
+  object-fit: contain;
+  object-position: center bottom;
+  opacity: 0.88;
+  filter: none;
+  mask-image: none;
+  -webkit-mask-image: none;
+}
 .sidebar-version {
   display: block;
   color: var(--text-secondary);
@@ -1424,14 +1553,21 @@ button {
 }
 .workspace {
   position: relative;
+  z-index: 1;
   min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  padding: 32px 30px 12px;
+  padding: 32px 30px 6px;
   --text-secondary: #657c9b;
-  background-color: #f7faff;
+  margin: 6px 8px 6px 0;
+  border: 1px solid #ffffffb8;
+  border-radius: 20px;
+  box-shadow:
+    -4px 0 18px #698bb60a,
+    0 4px 20px #698bb60a;
+  background-color: #f7faff85;
   background-image:
     radial-gradient(ellipse 760px 420px at 95% 0%, #9bcbf91a, transparent 72%),
     radial-gradient(ellipse 620px 360px at 5% 100%, #bcdafd12, transparent 72%);
@@ -1453,21 +1589,21 @@ button {
   min-width: 0;
 }
 .workspace > .page-main {
-  overflow: hidden;
+  overflow: visible;
 }
 .workspace > .library-main {
   overflow: hidden;
 }
 .workspace > .scan-main,
 .workspace > .settings-main {
-  overflow: hidden;
+  overflow: visible;
 }
 .settings-page {
   height: 100%;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow: visible;
   padding: 0;
 }
 .import-page {
@@ -1482,7 +1618,7 @@ button {
   overflow: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
-  padding: 0 8px 12px 0;
+  padding: 0 8px 6px 0;
 }
 .batch-import[hidden] {
   display: none;
@@ -1794,15 +1930,52 @@ button {
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
   border-radius: 0;
-  padding: 0 8px 12px 0;
+  padding: 0 8px 6px 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: start;
+  align-items: start;
+  gap: 14px;
+}
+.scan-scroll,
+.import-scroll,
+.settings-scroll {
+  /* Put the scrollbar in the workspace inset so cards align with the page heading. */
+  margin-right: -20px;
+}
+.settings-scroll > form {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+.settings-scroll .panel {
+  padding: 18px 20px;
+}
+.settings-scroll .reset-library,
+.settings-scroll .about-card {
+  margin-top: 0;
+}
+.settings-scroll .footer-actions {
+  margin-top: 10px;
+}
+.settings-scroll .card-title {
+  margin-bottom: 12px;
+}
+.settings-scroll .settings-library-fields {
+  grid-template-columns: minmax(0, 2fr) minmax(200px, 1fr);
+  gap: 14px;
+}
+.settings-scroll .settings-about-identity img {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
 }
 .settings-scroll p,
 .settings-scroll .muted {
-  line-height: 1.8;
+  line-height: 1.6;
   overflow-wrap: anywhere;
 }
 .settings-scroll .form-grid {
-  margin-top: 12px;
+  margin-top: 10px;
 }
 .settings-scroll .form-grid label,
 .settings-scroll .card-title > div {
@@ -2002,9 +2175,9 @@ button.library-play-button:active:not(:disabled) {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 8px 6px 4px;
-  min-height: 44px;
-  line-height: 22px;
+  padding: 4px 6px 0;
+  min-height: 28px;
+  line-height: 20px;
 }
 .library-footer .library-total {
   display: inline-flex;
@@ -2598,21 +2771,6 @@ tbody tr:not(:last-child) td {
   font-size: 11px;
   color: var(--text-secondary);
 }
-.app-footer {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  color: #8398b6;
-  margin-top: 8px;
-}
-.local-dot {
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  background: #69b89c;
-  border-radius: 50%;
-}
 .scan-page {
   background: transparent;
 }
@@ -2925,16 +3083,19 @@ tbody tr:not(:last-child) td {
 }
 @media (min-width: 1650px) {
   .workspace {
-    padding: 36px 44px 12px;
+    padding: 36px 44px 6px;
   }
 }
 @media (max-width: 1150px) {
+  .app-shell::before {
+    background-position: center top;
+  }
   .library-table {
     --library-columns: minmax(280px, 1fr) 72px 104px 145px 156px;
     --library-min-width: 757px;
   }
   .workspace {
-    padding: 24px 20px 12px;
+    padding: 24px 20px 6px;
   }
   .library-toolbar .search {
     flex-basis: 60%;
@@ -2948,6 +3109,12 @@ tbody tr:not(:last-child) td {
   }
 }
 @media (max-width: 900px) {
+  .settings-scroll {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .settings-scroll .settings-library-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
   .library-table {
     --library-columns: minmax(280px, 1fr) 72px 100px 135px;
     --library-min-width: 587px;
@@ -3034,7 +3201,7 @@ tbody tr:not(:last-child) td {
     padding: 10px 4px;
   }
   .workspace {
-    padding: 18px 12px 12px;
+    padding: 18px 12px 6px;
   }
   .page-heading h1,
   .page-heading h2 {
@@ -3598,100 +3765,6 @@ textarea,
 }
 .qsp-configuration p {
   margin: 0;
-}
-.appearance-card {
-  margin-top: 20px;
-}
-.appearance-groups {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 24px;
-  margin-top: 20px;
-}
-.appearance-group {
-  border: 0;
-  padding: 0;
-  margin: 0;
-  min-width: 0;
-}
-.appearance-group legend {
-  padding: 0;
-  margin-bottom: 12px;
-}
-.appearance-options {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-.appearance-option {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-direction: column;
-  padding: 14px;
-  border: 1px solid #d4e3fb;
-  border-radius: 18px;
-  background: #fff;
-  cursor: pointer;
-  transition:
-    border-color 150ms,
-    background-color 150ms;
-}
-.appearance-option:hover {
-  background: #f3f8ff;
-}
-.appearance-option.selected {
-  border-color: #1677ff;
-  background: #edf5ff;
-  color: #0968df;
-}
-.appearance-option:has(input:focus-visible) {
-  outline: 2px solid #1677ff;
-  outline-offset: 3px;
-}
-.appearance-option input {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  opacity: 0;
-  cursor: pointer;
-  margin: 0;
-}
-.appearance-group:disabled .appearance-option {
-  cursor: default;
-  opacity: 0.65;
-}
-.appearance-group:disabled input {
-  cursor: default;
-}
-.appearance-preview {
-  width: 100%;
-  height: 130px;
-  display: grid;
-  place-items: center;
-  overflow: hidden;
-  pointer-events: none;
-}
-.appearance-option.appearance-icon img {
-  width: 88px;
-  height: 88px;
-}
-.appearance-option.appearance-illustration img {
-  width: 100%;
-  height: 130px;
-  object-fit: cover;
-  object-position: center 30%;
-  opacity: 0.6;
-  filter: blur(0.2px);
-  mask-image: linear-gradient(to bottom, #000 92%, transparent);
-  -webkit-mask-image: linear-gradient(to bottom, #000 92%, transparent);
-}
-@media (max-width: 760px) {
-  .appearance-groups {
-    grid-template-columns: 1fr;
-  }
 }
 .folder-error-identity {
   display: flex;

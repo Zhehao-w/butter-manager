@@ -5,12 +5,7 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { useStableVirtualizer } from './useStableVirtualizer';
 import { api } from './api';
 import { useNotifications, NotificationToast } from './notifications';
-import {
-  AppearancePicker,
-  appearanceIcons,
-  appearanceIllustrations,
-  defaultAppearance,
-} from './appearance';
+import { appIcon, sidebarCharacter, defaultAppearance } from './appearance';
 import {
   Icon,
   Modal,
@@ -32,7 +27,6 @@ import { ProgressBar } from './ProgressBar';
 import { scanResults, directoryTime, canSelectScanCandidate } from './scan';
 import type { ScanSort, ScanChoice } from './scan';
 import type {
-  Appearance,
   Game,
   DeleteReport,
   GameEdit,
@@ -53,6 +47,7 @@ import { QspConfiguration } from './QspConfiguration';
 import { EngineSelect } from './EngineSelect';
 import { FolderErrorDialog } from './FolderErrorDialog';
 import { SaveEditor } from './SaveEditor';
+import { WindowTitleBar } from './WindowTitleBar';
 import { useLibraryLayout, useSavedSort } from './preferences';
 import {
   PlayBadge,
@@ -100,10 +95,6 @@ function launchBlockReason(game: Game, check?: LibraryPathCheck): string | undef
 }
 
 export default function App() {
-  const [appearance, setAppearance] = useState<Appearance>(defaultAppearance);
-  const [appearanceReady, setAppearanceReady] = useState(false);
-  const appIcon = appearanceIcons[appearance.icon];
-  const sidebarCharacter = appearanceIllustrations[appearance.illustration];
   useEffect(() => {
     const favicon = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
     if (favicon) favicon.href = appIcon;
@@ -368,14 +359,13 @@ export default function App() {
     let stale = false;
     api
       .appearance()
-      .then((value) => {
-        if (!stale) setAppearance(value);
+      .then(async (value) => {
+        if (!stale && (value.icon !== 'new' || value.illustration !== 'new')) {
+          await api.saveAppearance(defaultAppearance);
+        }
       })
       .catch((reason) => {
         if (!stale) setError(String(reason));
-      })
-      .finally(() => {
-        if (!stale) setAppearanceReady(true);
       });
     Promise.all([api.games(), api.settings()])
       .then(([library, config]) => {
@@ -684,7 +674,8 @@ export default function App() {
   ) : null;
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell${desktop ? ' app-shell-desktop' : ''}`}>
+      <WindowTitleBar desktop={desktop} icon={appIcon} onError={setError} />
       <aside className="sidebar">
         <div className="brand">
           <img src={appIcon} alt="" />
@@ -736,7 +727,7 @@ export default function App() {
             MTool
           </button>
         </nav>
-        <div className="sidebar-art" aria-hidden="true">
+        <div className="sidebar-art sidebar-art-decorated" aria-hidden="true">
           <img src={sidebarCharacter} alt="" draggable={false} />
         </div>
         <div className="sidebar-bottom">
@@ -1400,12 +1391,6 @@ export default function App() {
           {settingsOpen && settings && (
             <SettingsPage
               settings={settings}
-              appearance={appearance}
-              appearanceReady={appearanceReady}
-              onAppearanceSave={async (next) => {
-                const saved = await api.saveAppearance(next);
-                setAppearance(saved);
-              }}
               initialSection={settingsSection}
               scrollPositions={settingsScroll}
               navigationGuard={settingsGuard}
@@ -1475,12 +1460,6 @@ export default function App() {
             />
           )}
         </div>
-        {!settingsOpen && (previewOpen || importOpen) && (
-          <footer className="app-footer">
-            <span className="local-dot" />
-            本地管理 · 游戏和存档文件保持原位
-          </footer>
-        )}
       </div>
       {linkCandidate && (
         <Modal
@@ -1838,9 +1817,6 @@ function DiscardConfirmation({
 }
 function SettingsPage({
   settings,
-  appearance,
-  appearanceReady,
-  onAppearanceSave,
   initialSection,
   scrollPositions,
   navigationGuard,
@@ -1849,9 +1825,6 @@ function SettingsPage({
   onReset,
 }: {
   settings: Settings;
-  appearance: Appearance;
-  appearanceReady: boolean;
-  onAppearanceSave: (next: Appearance) => Promise<void>;
   initialSection: SettingsSection;
   scrollPositions: RefObject<Record<SettingsSection, number>>;
   navigationGuard: RefObject<((go: () => void) => void) | null>;
@@ -1974,8 +1947,8 @@ function SettingsPage({
               <CardTitle icon="folder" description="扫描根目录中的游戏，游戏文件保留原位。">
                 游戏库目录
               </CardTitle>
-              <div className="form-grid">
-                <label className="full">
+              <div className="form-grid settings-library-fields">
+                <label>
                   游戏库根目录（Game Root）
                   <div className="path-input">
                     <input
@@ -2002,7 +1975,7 @@ function SettingsPage({
                     <option value={2}>均衡 · 2 线程（默认）</option>
                     <option value={4}>性能 · 4 线程</option>
                   </select>
-                  <span className="muted">通常保留默认即可，保存后用于下一次扫描。</span>
+                  <span className="muted">保存后用于下一次扫描。</span>
                 </label>
               </div>
             </section>
@@ -2096,13 +2069,6 @@ function SettingsPage({
             </div>
           </fieldset>
         </form>
-        {section === 'library' && (
-          <AppearancePicker
-            value={appearance}
-            disabled={!appearanceReady || busy || locked || confirmClose}
-            onSave={onAppearanceSave}
-          />
-        )}
         <section className="reset-library panel" hidden={section !== 'library'}>
           <h3>清空游戏库</h3>
           <p>
@@ -2157,7 +2123,7 @@ function SettingsPage({
         <section className="about-card panel" hidden={section !== 'library'} aria-label="关于应用">
           <div className="settings-about-heading">
             <div className="settings-about-identity">
-              <img src={appearanceIcons[appearance.icon]} alt="" />
+              <img src={appIcon} alt="" />
               <div>
                 <h3>关于 butter-manager</h3>
                 <p>by Zhehao-w</p>

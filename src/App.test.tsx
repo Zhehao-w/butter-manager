@@ -404,55 +404,35 @@ describe('iteration interactions', () => {
     expect(screen.getByRole('region', { name: '设置页面' })).toBeTruthy();
   });
 
-  it('loads appearance and saves independent icon and illustration choices immediately', async () => {
-    vi.mocked(api.appearance).mockResolvedValue({ icon: 'original', illustration: 'new' });
+  it('uses the new artwork and replaces legacy appearance preferences without a picker', async () => {
+    vi.mocked(api.appearance).mockResolvedValue({ icon: 'original', illustration: 'original' });
     const { container } = render(<App />);
     await screen.findByRole('button', { name: '扫描目录' });
     openConfig('设置');
-    const oldIcon = await screen.findByRole('radio', { name: '原版应用图标' });
-    await waitFor(() => expect((oldIcon as HTMLInputElement).checked).toBe(true));
-    fireEvent.click(screen.getByRole('radio', { name: '新版应用图标' }));
     await waitFor(() =>
       expect(api.saveAppearance).toHaveBeenLastCalledWith({ icon: 'new', illustration: 'new' }),
     );
-    await waitFor(() =>
-      expect(
-        (screen.getByRole('radio', { name: '新版应用图标' }) as HTMLInputElement).checked,
-      ).toBe(true),
-    );
+    expect(screen.queryByRole('region', { name: '外观设置' })).toBeNull();
     expect(container.querySelector('.brand img')?.getAttribute('src')).toContain('app-icon-new');
     expect(container.querySelector('.settings-about-identity img')?.getAttribute('src')).toContain(
       'app-icon-new',
     );
-    fireEvent.click(screen.getByRole('radio', { name: '原版侧栏立绘' }));
-    await waitFor(() =>
-      expect(api.saveAppearance).toHaveBeenLastCalledWith({
-        icon: 'new',
-        illustration: 'original',
-      }),
-    );
-    await waitFor(() =>
-      expect(container.querySelector('.sidebar-art img')?.getAttribute('src')).not.toContain(
-        'character-new',
-      ),
+    expect(container.querySelector('.sidebar-art img')?.getAttribute('src')).toContain(
+      'character-new',
     );
   });
 
-  it('keeps the selected appearance when saving fails', async () => {
+  it('keeps the new artwork when replacing legacy preferences fails', async () => {
+    vi.mocked(api.appearance).mockResolvedValue({ icon: 'original', illustration: 'original' });
     vi.mocked(api.saveAppearance).mockRejectedValue(new Error('无法保存外观设置'));
-    render(<App />);
-    await screen.findByRole('button', { name: '扫描目录' });
-    openConfig('设置');
-    const oldIcon = await screen.findByRole('radio', { name: '原版应用图标' });
-    await waitFor(() => expect((oldIcon as HTMLInputElement).disabled).toBe(false));
-    fireEvent.click(oldIcon);
+    const { container } = render(<App />);
     await screen.findByRole('alert');
     expect(screen.getByRole('alert').textContent).toContain('无法保存外观设置');
-    expect((screen.getByRole('radio', { name: '新版应用图标' }) as HTMLInputElement).checked).toBe(
-      true,
+    expect(container.querySelector('.brand img')?.getAttribute('src')).toContain('app-icon-new');
+    expect(container.querySelector('.sidebar-art img')?.getAttribute('src')).toContain(
+      'character-new',
     );
   });
-
   it('refreshes automatically detected saves in an untouched open detail without creating unsaved edits', async () => {
     let scanPage: JobPage = {
       ...job,

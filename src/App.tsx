@@ -54,10 +54,11 @@ import {
   LaunchBadge,
   LibraryFilters,
   EngineQuickFilters,
+  PlayQuickFilters,
+  PlayStatusControl,
   engineQuickGroups,
   emptyFilters,
   matchesFilters,
-  playLabels,
 } from './gameStatus';
 import { isQspFile, localQsp, qspConfig, suggestedPlayer } from './qsp';
 
@@ -850,15 +851,44 @@ export default function App() {
                   </SortField>
                 </div>
               </div>
-              <EngineQuickFilters
-                games={games}
-                engines={filters.engines}
-                other={otherEnginesOnly}
-                onChange={(engines, other) => {
-                  setFilters((current) => ({ ...current, engines }));
-                  setOtherEnginesOnly(other);
-                }}
-              />
+              <div className="library-quick-filters" role="group" aria-label="快捷筛选">
+                <button
+                  type="button"
+                  className="quick-filter-all"
+                  aria-pressed={
+                    !filters.statuses.length &&
+                    !filters.engines.length &&
+                    !filters.modes.length &&
+                    !otherEnginesOnly
+                  }
+                  onClick={() => {
+                    setFilters(emptyFilters());
+                    setOtherEnginesOnly(false);
+                  }}
+                >
+                  <Icon name="library" size={16} />
+                  全部
+                </button>
+                <div className="quick-filter-section">
+                  <span className="quick-filter-label">游玩状态</span>
+                  <PlayQuickFilters
+                    statuses={filters.statuses}
+                    onChange={(statuses) => setFilters((current) => ({ ...current, statuses }))}
+                  />
+                </div>
+                <div className="quick-filter-section quick-engine-section">
+                  <span className="quick-filter-label">游戏引擎</span>
+                  <EngineQuickFilters
+                    games={games}
+                    engines={filters.engines}
+                    other={otherEnginesOnly}
+                    onChange={(engines, other) => {
+                      setFilters((current) => ({ ...current, engines }));
+                      setOtherEnginesOnly(other);
+                    }}
+                  />
+                </div>
+              </div>
               <div
                 className="library-content"
                 style={
@@ -1806,12 +1836,20 @@ function DiscardConfirmation({
   actionLabel?: string;
 }) {
   return (
-    <Modal title="放弃未保存修改？" variant="confirm" onClose={onKeep}>
+    <Modal
+      title="放弃未保存修改？"
+      variant="confirm"
+      onClose={onKeep}
+      footer={
+        <div className="confirmation-actions">
+          <button onClick={onKeep}>继续编辑</button>
+          <button className="warning" onClick={onDiscard}>
+            {actionLabel}
+          </button>
+        </div>
+      }
+    >
       <p>资料尚未保存，可以继续编辑或放弃修改。</p>
-      <div className="footer-actions">
-        <button onClick={onKeep}>继续编辑</button>
-        <button onClick={onDiscard}>{actionLabel}</button>
-      </div>
     </Modal>
   );
 }
@@ -1847,6 +1885,7 @@ function SettingsPage({
   const [error, setError] = useState('');
   const [confirmClose, setConfirmClose] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
+  const [licenseOpen, setLicenseOpen] = useState<'icons' | 'virtual' | null>(null);
   const [confirmation, setConfirmation] = useState('');
   const dirty = JSON.stringify(settings) !== JSON.stringify(draft);
   const [toolChecks, setToolChecks] = useState<ToolCheck[]>([]);
@@ -1962,7 +2001,11 @@ function SettingsPage({
           )}
           <fieldset disabled={busy || locked || confirmClose || resetOpen}>
             <section className="settings-card panel" hidden={section !== 'library'}>
-              <CardTitle icon="folder" description="扫描根目录中的游戏，游戏文件保留原位。">
+              <CardTitle
+                icon="folder"
+                iconSize={22}
+                description="扫描根目录中的游戏，游戏文件保留原位。"
+              >
                 游戏库与扫描
               </CardTitle>
               <div className="form-grid settings-library-fields">
@@ -1998,7 +2041,7 @@ function SettingsPage({
               </div>
             </section>
             <section className="settings-card panel" hidden={section !== 'mtool'}>
-              <CardTitle icon="tool" description="让多个游戏使用同一套 MTool。">
+              <CardTitle icon="tool" iconSize={22} description="让多个游戏使用同一套 MTool。">
                 共享 MTool
               </CardTitle>
               <div className="header-actions mtool-actions">
@@ -2089,22 +2132,31 @@ function SettingsPage({
         </form>
         <section className="about-card panel" hidden={section !== 'library'} aria-label="关于应用">
           <div className="settings-about-heading">
-            <CardTitle icon="info">关于应用</CardTitle>
+            <CardTitle icon="info" iconSize={22} description="本地游戏管理与存档工具。">
+              关于应用
+            </CardTitle>
             <span className="mode">v0.3.1</span>
           </div>
-          <p className="settings-about-description">本地游戏管理与存档工具。</p>
           <BrowseButton disabled={busy} onClick={() => void toolAction(api.openDataDirectory)}>
             打开数据目录
           </BrowseButton>
           <div className="settings-licenses">
-            <details className="icon-credits">
-              <summary>开源图标：Lucide · 许可说明</summary>
-              <CodeBlock>{iconLicense}</CodeBlock>
-            </details>
-            <details className="icon-credits">
-              <summary>虚拟列表：TanStack Virtual · 许可说明</summary>
-              <CodeBlock>{virtualLicense}</CodeBlock>
-            </details>
+            <button
+              type="button"
+              className="settings-license-link"
+              onClick={() => setLicenseOpen('icons')}
+            >
+              <span>开源图标：Lucide · 许可说明</span>
+              <Icon name="next" size={16} />
+            </button>
+            <button
+              type="button"
+              className="settings-license-link"
+              onClick={() => setLicenseOpen('virtual')}
+            >
+              <span>虚拟列表：TanStack Virtual · 许可说明</span>
+              <Icon name="next" size={16} />
+            </button>
           </div>
         </section>
         <details
@@ -2123,7 +2175,7 @@ function SettingsPage({
             }}
           >
             <span className="section-icon">
-              <Icon name="tool" size={18} />
+              <Icon name="tool" size={22} />
             </span>
             <span className="maintenance-heading">
               <span className="maintenance-title">
@@ -2188,7 +2240,70 @@ function SettingsPage({
           </section>
         </details>
       </div>
+      {licenseOpen && (
+        <Modal
+          title={licenseOpen === 'icons' ? 'Lucide · 许可说明' : 'TanStack Virtual · 许可说明'}
+          className="settings-license-modal"
+          onClose={() => setLicenseOpen(null)}
+        >
+          <CodeBlock>{licenseOpen === 'icons' ? iconLicense : virtualLicense}</CodeBlock>
+        </Modal>
+      )}
     </section>
+  );
+}
+
+function DetailTitle({ title, version }: { title: string; version: string }) {
+  const heading = useRef<HTMLHeadingElement>(null);
+  const [label, setLabel] = useState(title);
+  useLayoutEffect(() => {
+    const element = heading.current;
+    if (!element) return;
+    const fit = () => {
+      const width = element.clientWidth;
+      if (!width) return;
+      // Measure the name and inline version together so both fit within two lines.
+      const probe = element.cloneNode(true) as HTMLHeadingElement;
+      Object.assign(probe.style, {
+        position: 'absolute',
+        visibility: 'hidden',
+        pointerEvents: 'none',
+        width: `${width}px`,
+        minHeight: '0',
+        height: 'auto',
+      });
+      probe.setAttribute('aria-hidden', 'true');
+      element.parentElement!.append(probe);
+      const name = probe.querySelector('.detail-name')!;
+      const characters = Array.from(title);
+      const limit = Math.min(characters.length, 60);
+      const height = parseFloat(getComputedStyle(element).lineHeight) * 2 + 1;
+      const candidate = (length: number) =>
+        characters.slice(0, length).join('').trimEnd() + (length < characters.length ? '…' : '');
+      let low = 0;
+      let high = limit;
+      while (low < high) {
+        const middle = Math.ceil((low + high) / 2);
+        name.textContent = candidate(middle);
+        if (probe.getBoundingClientRect().height <= height) low = middle;
+        else high = middle - 1;
+      }
+      probe.remove();
+      setLabel(candidate(low));
+    };
+    fit();
+    const observer = new ResizeObserver(fit);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [title, version]);
+  return (
+    <h1 ref={heading} title={title}>
+      <span className="detail-name">{label}</span>{' '}
+      <span className="mode detail-version-badge">
+        <Icon name="tag" size={18} />
+        {displayVersion(version)}
+      </span>
+    </h1>
   );
 }
 
@@ -2351,8 +2466,7 @@ function GameDetail({
       JSON.stringify(game.external_player ?? null) ||
     aliases !== game.aliases.join('\n') ||
     saves !== game.save_paths.join('\n');
-  const detailStatus =
-    message || analysisNotice || (dirty ? '资料尚未保存；启动使用当前配置。' : '');
+  const detailStatus = message || analysisNotice;
   const close = () => {
     if (busy) return;
     if (dirty) setConfirmClose(true);
@@ -2416,95 +2530,153 @@ function GameDetail({
       title={game.display_title}
       onClose={close}
       variant="detail"
-      headerActions={
-        <button
-          type="submit"
-          form={formId}
-          className="primary"
-          disabled={!dirty || busy || launching || confirmClose}
-        >
-          保存资料
-        </button>
+      footer={
+        <div className="detail-status-footer">
+          <span className="detail-footer-path" title={game.install_path}>
+            <Icon name="folder" size={14} />
+            <span>{game.install_path}</span>
+          </span>
+          <span
+            className={`detail-save-status ${dirty ? 'is-dirty' : ''}`}
+            role="status"
+            title={dirty ? '启动使用当前配置；点击保存资料以保存修改。' : '当前资料已保存。'}
+          >
+            {dirty ? '有未保存的修改' : '已保存'}
+          </span>
+        </div>
+      }
+      hero={
+        <>
+          <div className="detail-hero">
+            <div className="detail-hero-info">
+              <div className="detail-hero-summary">
+                <span className={`mode engine-badge tone-${engineTone(draft.engine)}`}>
+                  <Icon name="library" size={18} />
+                  {draft.engine === 'Unknown' ? '引擎未识别' : draft.engine}
+                </span>
+                <div className="detail-title-line">
+                  <DetailTitle title={game.display_title} version={game.current_version} />
+                </div>
+                {game.canonical_title !== game.display_title && (
+                  <p className="detail-subtitle">{game.canonical_title}</p>
+                )}
+                <div className="detail-status-row">
+                  <PlayBadge game={game} />
+                  <LaunchBadge game={{ ...game, ...configuration }} />
+                  <div className="record-times">
+                    <p>
+                      <Icon name="clock" size={13} />
+                      入库时间：{formatTime(game.created_at)}
+                    </p>
+                    <p>
+                      <Icon name="clock" size={13} />
+                      上次运行：{formatTime(game.last_launched_at)}
+                    </p>
+                  </div>
+                </div>
+              </div>
+              <div className="detail-actions">
+                <button
+                  className="primary play-button"
+                  disabled={
+                    busy ||
+                    launching ||
+                    confirmClose ||
+                    !!launchBlockReason({ ...game, ...configuration }, launchCheck)
+                  }
+                  onClick={() => {
+                    setMessage('');
+                    void onPlay(configuration)
+                      .then(() => setMessage('启动请求已发送。'))
+                      .catch((reason) => setMessage(String(reason)));
+                  }}
+                >
+                  <Icon name="play" />
+                  {launching ? '启动中…' : '启动'}
+                </button>
+                <button
+                  disabled={busy || launching}
+                  onClick={() =>
+                    void run(async () => {
+                      try {
+                        await api.openFolder(game.id);
+                      } catch (reason) {
+                        setFolderError(String(reason));
+                      }
+                    })
+                  }
+                >
+                  <Icon name="folder" size={20} />
+                  打开目录
+                </button>
+                <button
+                  type="button"
+                  className="save-editor-entry"
+                  disabled={busy || confirmClose}
+                  onClick={() => setSaveEditorOpen(true)}
+                >
+                  <Icon name="save" size={20} />
+                  编辑存档
+                </button>
+                <button
+                  disabled={busy || launching || analysisLocked}
+                  onClick={() => {
+                    selectDetailTab('launch');
+                    void run(onAnalyze);
+                  }}
+                >
+                  <Icon name="settings" size={20} />
+                  分析启动配置
+                </button>
+              </div>
+            </div>
+          </div>
+          <div className="detail-toolbar">
+            <div className="detail-tabs" role="tablist" aria-label="游戏详情分类">
+              {detailTabs.map(([key, label, icon], index) => (
+                <button
+                  type="button"
+                  key={key}
+                  id={`${formId}-${key}-tab`}
+                  role="tab"
+                  aria-selected={detailTab === key}
+                  aria-controls={`${formId}-${key}-panel`}
+                  tabIndex={detailTab === key ? 0 : -1}
+                  onClick={() => selectDetailTab(key)}
+                  onKeyDown={(event) => {
+                    const offset =
+                      event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
+                    if (!offset && event.key !== 'Home' && event.key !== 'End') return;
+                    event.preventDefault();
+                    const next =
+                      event.key === 'Home'
+                        ? 0
+                        : event.key === 'End'
+                          ? detailTabs.length - 1
+                          : (index + offset + detailTabs.length) % detailTabs.length;
+                    const tab = detailTabs[next][0];
+                    selectDetailTab(tab);
+                    document.getElementById(`${formId}-${tab}-tab`)?.focus();
+                  }}
+                >
+                  <Icon name={icon} size={18} />
+                  {label}
+                </button>
+              ))}
+            </div>
+            <button
+              type="submit"
+              form={formId}
+              className={`detail-save-button ${dirty ? 'primary' : ''}`}
+              disabled={!dirty || busy || launching || confirmClose}
+            >
+              <Icon name="save" size={18} />
+              保存资料
+            </button>
+          </div>
+        </>
       }
     >
-      <div className="detail-hero panel">
-        <GameMark game={{ ...game, engine: draft.engine }} large />
-        <div className="detail-hero-info">
-          <h1>{game.display_title}</h1>
-          <div className="alias-chips">
-            {game.aliases.map((alias) => (
-              <span key={alias}>{alias}</span>
-            ))}
-          </div>
-          <div className="card-badges">
-            <span className="mode detail-version-badge">
-              <Icon name="tag" size={14} />
-              {displayVersion(game.current_version)}
-            </span>
-            <LaunchBadge game={{ ...game, ...configuration }} />
-            <PlayBadge game={game} />
-            <span className={`mode engine-badge tone-${engineTone(draft.engine)}`}>
-              {draft.engine === 'Unknown' ? '引擎未识别' : draft.engine}
-            </span>
-          </div>
-          <div className="record-times">
-            <p>入库时间：{formatTime(game.created_at)}</p>
-            <p>上次运行：{formatTime(game.last_launched_at)}</p>
-          </div>
-        </div>
-        <div className="detail-actions">
-          <button
-            className="primary play-button"
-            disabled={
-              busy ||
-              launching ||
-              confirmClose ||
-              !!launchBlockReason({ ...game, ...configuration }, launchCheck)
-            }
-            onClick={() => {
-              setMessage('');
-              void onPlay(configuration)
-                .then(() => setMessage('启动请求已发送。'))
-                .catch((reason) => setMessage(String(reason)));
-            }}
-          >
-            <Icon name="play" />
-            {launching ? '启动中…' : '启动'}
-          </button>
-          <button
-            disabled={busy || launching}
-            onClick={() =>
-              void run(async () => {
-                try {
-                  await api.openFolder(game.id);
-                } catch (reason) {
-                  setFolderError(String(reason));
-                }
-              })
-            }
-          >
-            打开目录
-          </button>
-          <button
-            disabled={busy || launching || analysisLocked}
-            onClick={() => {
-              selectDetailTab('launch');
-              void run(onAnalyze);
-            }}
-          >
-            分析启动配置
-          </button>
-          <button
-            type="button"
-            className="save-editor-entry"
-            disabled={busy || confirmClose}
-            onClick={() => setSaveEditorOpen(true)}
-          >
-            <Icon name="save" size={16} />
-            编辑存档
-          </button>
-        </div>
-      </div>
       {confirmClose && (
         <DiscardConfirmation onDiscard={onClose} onKeep={() => setConfirmClose(false)} />
       )}
@@ -2518,13 +2690,8 @@ function GameDetail({
           onBusy={setMaintenanceBusy}
         />
       )}
-      <div className="detail-meta-row">
-        <p className="path detail-install-path" title={game.install_path}>
-          {game.install_path}
-        </p>
-        <div className="inline-status" role="status" title={detailStatus}>
-          {detailStatus}
-        </div>
+      <div className="detail-feedback" role="status" title={detailStatus}>
+        {detailStatus}
       </div>
       <PathBadge check={pathCheck} />
       {pathCheck && pathCheck.state !== 'available' && (
@@ -2533,37 +2700,6 @@ function GameDetail({
       {analyzing && analysisJob && (
         <TaskProgress page={analysisJob} onCancel={() => void run(onCancelAnalysis)} />
       )}
-      <div className="detail-tabs" role="tablist" aria-label="游戏详情分类">
-        {detailTabs.map(([key, label, icon], index) => (
-          <button
-            type="button"
-            key={key}
-            id={`${formId}-${key}-tab`}
-            role="tab"
-            aria-selected={detailTab === key}
-            aria-controls={`${formId}-${key}-panel`}
-            tabIndex={detailTab === key ? 0 : -1}
-            onClick={() => selectDetailTab(key)}
-            onKeyDown={(event) => {
-              const offset = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
-              if (!offset && event.key !== 'Home' && event.key !== 'End') return;
-              event.preventDefault();
-              const next =
-                event.key === 'Home'
-                  ? 0
-                  : event.key === 'End'
-                    ? detailTabs.length - 1
-                    : (index + offset + detailTabs.length) % detailTabs.length;
-              const tab = detailTabs[next][0];
-              selectDetailTab(tab);
-              document.getElementById(`${formId}-${tab}-tab`)?.focus();
-            }}
-          >
-            <Icon name={icon} size={16} />
-            {label}
-          </button>
-        ))}
-      </div>
       <form
         id={formId}
         onInvalidCapture={(event) => {
@@ -2593,19 +2729,26 @@ function GameDetail({
           <div className="detail-card-grid">
             <section className="panel detail-card" {...panelProps('basic')}>
               <CardTitle icon="info">基础信息</CardTitle>
-              <div className="form-grid">
-                <label>
-                  显示名称
+              <div className="form-grid detail-basic-fields">
+                <label className="detail-name-field">
+                  <span>显示名称</span>
                   <input
                     required
+                    title={draft.display_title}
                     value={draft.display_title}
                     onChange={(event) => field('display_title', event.target.value)}
                   />
                 </label>
-                <label>
-                  标准名称
+                <label
+                  className={`detail-name-field ${draft.canonical_title === draft.display_title ? 'is-duplicate' : ''}`}
+                  title={
+                    draft.canonical_title === draft.display_title ? '与显示名称相同' : undefined
+                  }
+                >
+                  <span>标准名称</span>
                   <input
                     required
+                    title={draft.canonical_title}
                     value={draft.canonical_title}
                     onChange={(event) => field('canonical_title', event.target.value)}
                   />
@@ -2621,22 +2764,14 @@ function GameDetail({
                   />
                   <span className="muted">手动修改后会保留；也可选择自定义引擎。</span>
                 </label>
-                <label>
-                  游玩状态
-                  <select
+                <fieldset className="detail-play-status-field">
+                  <legend>游玩状态</legend>
+                  <PlayStatusControl
                     value={draft.play_status ?? 'UNPLAYED'}
-                    onChange={(event) =>
-                      field('play_status', event.target.value as GameEdit['play_status'])
-                    }
-                  >
-                    {Object.entries(playLabels).map(([key, label]) => (
-                      <option key={key} value={key}>
-                        {label}
-                      </option>
-                    ))}
-                  </select>
+                    onChange={(status) => field('play_status', status)}
+                  />
                   <span className="muted">成功启动会标记为正在玩；已通关会保留。</span>
-                </label>
+                </fieldset>
                 <label>
                   版本
                   <input
@@ -2644,6 +2779,17 @@ function GameDetail({
                     value={versionInput(draft.current_version)}
                     onChange={(event) => field('current_version', event.target.value || 'Unknown')}
                   />
+                  <span className="muted">
+                    版本来源：
+                    {(
+                      {
+                        folder_name: '目录名',
+                        file_name: '启动文件名',
+                        manual: '手动设置',
+                        unknown: '未识别',
+                      } as Record<string, string>
+                    )[game.version_source] || '未识别'}
+                  </span>
                 </label>
               </div>
             </section>
@@ -2913,19 +3059,6 @@ function GameDetail({
               <option key={exe.relative_path} value={exe.relative_path} />
             ))}
           </datalist>
-          <div className="footer-actions" hidden={detailTab !== 'basic'}>
-            <span className="muted">
-              版本来源：
-              {(
-                {
-                  folder_name: '目录名',
-                  file_name: '启动文件名',
-                  manual: '手动设置',
-                  unknown: '未识别',
-                } as Record<string, string>
-              )[game.version_source] || '未识别'}
-            </span>
-          </div>
         </fieldset>
       </form>
       <div {...panelProps('records')}>

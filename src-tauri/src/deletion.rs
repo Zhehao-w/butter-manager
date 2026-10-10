@@ -107,17 +107,22 @@ fn plain_path(path: &Path) -> Result<()> {
     Ok(())
 }
 fn check_tree(path: &Path, budget: &mut usize) -> Result<()> {
+    check_tree_metadata(path, fs::symlink_metadata(path)?, budget)
+}
+fn check_tree_metadata(path: &Path, meta: fs::Metadata, budget: &mut usize) -> Result<()> {
     if *budget == 0 {
         return Err(fail("目录过大，请手动检查后处理"));
     }
     *budget -= 1;
-    let meta = fs::symlink_metadata(path)?;
     if link(&meta) {
         return Err(fail(format!("目录含链接或联接点：{}", path.display())));
     }
     if meta.is_dir() {
         for entry in fs::read_dir(path)? {
-            check_tree(&entry?.path(), budget)?;
+            let entry = entry?;
+            // Windows DirEntry metadata comes from directory enumeration, avoiding
+            // another file open for each resource while retaining link checks.
+            check_tree_metadata(&entry.path(), entry.metadata()?, budget)?;
         }
     }
     Ok(())
@@ -249,6 +254,44 @@ pub fn preview(
     plan
 }
 
+// Recycling already reports sharing violations. Check process roots once and only
+// a small sample of configured saves, rather than opening every game resource.
+fn ensure_delete_idle(plan: &DeletePlan, paths: &[PathBuf]) -> Result<()> {
+    crate::runtime::ensure_processes_idle(paths)?;
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        let mut budget = 32;
+        for save in plan.saves.iter().filter(|save| save.action == "recycle") {
+            let mut queue = vec![PathBuf::from(&save.path)];
+            while budget > 0 {
+                let Some(path) = queue.pop() else { break };
+                budget -= 1;
+                let meta = fs::symlink_metadata(&path)?;
+                if link(&meta) {
+                    return Err(fail("存档含链接或联接点，请手工处理"));
+                }
+                if meta.is_dir() {
+                    for entry in fs::read_dir(&path)?.take(budget) {
+                        queue.push(entry?.path());
+                    }
+                } else if meta.is_file() {
+                    fs::OpenOptions::new()
+                        .read(true)
+                        .share_mode(0)
+                        .open(&path)
+                        .map_err(|error| {
+                            fail(format!("存档被占用或无法读取：{}：{error}", path.display()))
+                        })?;
+                }
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = plan;
+    Ok(())
+}
+
 pub fn apply_files(
     plan: &DeletePlan,
     mut recycle: impl FnMut(&Path) -> Result<()>,
@@ -270,7 +313,7 @@ pub fn apply_files(
                     .filter(|s| s.action == "recycle")
                     .map(|s| PathBuf::from(&s.path)),
             );
-            crate::runtime::ensure_paths_idle(&paths)?;
+            ensure_delete_idle(plan, &paths)?;
             // External saves first; internal saves are recycled with the game directory.
             // All failures leave the database record intact and report completed steps.
             for save in plan.saves.iter().filter(|s| {

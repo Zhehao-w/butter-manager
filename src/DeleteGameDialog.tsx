@@ -75,7 +75,7 @@ export function DeleteGameDialog({
     <Modal
       title={report ? '文件操作结果' : `移入回收站：${game.display_title}`}
       variant="confirm"
-      className="modal-maintenance"
+      className="modal-maintenance modal-delete-game"
       showClose={false}
       onClose={close}
       footer={
@@ -105,14 +105,18 @@ export function DeleteGameDialog({
     >
       {!report ? (
         <>
-          <p>游戏目录和关联存档将一同移入回收站，完成后移除库记录。</p>
-          <p className="path delete-path">{plan?.game_path ?? game.install_path}</p>
+          <p>游戏与关联存档移入回收站后，将移除库记录。</p>
+          <p className="path delete-path" title={plan?.game_path ?? game.install_path}>
+            {plan?.game_path ?? game.install_path}
+          </p>
           {plan && plan.saves.length > 0 && (
             <ul className="delete-save-list">
               {plan.saves.map((save) => (
                 <li key={save.path}>
                   <strong>{actions[save.action]}</strong>
-                  <span className="path">{save.path}</span>
+                  <span className="path" title={save.path}>
+                    {save.path}
+                  </span>
                 </li>
               ))}
             </ul>
@@ -133,7 +137,7 @@ export function DeleteGameDialog({
               <h3>已送入回收站</h3>
               <ul className="delete-save-list">
                 {report.recycled.map((path) => (
-                  <li className="path" key={path}>
+                  <li className="path" key={path} title={path}>
                     {path}
                   </li>
                 ))}

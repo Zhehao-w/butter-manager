@@ -448,7 +448,7 @@ export function SaveEditor({ game, onClose }: { game: Game; onClose: () => void 
           <div className="confirmation-actions">
             <button onClick={() => setPending(null)}>继续编辑</button>
             <button
-              className="danger danger-solid"
+              className="warning"
               onClick={() => {
                 const action = pending;
                 setPending(null);
@@ -470,7 +470,7 @@ export function SaveEditor({ game, onClose }: { game: Game; onClose: () => void 
           <div className="confirmation-actions">
             <button onClick={() => setPendingTrust(null)}>取消</button>
             <button
-              className="primary"
+              className="warning"
               onClick={() => {
                 if (document) trusted.current.set(document.slot.id, document.revision);
                 const action = pendingTrust;

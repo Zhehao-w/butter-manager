@@ -137,6 +137,44 @@ impl Database {
         tx.commit()?;
         Ok(())
     }
+    /// Rename metadata only after the import journal has recorded the filesystem transition.
+    /// Idempotent for recovery after the transaction commits but before its checkpoint.
+    pub fn write_import_identity(
+        &mut self,
+        id: &str,
+        from: &crate::importer::GameIdentity,
+        to: &crate::importer::GameIdentity,
+    ) -> Result<()> {
+        let game = self.game(id)?;
+        let actual = crate::importer::GameIdentity::from_game(&game);
+        if actual == *to {
+            return Ok(());
+        }
+        if actual != *from {
+            return Err(Error::Validation(
+                "游戏名称或目录已修改，不能按导入记录改名".into(),
+            ));
+        }
+        let root = dunce::canonicalize(&to.install_path)?;
+        if self.registered_id(&root)?.is_some_and(|owner| owner != id) {
+            return Err(Error::Validation("新目录已属于其他游戏".into()));
+        }
+        let tx = self.connection.transaction()?;
+        tx.execute("UPDATE games SET display_title=?2,canonical_title=?3,install_path=?4,install_path_key=?5,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?1",
+            params![id,to.display_title,to.canonical_title,path_text(&root)?,path_key(&root)?])?;
+        for path in &game.save_paths {
+            let rebased =
+                crate::maintenance::rebase_save(path, Path::new(&from.install_path), &root);
+            if rebased != *path {
+                tx.execute(
+                    "UPDATE save_paths SET path=?3 WHERE game_id=?1 AND path=?2",
+                    params![id, path, rebased],
+                )?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
     pub fn open(path: &Path) -> Result<Self> {
         let connection = Connection::open(path)?;
         connection.busy_timeout(std::time::Duration::from_secs(5))?;

@@ -1,13 +1,18 @@
-import { useMemo, useState } from 'react';
+import { useId, useMemo, useState } from 'react';
 import { launchLabel } from './qsp';
 import { engineTone, Icon, Modal } from './ui';
 import type { IconName } from './ui';
 import type { Game, PlayStatus } from './types';
 
 export const playLabels: Record<PlayStatus, string> = {
-  UNPLAYED: '从未玩过',
+  UNPLAYED: '未启动',
   PLAYING: '正在玩',
   COMPLETED: '已通关',
+};
+const playAppearance: Record<PlayStatus, { icon: IconName; tone: string }> = {
+  UNPLAYED: { icon: 'library', tone: 'slate' },
+  PLAYING: { icon: 'play', tone: 'pink' },
+  COMPLETED: { icon: 'flag', tone: 'teal' },
 };
 export const launchModes = ['直接启动', '默认应用', 'MTool', 'QSP 播放器'] as const;
 export const launchTone = (label: string) =>
@@ -32,12 +37,42 @@ export interface GameFilters {
   modes: string[];
 }
 export const emptyFilters = (): GameFilters => ({ statuses: [], engines: [], modes: [] });
+export function PlayStatusControl({
+  value,
+  onChange,
+}: {
+  value: PlayStatus;
+  onChange: (status: PlayStatus) => void;
+}) {
+  const name = useId();
+  return (
+    <div className="play-status-control" role="radiogroup" aria-label="游玩状态">
+      {Object.entries(playLabels).map(([key, label]) => {
+        const status = key as PlayStatus;
+        return (
+          <label
+            key={status}
+            className={`play-status-choice play-${status.toLowerCase()}${value === status ? ' is-selected' : ''}`}
+          >
+            <input
+              className="sr-only"
+              type="radio"
+              name={name}
+              value={status}
+              checked={value === status}
+              onChange={() => onChange(status)}
+            />
+            <Icon name={playAppearance[status].icon} size={14} />
+            <span>{label}</span>
+          </label>
+        );
+      })}
+    </div>
+  );
+}
 function filterAppearance(group: keyof GameFilters, key: string): { icon: IconName; tone: string } {
   if (group === 'statuses') {
-    return {
-      icon: 'library',
-      tone: { UNPLAYED: 'slate', PLAYING: 'teal', COMPLETED: 'violet' }[key] || 'slate',
-    };
+    return playAppearance[key as PlayStatus];
   }
   if (group === 'modes') {
     return {
@@ -82,7 +117,7 @@ export function engineQuickGroups(games: Game[]) {
   const popular = [...counts]
     .filter(([engine]) => engine !== 'Unknown')
     .sort(([a, ac], [b, bc]) => bc - ac || a.localeCompare(b, 'zh-CN'))
-    .slice(0, 7)
+    .slice(0, 5)
     .map(([engine, count]) => ({ engine, count }));
   return {
     popular,
@@ -102,15 +137,6 @@ export function EngineQuickFilters({
 }) {
   const { popular, otherCount } = useMemo(() => engineQuickGroups(games), [games]);
   const options = [
-    {
-      key: 'all',
-      label: '全部',
-      count: games.length,
-      icon: 'library' as IconName,
-      active: !other && !engines.length,
-      engines: [],
-      other: false,
-    },
     ...popular.map(({ engine, count }) => ({
       key: `engine:${engine}`,
       label: engine,
@@ -135,19 +161,47 @@ export function EngineQuickFilters({
       {options.map((option) => (
         <button
           key={option.key}
-          className={
-            option.key === 'all' ? undefined : `tone-${engineTone(option.engines[0] ?? 'Unknown')}`
-          }
+          className={`tone-${engineTone(option.engines[0] ?? 'Unknown')}`}
           type="button"
           aria-pressed={option.active}
           disabled={!option.count && !option.active}
-          onClick={() => onChange(option.engines, option.other)}
+          onClick={() =>
+            onChange(option.active ? [] : option.engines, !option.active && option.other)
+          }
         >
-          <Icon name={option.icon} size={14} />
+          <Icon name={option.icon} size={16} />
           {option.label}
-          <span className="quick-filter-count">{option.count}</span>
         </button>
       ))}
+    </div>
+  );
+}
+export function PlayQuickFilters({
+  statuses,
+  onChange,
+}: {
+  statuses: PlayStatus[];
+  onChange: (statuses: PlayStatus[]) => void;
+}) {
+  return (
+    <div className="play-quick-filters" role="group" aria-label="游玩状态快捷筛选">
+      {Object.entries(playLabels).map(([key, label]) => {
+        const status = key as PlayStatus;
+        const appearance = playAppearance[status];
+        const active = statuses.length === 1 && statuses[0] === status;
+        return (
+          <button
+            key={status}
+            type="button"
+            className={`play-${status.toLowerCase()}`}
+            aria-pressed={active}
+            onClick={() => onChange(active ? [] : [status])}
+          >
+            <Icon name={appearance.icon} size={16} />
+            {label}
+          </button>
+        );
+      })}
     </div>
   );
 }

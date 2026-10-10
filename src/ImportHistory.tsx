@@ -179,7 +179,7 @@ export function ImportHistory({
                   onFocus={() => setHighlightedKey(record.key)}
                 >
                   <span className={`import-history-icon ${item.update ? 'updated' : 'added'}`}>
-                    <Icon name={item.update ? 'save' : 'import'} size={20} />
+                    <Icon name={item.update ? 'update' : 'import'} size={20} />
                   </span>
                   <div className="import-history-summary">
                     <strong title={item.selection.title}>{item.selection.title}</strong>
@@ -248,7 +248,7 @@ export function ImportHistory({
                 detail.item.state === 'completed' &&
                 detail.item.update.rollback_available && (
                   <button
-                    className="danger danger-solid"
+                    className="warning"
                     disabled={
                       rollbackDisabled ||
                       !detail.game ||

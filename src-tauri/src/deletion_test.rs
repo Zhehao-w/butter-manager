@@ -89,6 +89,39 @@ fn recycles_internal_and_external_unicode_saves_without_preservation_or_duplicat
     );
     assert!(!data.join("preserved-saves").exists());
 }
+#[cfg(windows)]
+#[test]
+fn ordinary_game_resources_are_left_to_the_recycle_operation() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let (_temp, game, settings, data) = fixture();
+    let resource = Path::new(&game.install_path).join("large-resource.dat");
+    fs::write(&resource, "resource").unwrap();
+    let plan = preview(
+        &game,
+        std::slice::from_ref(&game),
+        &settings,
+        &data,
+        "fixture",
+    );
+    let _lock = fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0)
+        .open(&resource)
+        .unwrap();
+    let mut attempted = false;
+    let report = apply_files(&plan, |_| {
+        attempted = true;
+        Err(fail("shell sharing violation"))
+    });
+    assert!(
+        attempted,
+        "resources must not be individually opened during preflight"
+    );
+    assert!(report.error.unwrap().contains("shell sharing violation"));
+    assert!(!report.removed);
+    assert!(report.recycled.is_empty());
+    assert!(Path::new(&game.install_path).exists());
+}
 #[test]
 fn recycles_external_saves_then_game_and_stops_on_failure() {
     let (temp, mut game, settings, data) = fixture();

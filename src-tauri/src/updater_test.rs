@@ -98,7 +98,7 @@ impl Fixture {
         let mut selection = Selection {
             source: paths::path_text(&self.source).unwrap(),
             title: "incoming name".into(),
-            target_name: "ignored incoming folder".into(),
+            target_name: "魔法少女".into(),
             version: "v2".into(),
             engine: "RPG Maker MV".into(),
             executable: "游戏.html".into(),
@@ -168,6 +168,7 @@ impl Fixture {
             "rollback_originals",
             "inherit_launch_config",
             "mtool_loader_launch_scoped",
+            "identity_change",
         ] {
             update.remove(field);
         }
@@ -731,7 +732,8 @@ fn update_preserves_uuid_metadata_local_and_external_saves_and_records_history_o
     assert_eq!(f.apply(&id).unwrap(), vec![f.id.clone()]);
     let after = f.db.lock().unwrap().game(&f.id).unwrap();
     assert_eq!(after.id, before.id);
-    assert_eq!(after.display_title, before.display_title);
+    assert_eq!(after.display_title, "incoming name");
+    assert_eq!(after.canonical_title, "incoming name");
     assert!(before
         .aliases
         .iter()
@@ -1384,4 +1386,144 @@ fn locked_save_and_space_exhaustion_keep_both_versions_untouched() {
     assert!(f.apply(&id).is_err());
     assert!(f.source.exists());
     assert_eq!(fs::read(f.old().join("游戏.html")).unwrap(), b"old game");
+}
+#[test]
+fn incoming_names_and_folder_are_committed_and_rollback_restores_original_identity() {
+    let mut f = Fixture::new();
+    let original = f.db.lock().unwrap().game(&f.id).unwrap();
+    let id = f.plan_with(true, true, |s| {
+        s.title = "新名称 v2".into();
+        s.target_name = "新目录 v2".into();
+    });
+    assert_eq!(
+        f.store.get(&id).unwrap().view().items[0].target,
+        paths::path_text(&f.root.join("新目录 v2")).unwrap()
+    );
+    f.apply(&id).unwrap();
+    let game = f.db.lock().unwrap().game(&f.id).unwrap();
+    assert_eq!(game.display_title, "新名称 v2");
+    assert_eq!(game.canonical_title, "新名称 v2");
+    assert_eq!(game.current_version, "v2");
+    assert_eq!(game.id, original.id);
+    assert_eq!(
+        game.install_path,
+        paths::path_text(&f.root.join("新目录 v2")).unwrap()
+    );
+    assert!(!f.old().exists());
+    assert_eq!(
+        fs::read(Path::new(&game.install_path).join("www/save/進行.sav")).unwrap(),
+        b"old progress"
+    );
+    f.store = ImportStore::open(f.store.directory.clone()).unwrap();
+    assert!(f.store.recovery_issues().is_empty());
+    f.rollback(&id).unwrap();
+    let game = f.db.lock().unwrap().game(&f.id).unwrap();
+    assert_eq!(game.display_title, original.display_title);
+    assert_eq!(game.canonical_title, original.canonical_title);
+    assert_eq!(game.install_path, original.install_path);
+    assert_eq!(game.current_version, original.current_version);
+}
+
+#[test]
+fn name_transition_recovers_before_rename_after_rename_and_after_metadata_commit() {
+    for phase in 0..3 {
+        let mut f = Fixture::new();
+        let id = f.plan_with(true, true, |s| {
+            s.target_name = "更新后的目录".into();
+        });
+        FAIL_CHECKPOINT.with(|fault| *fault.borrow_mut() = Some("update_identity".into()));
+        assert!(f.apply(&id).is_err());
+        let p = f.store.get(&id).unwrap();
+        let change = p.items[0]
+            .update
+            .as_ref()
+            .unwrap()
+            .identity_change
+            .as_ref()
+            .unwrap();
+        if phase >= 1 {
+            rename_new(
+                Path::new(&change.old.install_path),
+                Path::new(&change.new.install_path),
+            )
+            .unwrap();
+        }
+        if phase == 2 {
+            f.db.lock()
+                .unwrap()
+                .write_import_identity(&f.id, &change.old, &change.new)
+                .unwrap();
+        }
+        f.store = ImportStore::open(f.store.directory.clone()).unwrap();
+        assert!(f.store.recovery_issues().is_empty());
+        f.apply(&id).unwrap();
+        assert_eq!(
+            f.db.lock().unwrap().game(&f.id).unwrap().install_path,
+            change.new.install_path
+        );
+        assert_eq!(
+            f.db.lock().unwrap().version_history(&f.id).unwrap().len(),
+            1
+        );
+        FAIL_CHECKPOINT.with(|fault| *fault.borrow_mut() = Some("rollback_identity".into()));
+        assert!(f.rollback(&id).is_err());
+        f.store = ImportStore::open(f.store.directory.clone()).unwrap();
+        assert!(f.store.recovery_issues().is_empty());
+        f.apply(&id).unwrap();
+        assert_eq!(
+            f.db.lock().unwrap().game(&f.id).unwrap().install_path,
+            change.old.install_path
+        );
+    }
+}
+
+#[test]
+fn completed_legacy_imports_are_repaired_idempotently_and_remain_reversible() {
+    let mut f = Fixture::new();
+    let original = f.db.lock().unwrap().game(&f.id).unwrap();
+    let id = f.plan(true, true);
+    f.use_legacy_journal(&id);
+    f.apply(&id).unwrap();
+    assert_eq!(
+        f.db.lock().unwrap().game(&f.id).unwrap().display_title,
+        original.display_title
+    );
+    assert_eq!(
+        f.store.repair_completed_update_names(&f.db).unwrap().len(),
+        1
+    );
+    assert!(f
+        .store
+        .repair_completed_update_names(&f.db)
+        .unwrap()
+        .is_empty());
+    let game = f.db.lock().unwrap().game(&f.id).unwrap();
+    assert_eq!(game.display_title, "incoming name");
+    assert_eq!(
+        game.install_path,
+        paths::path_text(&f.root.join("新版本 v2")).unwrap()
+    );
+    f.store = ImportStore::open(f.store.directory.clone()).unwrap();
+    assert!(f.store.recovery_issues().is_empty());
+    f.rollback(&id).unwrap();
+    assert_eq!(
+        f.db.lock().unwrap().game(&f.id).unwrap().install_path,
+        original.install_path
+    );
+}
+
+#[test]
+fn new_name_collision_is_blocked_and_foreign_directory_is_not_overwritten() {
+    let f = Fixture::new();
+    fs::create_dir(f.root.join("occupied")).unwrap();
+    fs::write(f.root.join("occupied/foreign.txt"), b"foreign").unwrap();
+    let id = f.plan_with(true, true, |s| s.target_name = "occupied".into());
+    assert!(!f.store.get(&id).unwrap().items[0].blockers.is_empty());
+    assert!(f.apply(&id).is_err());
+    assert_eq!(
+        fs::read(f.root.join("occupied/foreign.txt")).unwrap(),
+        b"foreign"
+    );
+    assert!(f.old().is_dir());
+    assert!(f.source.is_dir());
 }

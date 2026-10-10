@@ -218,7 +218,7 @@ function openConfig(section: 'MTool' | '设置') {
   fireEvent.click(screen.getByRole('button', { name: section }));
 }
 describe('iteration interactions', () => {
-  it('opens the same save editor from the fourth hero action and the retained save tab entry', async () => {
+  it('opens the same save editor from the hero action and the retained save tab entry', async () => {
     render(<App />);
     fireEvent.click(await screen.findByRole('button', { name: game.display_title }));
     const detail = screen.getByRole('dialog', { name: game.display_title });
@@ -227,7 +227,7 @@ describe('iteration interactions', () => {
       within(actions)
         .getAllByRole('button')
         .map((button) => button.textContent),
-    ).toEqual(['启动', '打开目录', '分析启动配置', '编辑存档']);
+    ).toEqual(['启动', '打开目录', '编辑存档', '分析启动配置']);
     fireEvent.click(within(actions).getByRole('button', { name: '编辑存档' }));
     const editor = await screen.findByRole('dialog', { name: `编辑存档 · ${game.display_title}` });
     await waitFor(() => expect(api.listEditableSaves).toHaveBeenCalledWith(game.id));
@@ -303,30 +303,103 @@ describe('iteration interactions', () => {
     await screen.findByRole('button', { name: 'Title 0' });
     const quick = within(screen.getByRole('group', { name: '引擎快捷筛选' }));
     const popular = engineQuickGroups(games).popular.map((group) => group.engine);
-    fireEvent.click(quick.getByRole('button', { name: '其他1' }));
+    fireEvent.click(quick.getByRole('button', { name: '其他' }));
     for (const entry of games)
       expect(!!screen.queryByRole('button', { name: entry.display_title })).toBe(
         !popular.includes(entry.engine),
       );
-    expect(screen.getByText('找到 1 / 8 个游戏')).toBeTruthy();
+    expect(screen.getByText('找到 2 / 8 个游戏')).toBeTruthy();
     fireEvent.change(screen.getByRole('textbox', { name: '搜索游戏或别名' }), {
       target: { value: 'Title 7' },
     });
     expect(screen.getByText('找到 1 / 8 个游戏')).toBeTruthy();
-    expect(quick.getByRole('button', { name: 'Unity2' })).toBeTruthy();
+    expect(quick.getByRole('button', { name: 'Unity' })).toBeTruthy();
     fireEvent.change(screen.getByRole('textbox', { name: '搜索游戏或别名' }), {
       target: { value: '' },
     });
-    fireEvent.click(quick.getByRole('button', { name: 'Unity2' }));
+    const all = within(screen.getByRole('group', { name: '快捷筛选' })).getByRole('button', {
+      name: '全部',
+    });
+    expect(all.getAttribute('aria-pressed')).toBe('false');
+    fireEvent.click(all);
+    expect(quick.getByRole('button', { name: '其他' }).getAttribute('aria-pressed')).toBe('false');
+    expect(screen.getByRole('button', { name: 'Title 7' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Title 0' })).toBeTruthy();
+    fireEvent.click(quick.getByRole('button', { name: 'Unity' }));
     expect(screen.getByRole('button', { name: 'Title 0' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Title 7' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: '筛选 (1)' }));
     const filters = within(screen.getByRole('dialog', { name: '筛选游戏' }));
     fireEvent.click(filters.getByRole('checkbox', { name: '正在玩' }));
     fireEvent.click(filters.getByRole('button', { name: '完成' }));
-    fireEvent.click(quick.getByRole('button', { name: '全部8' }));
+    fireEvent.click(quick.getByRole('button', { name: 'Unity' }));
     expect(screen.queryByRole('button', { name: 'Title 0' })).toBeNull();
     expect(screen.getByRole('button', { name: '筛选 (1)' })).toBeTruthy();
+  });
+  it('combines play status shortcuts with engines and keeps the filter dialog in sync', async () => {
+    vi.mocked(api.games).mockResolvedValue([
+      {
+        ...game,
+        id: 'unplayed',
+        display_title: 'Unplayed Unity',
+        engine: 'Unity',
+        play_status: 'UNPLAYED',
+      },
+      {
+        ...game,
+        id: 'playing',
+        display_title: 'Playing Unity',
+        engine: 'Unity',
+        play_status: 'PLAYING',
+      },
+      {
+        ...game,
+        id: 'done',
+        display_title: 'Completed Godot',
+        engine: 'Godot',
+        play_status: 'COMPLETED',
+      },
+    ]);
+    render(<App />);
+    await screen.findByRole('button', { name: 'Unplayed Unity' });
+    const statuses = within(screen.getByRole('group', { name: '游玩状态快捷筛选' }));
+    const engines = within(screen.getByRole('group', { name: '引擎快捷筛选' }));
+    const all = within(screen.getByRole('group', { name: '快捷筛选' })).getByRole('button', {
+      name: '全部',
+    });
+    expect(all.getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(statuses.getByRole('button', { name: '正在玩' }));
+    expect(all.getAttribute('aria-pressed')).toBe('false');
+    expect(screen.getByRole('button', { name: 'Playing Unity' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Unplayed Unity' })).toBeNull();
+    fireEvent.click(engines.getByRole('button', { name: 'Godot' }));
+    expect(screen.queryByRole('button', { name: 'Playing Unity' })).toBeNull();
+    fireEvent.click(statuses.getByRole('button', { name: '已通关' }));
+    expect(screen.getByRole('button', { name: 'Completed Godot' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '筛选 (2)' }));
+    const dialog = within(screen.getByRole('dialog', { name: '筛选游戏' }));
+    expect((dialog.getByRole('checkbox', { name: '已通关' }) as HTMLInputElement).checked).toBe(
+      true,
+    );
+    fireEvent.click(dialog.getByRole('checkbox', { name: '已通关' }));
+    fireEvent.click(dialog.getByRole('checkbox', { name: '未启动' }));
+    fireEvent.click(dialog.getByRole('button', { name: '完成' }));
+    expect(statuses.getByRole('button', { name: '未启动' }).getAttribute('aria-pressed')).toBe(
+      'true',
+    );
+    fireEvent.click(all);
+    expect(all.getAttribute('aria-pressed')).toBe('true');
+    expect(engines.getByRole('button', { name: 'Godot' }).getAttribute('aria-pressed')).toBe(
+      'false',
+    );
+    expect(screen.getByRole('button', { name: 'Completed Godot' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Playing Unity' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Unplayed Unity' })).toBeTruthy();
+    fireEvent.click(engines.getByRole('button', { name: 'Godot' }));
+    expect(all.getAttribute('aria-pressed')).toBe('false');
+    fireEvent.click(all);
+    expect(screen.getByRole('button', { name: 'Playing Unity' })).toBeTruthy();
+    expect(all.getAttribute('aria-pressed')).toBe('true');
   });
   it('returns to a hidden invalid field without discarding edits in another tab', async () => {
     render(<App />);
@@ -782,7 +855,7 @@ describe('iteration interactions', () => {
     fireEvent.change(within(detail).getByRole('combobox', { name: /游戏引擎/ }), {
       target: { value: 'QSP' },
     });
-    expect(detail.querySelector('.game-mark')!.classList.contains('tone-qsp')).toBe(true);
+    expect(detail.querySelector('.engine-badge')!.classList.contains('tone-qsp')).toBe(true);
     showDetailTab('存档位置');
     fireEvent.click(within(detail).getByRole('button', { name: '添加存档目录…' }));
     await waitFor(() =>
@@ -1527,7 +1600,7 @@ describe('iteration interactions', () => {
     fireEvent.click(play);
     await screen.findByText('启动文件已被移动');
     expect((play as HTMLButtonElement).disabled).toBe(false);
-    expect(within(play.closest('tr')!).getByText('从未玩过')).toBeTruthy();
+    expect(within(play.closest('tr')!).getByText('未启动')).toBeTruthy();
     expect(screen.queryByRole('dialog')).toBeNull();
   });
   it.each([
@@ -1590,8 +1663,8 @@ describe('iteration interactions', () => {
     );
     await waitFor(() => {
       expect(
-        (within(reopened).getByRole('combobox', { name: /游玩状态/ }) as HTMLSelectElement).value,
-      ).toBe('PLAYING');
+        (within(reopened).getByRole('radio', { name: '正在玩' }) as HTMLInputElement).checked,
+      ).toBe(true);
       expect(
         (within(reopened).getByRole('button', { name: '保存资料' }) as HTMLButtonElement).disabled,
       ).toBe(true);
@@ -1602,7 +1675,7 @@ describe('iteration interactions', () => {
   });
 
   it.each(['DIRECT', 'MTOOL', 'EXTERNAL_PLAYER'] as const)(
-    'launches unsaved %s configuration without saving, then saves through the fixed header',
+    'launches unsaved %s configuration without saving, then saves through the fixed hero toolbar',
     async (mode) => {
       vi.mocked(api.startLibraryCheck).mockResolvedValue('draft-paths');
       vi.mocked(api.job).mockResolvedValue({
@@ -1663,7 +1736,7 @@ describe('iteration interactions', () => {
         target: { value: '新版' },
       });
       const save = within(detail).getByRole('button', { name: '保存资料' });
-      expect(save.closest('.modal-header')).toBeTruthy();
+      expect(save.closest('.detail-toolbar')).toBeTruthy();
       expect(detail.querySelector('.modal-body')?.contains(save)).toBe(false);
       fireEvent.click(within(detail).getByRole('button', { name: '启动' }));
       await within(detail).findByText('启动请求已发送。');
@@ -1686,8 +1759,8 @@ describe('iteration interactions', () => {
       ).toBe('未保存标题');
       await waitFor(() =>
         expect(
-          (within(detail).getByRole('combobox', { name: /游玩状态/ }) as HTMLSelectElement).value,
-        ).toBe('PLAYING'),
+          (within(detail).getByRole('radio', { name: '正在玩' }) as HTMLInputElement).checked,
+        ).toBe(true),
       );
       fireEvent.click(save);
       await within(detail).findByText('游戏资料已保存。');
@@ -2215,7 +2288,7 @@ describe('iteration interactions', () => {
     let errorDialog = await screen.findByRole('dialog', { name: '无法打开游戏目录' });
     expect(within(errorDialog).getByText(game.install_path)).toBeTruthy();
     expect(within(errorDialog).getByText(/游戏与存档文件保留/)).toBeTruthy();
-    expect(detail.querySelector('.inline-status')?.textContent).not.toContain('os error');
+    expect(detail.querySelector('.detail-feedback')?.textContent).not.toContain('os error');
     expect(api.removeGame).not.toHaveBeenCalled();
     fireEvent.click(within(errorDialog).getByRole('button', { name: '返回详情' }));
     expect(screen.queryByRole('dialog', { name: '无法打开游戏目录' })).toBeNull();
@@ -2389,9 +2462,7 @@ describe('iteration interactions', () => {
     vi.mocked(api.saveGame).mockImplementation(async (edit) => ({ ...game, ...edit }));
     render(<App />);
     fireEvent.click(await screen.findByRole('button', { name: game.display_title }));
-    fireEvent.change(screen.getByRole('combobox', { name: /游玩状态/ }), {
-      target: { value: 'COMPLETED' },
-    });
+    fireEvent.click(screen.getByRole('radio', { name: '已通关' }));
     fireEvent.click(screen.getByRole('button', { name: '保存资料' }));
     await waitFor(() =>
       expect(api.saveGame).toHaveBeenCalledWith(
@@ -2399,8 +2470,8 @@ describe('iteration interactions', () => {
       ),
     );
     await screen.findByText('游戏资料已保存。');
-    expect((screen.getByRole('combobox', { name: /游玩状态/ }) as HTMLSelectElement).value).toBe(
-      'COMPLETED',
+    expect((screen.getByRole('radio', { name: '已通关' }) as HTMLInputElement).checked).toBe(
+      true,
     );
   });
   it('applies state and engine filters together to the real library rows', async () => {

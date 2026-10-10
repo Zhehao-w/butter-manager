@@ -510,7 +510,7 @@ async fn preview_game_delete(
         if let Err(error) = imports.include_recovery_deletion(&id, &mut plan) {
             plan.blockers.push(error.to_string());
         }
-        if let Err(error) = running.ensure_idle(&game) {
+        if let Err(error) = running.ensure_tracked_idle(&game) {
             plan.blockers.push(error.to_string());
         }
         let mut stored = plans.lock().map_err(|_| "删除计划不可用")?;
@@ -562,7 +562,9 @@ async fn delete_game_files(
         if current != plan {
             return Err("目录或存档配置已变化，请重新检查删除预览".into());
         }
-        running.ensure_idle(&game).map_err(|e| e.to_string())?;
+        running
+            .ensure_tracked_idle(&game)
+            .map_err(|e| e.to_string())?;
         let mut report = crate::deletion::apply_files(&plan, crate::deletion::recycle);
         if report.error.is_none() {
             match database.remove_game(&id) {

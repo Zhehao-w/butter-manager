@@ -15,6 +15,7 @@ import folderIcon from './assets/lucide/folder.svg';
 import clockIcon from './assets/lucide/clock.svg';
 import tagIcon from './assets/lucide/tag.svg';
 import saveIcon from './assets/lucide/save.svg';
+import updateIcon from './assets/lucide/refresh-cw.svg';
 import arrowIcon from './assets/lucide/chevron-left.svg';
 import checkIcon from './assets/lucide/check.svg';
 import closeIcon from './assets/lucide/x.svg';
@@ -28,6 +29,7 @@ import cpuIcon from './assets/lucide/cpu.svg';
 import filterIcon from './assets/lucide/filter.svg';
 import swordsIcon from './assets/lucide/swords.svg';
 import wandIcon from './assets/lucide/wand-sparkles.svg';
+import flagIcon from './assets/lucide/flag.svg';
 
 // Unmodified Lucide 0.468.0 assets; see assets/lucide/README.md for upstream and licenses.
 const iconAssets = {
@@ -45,6 +47,7 @@ const iconAssets = {
   clock: clockIcon,
   tag: tagIcon,
   save: saveIcon,
+  update: updateIcon,
   arrow: arrowIcon,
   check: checkIcon,
   close: closeIcon,
@@ -58,6 +61,7 @@ const iconAssets = {
   filter: filterIcon,
   swords: swordsIcon,
   wand: wandIcon,
+  flag: flagIcon,
 };
 export type IconName = keyof typeof iconAssets;
 export function SearchField({
@@ -203,17 +207,19 @@ export function GameMark({ game, large = false }: { game: Game; large?: boolean 
 }
 export function CardTitle({
   icon,
+  iconSize = 20,
   children,
   description,
 }: {
   icon: IconName;
+  iconSize?: number;
   children: ReactNode;
   description?: string;
 }) {
   return (
     <div className="card-title">
       <span className="section-icon">
-        <Icon name={icon} />
+        <Icon name={icon} size={iconSize} />
       </span>
       <div>
         <h3>{children}</h3>
@@ -231,6 +237,7 @@ export function Modal({
   closeIconOnly = false,
   footer,
   headerActions,
+  hero,
   className = '',
 }: {
   variant?: 'detail' | 'confirm' | 'filters' | 'record';
@@ -238,6 +245,7 @@ export function Modal({
   closeIconOnly?: boolean;
   footer?: ReactNode;
   headerActions?: ReactNode;
+  hero?: ReactNode;
   className?: string;
   title: string;
   onClose: () => void;
@@ -252,7 +260,7 @@ export function Modal({
   return (
     <dialog
       ref={ref}
-      className={`modal ${variant ? `modal-${variant}` : ''} ${className}`}
+      className={`modal ${variant ? `modal-${variant}` : ''} ${hero ? 'modal-with-hero' : ''} ${className}`}
       aria-label={title}
       onCancel={(event) => {
         event.preventDefault();
@@ -261,7 +269,7 @@ export function Modal({
       }}
     >
       <div className="modal-header">
-        <h2>{title}</h2>
+        {!hero && <h2>{title}</h2>}
         <div className="modal-header-actions">
           {headerActions}
           {showClose && (
@@ -277,6 +285,7 @@ export function Modal({
           )}
         </div>
       </div>
+      {hero}
       <div className="modal-scroll-shell">
         <div
           className="modal-body"

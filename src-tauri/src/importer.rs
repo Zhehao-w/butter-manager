@@ -21,7 +21,7 @@ mod updater;
 #[cfg(test)]
 #[path = "updater_test.rs"]
 mod updater_test;
-pub use updater::{UpdateData, VersionConfig, VersionHistory};
+pub use updater::{GameIdentity, IdentityChange, UpdateData, VersionConfig, VersionHistory};
 fn default_preserve() -> bool {
     true
 }
@@ -289,7 +289,7 @@ impl Plan {
                 .iter()
                 .map(|i| ItemView {
                     selection: i.selection.clone(),
-                    target: i.target.clone(),
+                    target: updater::planned_target(i).to_owned(),
                     bytes: i.bytes,
                     files: i.files,
                     state: i.state.clone(),
@@ -387,6 +387,7 @@ impl ImportStore {
                                 | "update_cleanup"
                                 | "update_recycle"
                                 | "update_finish"
+                                | "update_identity"
                                 | "update_returned"
                                 | "update_returning"
                                 | "rollback_snapshot"
@@ -397,6 +398,7 @@ impl ImportStore {
                                 | "rollback_publish"
                                 | "rollback_commit"
                                 | "rollback_cleanup"
+                                | "rollback_identity"
                                 | "rolled_back"
                         ) {
                             return Err(invalid("导入项目状态无法识别"));
@@ -523,11 +525,15 @@ impl ImportStore {
                     !matches!(
                         item.state.as_str(),
                         "pending" | "completed" | "withdrawn" | "rolled_back"
-                    ) && [item.target.as_str(), item.selection.source.as_str()]
-                        .iter()
-                        .any(|path| {
-                            overlaps(Path::new(&game.install_path), Path::new(path)).unwrap_or(true)
-                        })
+                    ) && [
+                        item.target.as_str(),
+                        item.selection.source.as_str(),
+                        updater::planned_target(item),
+                    ]
+                    .iter()
+                    .any(|path| {
+                        overlaps(Path::new(&game.install_path), Path::new(path)).unwrap_or(true)
+                    })
                 })
             })
     }
@@ -614,6 +620,7 @@ impl ImportStore {
         };
         let mut sources: Vec<PathBuf> = vec![];
         let mut targets = HashSet::new();
+        let mut updating = HashSet::new();
         let mut matching = MatchIndex::new(games);
         job.stage("检查文件与生成导入更新计划", selections.len());
         for (mut selection, candidate) in selections.into_iter().zip(candidates) {
@@ -624,13 +631,6 @@ impl ImportStore {
                 .existing_id
                 .as_ref()
                 .and_then(|id| games.iter().find(|g| &g.id == id));
-            if let Some(game) = existing {
-                selection.target_name = Path::new(&game.install_path)
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or("")
-                    .to_owned();
-            }
             if selection.existing_id.is_some() && existing.is_none() {
                 blockers.push("关联的游戏已不存在，请重新选择".into());
             }
@@ -672,6 +672,20 @@ impl ImportStore {
             sources.push(source.clone());
             if !targets.insert(paths::path_key(&target)?) {
                 blockers.push("批量目标文件夹重名".into());
+            }
+            if let Some(game) = existing {
+                if !updating.insert(game.id.clone()) {
+                    blockers.push("同一游戏不能在一份计划中更新两次".into());
+                }
+                if paths::path_key(&target)? != paths::path_key(Path::new(&game.install_path))?
+                    && (exists(&target)?
+                        || games.iter().any(|g| {
+                            paths::path_key(Path::new(&g.install_path)).ok()
+                                == paths::path_key(&target).ok()
+                        }))
+                {
+                    blockers.push("新版本目标目录已存在；不会覆盖其他目录".into());
+                }
             }
             if existing.is_none()
                 && (exists(&target)?
@@ -769,7 +783,10 @@ impl ImportStore {
             plan.items.push(Item {
                 basic_transfer: true,
                 selection,
-                target: paths::path_text(&target)?,
+                target: existing.map_or_else(
+                    || paths::path_text(&target),
+                    |game| Ok(game.install_path.clone()),
+                )?,
                 bytes,
                 files,
                 state: "pending".into(),
@@ -1287,9 +1304,16 @@ fn validate_paths(plan: &Plan, item: &Item, journal: &Path) -> Result<()> {
     let root = checked_dir(Path::new(&plan.root))?;
     require_identity(&root, Some(&plan.root_id))?;
     folder_name(&item.selection.target_name)?;
-    if paths::path_key(&root.join(&item.selection.target_name))?
-        != paths::path_key(Path::new(&item.target))?
+    let expected = if item
+        .update
+        .as_ref()
+        .is_some_and(|u| u.identity_change.is_some())
     {
+        PathBuf::from(updater::staging_target(item))
+    } else {
+        root.join(&item.selection.target_name)
+    };
+    if paths::path_key(&expected)? != paths::path_key(Path::new(&item.target))? {
         return Err(invalid("计划目标路径不一致"));
     }
     let source = Path::new(&item.selection.source);

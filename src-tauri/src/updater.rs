@@ -3,6 +3,27 @@
 use super::*;
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct GameIdentity {
+    pub install_path: String,
+    pub display_title: String,
+    pub canonical_title: String,
+}
+impl GameIdentity {
+    pub fn from_game(game: &Game) -> Self {
+        Self {
+            install_path: game.install_path.clone(),
+            display_title: game.display_title.clone(),
+            canonical_title: game.canonical_title.clone(),
+        }
+    }
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct IdentityChange {
+    pub old: GameIdentity,
+    pub new: GameIdentity,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct VersionConfig {
     pub version: String,
     pub version_source: String,
@@ -69,6 +90,28 @@ pub struct UpdateData {
     incoming_saves: Vec<SaveSnapshot>,
     #[serde(default)]
     rollback_originals: Vec<SaveSnapshot>,
+    #[serde(default)]
+    pub identity_change: Option<IdentityChange>,
+}
+
+pub(super) fn planned_target(item: &Item) -> &str {
+    item.update
+        .as_ref()
+        .and_then(|u| u.identity_change.as_ref())
+        .filter(|_| !item.state.starts_with("rollback_") && item.state != "rolled_back")
+        .map_or(&item.target, |change| &change.new.install_path)
+}
+
+pub(super) fn staging_target(item: &Item) -> &str {
+    item.update
+        .as_ref()
+        .and_then(|u| u.identity_change.as_ref())
+        .filter(|_| {
+            !item.state.starts_with("rollback_")
+                && item.state != "completed"
+                && item.state != "rolled_back"
+        })
+        .map_or(&item.target, |change| &change.old.install_path)
 }
 
 fn check_old_version(path: &Path, update: &UpdateData, job: &Job) -> Result<()> {
@@ -546,11 +589,37 @@ pub(super) fn validate_record(id: &str, root: &str, index: usize, item: &Item) -
         || paths::path_key(Path::new(&update.quarantine))?
             != paths::path_key(&Path::new(root).join(format!(".butter-import-{id}-{index}")))?
         || paths::path_key(Path::new(&item.target))?
-            != paths::path_key(&Path::new(root).join(&item.selection.target_name))?
+            != paths::path_key(Path::new(staging_target(item)))?
     {
         return Err(invalid("更新记录身份或隔离目录不一致"));
     }
     uuid::Uuid::parse_str(&item.game_id).map_err(|_| invalid("更新游戏编号无效"))?;
+    if let Some(change) = &update.identity_change {
+        folder_name(&item.selection.target_name)?;
+        if paths::path_key(&Path::new(root).join(&item.selection.target_name))?
+            != paths::path_key(Path::new(&change.new.install_path))?
+        {
+            return Err(invalid("新版本目标名称与记录不一致"));
+        }
+        for location in [&change.old.install_path, &change.new.install_path] {
+            if Path::new(location).parent() != Some(Path::new(root)) {
+                return Err(invalid("更新改名目录必须在原游戏库内"));
+            }
+        }
+        if ![&change.old.install_path, &change.new.install_path]
+            .iter()
+            .any(|location| {
+                paths::path_key(Path::new(location)).ok()
+                    == paths::path_key(Path::new(&item.target)).ok()
+            })
+        {
+            return Err(invalid("更新目录与改名记录不一致"));
+        }
+    } else if paths::path_key(Path::new(&item.target))?
+        != paths::path_key(&Path::new(root).join(&item.selection.target_name))?
+    {
+        return Err(invalid("更新目标路径与名称不一致"));
+    }
     if update.old_id.is_empty() || !update.lightweight && update.old_digest.len() != 16 {
         return Err(invalid("更新缺少旧版本身份校验"));
     }
@@ -564,6 +633,7 @@ pub(super) fn validate_record(id: &str, root: &str, index: usize, item: &Item) -
             | "update_cleanup"
             | "update_recycle"
             | "update_finish"
+            | "update_identity"
             | "completed"
     ) && (item.payload_id.is_none() || !update.lightweight && update.ready_digest.is_none())
     {
@@ -579,6 +649,7 @@ pub(super) fn validate_record(id: &str, root: &str, index: usize, item: &Item) -
             | "rollback_publish"
             | "rollback_commit"
             | "rollback_cleanup"
+            | "rollback_identity"
             | "rolled_back"
     ) && !update.rollback_started
     {
@@ -590,15 +661,37 @@ pub(super) fn validate_record(id: &str, root: &str, index: usize, item: &Item) -
             | "rollback_publish"
             | "rollback_commit"
             | "rollback_cleanup"
+            | "rollback_identity"
             | "rolled_back"
     ) && (update.rollback_id.is_none() || !update.lightweight && update.ready_digest.is_none())
     {
         return Err(invalid("回退缺少版本身份校验"));
     }
-    for save in update.saves.iter().chain(update.rollback_saves.iter()) {
+    for (save, base) in update
+        .saves
+        .iter()
+        .map(|s| {
+            (
+                s,
+                update
+                    .identity_change
+                    .as_ref()
+                    .map_or(item.target.as_str(), |c| c.old.install_path.as_str()),
+            )
+        })
+        .chain(update.rollback_saves.iter().map(|s| {
+            (
+                s,
+                update
+                    .identity_change
+                    .as_ref()
+                    .map_or(item.target.as_str(), |c| c.new.install_path.as_str()),
+            )
+        }))
+    {
         if let Some(relative) = &save.relative {
             let relative = paths::relative_path(relative)?;
-            if paths::path_key(&Path::new(&item.target).join(relative))?.replace('\\', "/")
+            if paths::path_key(&Path::new(base).join(relative))?.replace('\\', "/")
                 != paths::path_key(Path::new(&save.source))?.replace('\\', "/")
             {
                 return Err(invalid("更新存档路径越界"));
@@ -761,6 +854,173 @@ fn validate_launch(target: &Path, config: &VersionConfig) -> Result<()> {
 }
 
 impl ImportStore {
+    fn finish_identity(
+        &self,
+        plan: &mut Plan,
+        index: usize,
+        job: &Job,
+        database: &Arc<Mutex<Database>>,
+    ) -> Result<()> {
+        let item = plan.items[index].clone();
+        let update = item
+            .update
+            .as_ref()
+            .ok_or_else(|| invalid("缺少更新记录"))?;
+        let change = update
+            .identity_change
+            .as_ref()
+            .ok_or_else(|| invalid("缺少改名记录"))?;
+        let rollback = item.state == "rollback_identity";
+        let (from, to) = if rollback {
+            (&change.new, &change.old)
+        } else {
+            (&change.old, &change.new)
+        };
+        let expected = if rollback {
+            &update.old
+        } else {
+            &configuration(&item)?
+        };
+        let expected_id = if rollback {
+            update.rollback_id.as_deref()
+        } else {
+            item.payload_id.as_deref()
+        };
+        let operation = format!("{}:{index}", plan.id);
+        validate_record(&plan.id, &plan.root, index, &item)?;
+        require_identity(Path::new(&plan.root), Some(&plan.root_id))?;
+        {
+            let db = database.lock().unwrap();
+            let actual = GameIdentity::from_game(&db.game(&item.game_id)?);
+            if actual != *from && actual != *to {
+                return Err(invalid("名称或目录已被手动修改，不能完成导入改名"));
+            }
+            if db.version_config(&item.game_id)? != *expected
+                || db.version_operation(&operation)?.as_deref()
+                    != Some(if rollback { "rolled_back" } else { "committed" })
+            {
+                return Err(invalid("导入版本与当前记录不一致，不能改名"));
+            }
+            if db
+                .registered_id(Path::new(&to.install_path))?
+                .is_some_and(|owner| owner != item.game_id)
+            {
+                return Err(invalid("改名目标已在库中登记"));
+            }
+        }
+        let source = Path::new(&from.install_path);
+        let target = Path::new(&to.install_path);
+        stopped(job)?;
+        check_stage_idle(
+            &[source.to_path_buf(), target.to_path_buf()],
+            update.lightweight,
+        )?;
+        if paths::path_key(source)? == paths::path_key(target)? {
+            require_identity(source, expected_id)?;
+        } else if exists(source)? {
+            require_identity(source, expected_id)?;
+            if exists(target)? {
+                return Err(invalid("改名目标已存在，不会覆盖"));
+            }
+            rename_new(source, target)?;
+        } else {
+            // A crash after the rename is recoverable by the persisted directory identity.
+            require_identity(target, expected_id)?;
+        }
+        database
+            .lock()
+            .unwrap()
+            .write_import_identity(&item.game_id, from, to)?;
+        plan.items[index].target = to.install_path.clone();
+        self.checkpoint(
+            plan,
+            index,
+            if rollback { "rolled_back" } else { "completed" },
+        )
+    }
+
+    /// Explicit maintenance for completed legacy imports; never runs automatically on startup.
+    /// Uses the same journaled rename/metadata transition as new imports, without game copies.
+    pub fn repair_completed_update_names(
+        &self,
+        database: &Arc<Mutex<Database>>,
+    ) -> Result<Vec<String>> {
+        self.ensure_recovery_clear()?;
+        let mut records = self.views();
+        records.sort_by(|a, b| a.id.cmp(&b.id));
+        let mut repaired = vec![];
+        for record in records {
+            let mut plan = self.get(&record.id)?;
+            for index in 0..plan.items.len() {
+                let item = plan.items[index].clone();
+                if item.state == "update_identity" {
+                    let recovery = Job::recovery(plan.root.clone());
+                    self.finish_identity(&mut plan, index, &recovery, database)?;
+                    repaired.push(plan.items[index].selection.title.clone());
+                    continue;
+                }
+                if item.state != "completed"
+                    || item
+                        .update
+                        .as_ref()
+                        .is_none_or(|u| u.identity_change.is_some())
+                {
+                    continue;
+                }
+                let db = database.lock().unwrap();
+                let operation = format!("{}:{index}", plan.id);
+                if db.ensure_latest_version(&item.game_id, &operation).is_err() {
+                    continue;
+                }
+                let game = db.game(&item.game_id)?;
+                if db.version_config(&item.game_id)? != configuration(&item)?
+                    || paths::path_key(Path::new(&game.install_path))?
+                        != paths::path_key(Path::new(&item.target))?
+                {
+                    return Err(invalid(format!(
+                        "{} 的版本或目录已经改变，未修复",
+                        game.display_title
+                    )));
+                }
+                let name = Path::new(&item.selection.source)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .ok_or_else(|| invalid("来源目录名称无效"))?;
+                folder_name(name)?;
+                let target = Path::new(&plan.root).join(name);
+                if paths::path_key(&target)? != paths::path_key(Path::new(&item.target))?
+                    && (exists(&target)? || db.registered_id(&target)?.is_some())
+                {
+                    return Err(invalid(format!("修复目标已存在：{}", target.display())));
+                }
+                self.active_version_identity(&item, &db)?;
+                drop(db);
+                plan.items[index].selection.target_name = name.into();
+                plan.items[index].update.as_mut().unwrap().identity_change = Some(IdentityChange {
+                    old: GameIdentity::from_game(&game),
+                    new: GameIdentity {
+                        install_path: paths::path_text(&target)?,
+                        display_title: item.selection.title.clone(),
+                        canonical_title: item.selection.title.clone(),
+                    },
+                });
+                plan.status = "running".into();
+                self.checkpoint(&mut plan, index, "update_identity")?;
+                let recovery = Job::recovery(plan.root.clone());
+                self.finish_identity(&mut plan, index, &recovery, database)?;
+                repaired.push(plan.items[index].selection.title.clone());
+            }
+            if plan
+                .items
+                .iter()
+                .all(|i| matches!(i.state.as_str(), "completed" | "rolled_back" | "withdrawn"))
+            {
+                plan.status = "completed".into();
+                self.save(&plan)?;
+            }
+        }
+        Ok(repaired)
+    }
     pub(super) fn recycled_versions(&self) -> Result<HashMap<String, PathBuf>> {
         #[cfg(test)]
         let paths = {
@@ -1215,6 +1475,7 @@ impl ImportStore {
         if !selection.saves_confirmed {
             return Err(invalid("请确认已有游戏的存档范围和迁移方式"));
         }
+        folder_name(&selection.target_name)?;
         let old = crate::db::config_from_game(game);
         validate_update_launch(
             Path::new(&selection.source),
@@ -1297,6 +1558,14 @@ impl ImportStore {
             mtool_loader_launch_scoped: true,
             incoming_saves,
             rollback_originals: vec![],
+            identity_change: Some(IdentityChange {
+                old: GameIdentity::from_game(game),
+                new: GameIdentity {
+                    install_path: paths::path_text(&root.join(&selection.target_name))?,
+                    display_title: selection.title.trim().into(),
+                    canonical_title: selection.title.trim().into(),
+                },
+            }),
         })
     }
     fn check_update_record(
@@ -1328,6 +1597,11 @@ impl ImportStore {
         job: &Job,
         database: &Arc<Mutex<Database>>,
     ) -> Result<()> {
+        if plan.items[index].state == "update_identity"
+            || plan.items[index].state == "rollback_identity"
+        {
+            return self.finish_identity(plan, index, job, database);
+        }
         if plan.items[index].state == "pending" {
             let actual = database
                 .lock()
@@ -1671,7 +1945,18 @@ impl ImportStore {
                 .as_mut()
                 .unwrap()
                 .rollback_available = self.recycled_version(&update.old_id)?.is_some();
-            self.checkpoint(plan, index, "completed")?;
+            if plan.items[index]
+                .update
+                .as_ref()
+                .unwrap()
+                .identity_change
+                .is_some()
+            {
+                self.checkpoint(plan, index, "update_identity")?;
+                self.finish_identity(plan, index, job, database)?;
+            } else {
+                self.checkpoint(plan, index, "completed")?;
+            }
         }
         Ok(())
     }
@@ -1724,6 +2009,13 @@ impl ImportStore {
         index: usize,
         database: &Arc<Mutex<Database>>,
     ) -> Result<()> {
+        if matches!(
+            plan.items[index].state.as_str(),
+            "update_identity" | "rollback_identity"
+        ) {
+            let recovery = Job::recovery(plan.root.clone());
+            return self.finish_identity(plan, index, &recovery, database);
+        }
         if plan.items[index].update.as_ref().unwrap().rollback_started {
             let item = plan.items[index].clone();
             let container = stage_path(plan, index);
@@ -1890,6 +2182,9 @@ impl ImportStore {
         job: &Job,
         database: &Arc<Mutex<Database>>,
     ) -> Result<()> {
+        if plan.items[index].state == "rollback_identity" {
+            return self.finish_identity(plan, index, job, database);
+        }
         let item = plan.items[index].clone();
         let update = item.update.as_ref().unwrap();
         let operation = format!("{}:{index}", plan.id);
@@ -2110,7 +2405,18 @@ impl ImportStore {
                 .as_mut()
                 .unwrap()
                 .rollback_available = false;
-            self.checkpoint(plan, index, "rolled_back")?;
+            if plan.items[index]
+                .update
+                .as_ref()
+                .unwrap()
+                .identity_change
+                .is_some()
+            {
+                self.checkpoint(plan, index, "rollback_identity")?;
+                self.finish_identity(plan, index, job, database)?;
+            } else {
+                self.checkpoint(plan, index, "rolled_back")?;
+            }
         }
         Ok(())
     }

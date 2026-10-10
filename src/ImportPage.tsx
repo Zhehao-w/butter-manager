@@ -102,8 +102,10 @@ const stateNames: Record<string, string> = {
   update_cleanup: '已更新 · 清理来源',
   update_recycle: '旧版本移入回收站',
   update_finish: '清理临时文件',
+  update_identity: '更新名称与目录',
   rollback_retrieve: '从回收站恢复',
   rollback_cleanup: '清理临时文件',
+  rollback_identity: '恢复原名称与目录',
   update_returning: '恢复旧版本',
   update_returned: '旧版本已恢复',
   rollback_snapshot: '保存当前存档',
@@ -835,7 +837,7 @@ export function ImportPage({
                             </p>
                             {item.state === 'completed' && item.update.rollback_available && (
                               <button
-                                className="danger danger-solid"
+                                className="warning"
                                 disabled={
                                   disabled ||
                                   !!recoveryIssues.length ||
@@ -875,16 +877,16 @@ export function ImportPage({
                           <label>
                             游戏名称
                             <input
-                              value={existing?.display_title || choice.title}
-                              disabled={disabled || !!existing}
+                              value={choice.title}
+                              disabled={disabled}
                               onChange={(e) => update(source, { title: e.target.value })}
                             />
                           </label>
                           <label>
                             目标文件夹
                             <input
-                              value={existing ? leaf(existing.install_path) : choice.target_name}
-                              disabled={disabled || !!existing}
+                              value={choice.target_name}
+                              disabled={disabled}
                               onChange={(e) => update(source, { target_name: e.target.value })}
                             />
                           </label>
@@ -1261,6 +1263,7 @@ export function ImportPage({
               ) : !['completed', 'withdrawn'].includes(plan.status) &&
                 !plan.items.some((item) => item.state.startsWith('rollback_')) ? (
                 <button
+                  className="warning"
                   disabled={locked || !!recoveryIssues.length}
                   onClick={() => setConfirmation('withdraw')}
                 >
@@ -1483,7 +1486,7 @@ export function ImportPage({
           <div className="confirmation-actions">
             <button onClick={() => setConfirmation(null)}>取消</button>
             <button
-              className={confirmation === 'rollback' ? 'danger danger-solid' : 'primary'}
+              className={confirmation === 'move' ? 'primary' : 'warning'}
               onClick={() => {
                 const mode = confirmation;
                 setConfirmation(null);
@@ -1514,7 +1517,7 @@ export function ImportPage({
           title="关联已有游戏"
           onClose={() => setLinkSource(null)}
         >
-          <p>选择要更新的游戏。编号、名称与历史保留；生成计划后再确认执行。</p>
+          <p>选择要更新的游戏。编号与历史保留，名称和目录默认采用新版本，可在生成计划前修改。</p>
           <SearchField
             label="关联游戏搜索"
             placeholder="搜索名称、别名或路径"

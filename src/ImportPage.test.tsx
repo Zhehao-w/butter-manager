@@ -391,10 +391,10 @@ describe('batch import flow', () => {
     fireEvent.click(screen.getByRole('button', { name: '添加文件夹' }));
     await screen.findByRole('radiogroup', { name: '存档处理' });
     expect((screen.getByRole('textbox', { name: '目标文件夹' }) as HTMLInputElement).value).toBe(
-      'Game',
+      'Game v1.2',
     );
     expect((screen.getByRole('textbox', { name: '游戏名称' }) as HTMLInputElement).disabled).toBe(
-      true,
+      false,
     );
     const select = screen.getByRole('checkbox', { name: '选择 Game v1.2' });
     expect((select as HTMLInputElement).checked).toBe(false);
@@ -412,11 +412,19 @@ describe('batch import flow', () => {
       false,
     );
     expect(screen.getByText('不迁移内部旧存档，使用新包存档；外部存档不操作。')).toBeTruthy();
+    fireEvent.change(screen.getByRole('textbox', { name: '游戏名称' }), {
+      target: { value: '新名称 v1.2' },
+    });
+    fireEvent.change(screen.getByRole('textbox', { name: '目标文件夹' }), {
+      target: { value: '新目录 v1.2' },
+    });
     fireEvent.click(screen.getByRole('button', { name: '生成导入与更新计划（1）' }));
     await waitFor(() =>
       expect(api.importPlan).toHaveBeenCalledWith('analysis', [
         expect.objectContaining({
           existing_id: 'old',
+          title: '新名称 v1.2',
+          target_name: '新目录 v1.2',
           preserve_saves: false,
           saves_confirmed: true,
         }),

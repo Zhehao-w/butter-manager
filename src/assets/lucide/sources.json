@@ -133,5 +133,15 @@
     "file": "wand-sparkles.svg",
     "source": "https://raw.githubusercontent.com/lucide-icons/lucide/0.468.0/icons/wand-sparkles.svg",
     "sha256": "d73067ff2463118d4f11f9c532e7162be45f96835b966b4fc89977ca47a7317d"
+  },
+  {
+    "file": "refresh-cw.svg",
+    "source": "https://raw.githubusercontent.com/lucide-icons/lucide/0.468.0/icons/refresh-cw.svg",
+    "sha256": "2e10dd403c85a24f163d59fc6151aa21147fe9402e1305dfc8979208caee8944"
+  },
+  {
+    "file": "flag.svg",
+    "source": "https://raw.githubusercontent.com/lucide-icons/lucide/0.468.0/icons/flag.svg",
+    "sha256": "73d58bafed0501f646bdbb015cbb4de22142836f7ff1f60c1c6bd3b0b72d81db"
   }
 ]

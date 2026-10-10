@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { launchLabel } from './qsp';
-import { Icon, Modal } from './ui';
+import { engineTone, Icon, Modal } from './ui';
 import type { IconName } from './ui';
 import type { Game, PlayStatus } from './types';
 
@@ -74,6 +74,81 @@ export function matchesFilters(game: Game, filters: GameFilters) {
     (!filters.statuses.length || filters.statuses.includes(status)) &&
     (!filters.engines.length || filters.engines.includes(game.engine)) &&
     (!filters.modes.length || filters.modes.includes(launchLabel(game)))
+  );
+}
+export function engineQuickGroups(games: Game[]) {
+  const counts = new Map<string, number>();
+  for (const game of games) counts.set(game.engine, (counts.get(game.engine) ?? 0) + 1);
+  const popular = [...counts]
+    .filter(([engine]) => engine !== 'Unknown')
+    .sort(([a, ac], [b, bc]) => bc - ac || a.localeCompare(b, 'zh-CN'))
+    .slice(0, 7)
+    .map(([engine, count]) => ({ engine, count }));
+  return {
+    popular,
+    otherCount: games.length - popular.reduce((sum, group) => sum + group.count, 0),
+  };
+}
+export function EngineQuickFilters({
+  games,
+  engines,
+  other,
+  onChange,
+}: {
+  games: Game[];
+  engines: string[];
+  other: boolean;
+  onChange: (engines: string[], other: boolean) => void;
+}) {
+  const { popular, otherCount } = useMemo(() => engineQuickGroups(games), [games]);
+  const options = [
+    {
+      key: 'all',
+      label: '全部',
+      count: games.length,
+      icon: 'library' as IconName,
+      active: !other && !engines.length,
+      engines: [],
+      other: false,
+    },
+    ...popular.map(({ engine, count }) => ({
+      key: `engine:${engine}`,
+      label: engine,
+      count,
+      icon: filterAppearance('engines', engine).icon,
+      active: !other && engines.length === 1 && engines[0] === engine,
+      engines: [engine],
+      other: false,
+    })),
+    {
+      key: 'other',
+      label: '其他',
+      count: otherCount,
+      icon: 'grid' as IconName,
+      active: other,
+      engines: [],
+      other: true,
+    },
+  ];
+  return (
+    <div className="engine-quick-filters" role="group" aria-label="引擎快捷筛选">
+      {options.map((option) => (
+        <button
+          key={option.key}
+          className={
+            option.key === 'all' ? undefined : `tone-${engineTone(option.engines[0] ?? 'Unknown')}`
+          }
+          type="button"
+          aria-pressed={option.active}
+          disabled={!option.count && !option.active}
+          onClick={() => onChange(option.engines, option.other)}
+        >
+          <Icon name={option.icon} size={14} />
+          {option.label}
+          <span className="quick-filter-count">{option.count}</span>
+        </button>
+      ))}
+    </div>
   );
 }
 export function LibraryFilters({

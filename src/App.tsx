@@ -15,6 +15,7 @@ import {
   Icon,
   Modal,
   GameMark,
+  engineTone,
   CardTitle,
   PageHeader,
   CodeBlock,
@@ -57,6 +58,8 @@ import {
   PlayBadge,
   LaunchBadge,
   LibraryFilters,
+  EngineQuickFilters,
+  engineQuickGroups,
   emptyFilters,
   matchesFilters,
   playLabels,
@@ -80,7 +83,7 @@ const statusText: Record<string, string> = {
 };
 type SettingsSection = 'library' | 'mtool';
 type Choice = ScanChoice;
-const LIBRARY_ROW_HEIGHT = 88;
+const LIBRARY_ROW_HEIGHT = 72;
 const LIBRARY_CARD_HEIGHT = 288;
 
 function launchBlockReason(game: Game, check?: LibraryPathCheck): string | undefined {
@@ -158,6 +161,11 @@ export default function App() {
     'played-desc',
   ]);
   const [filters, setFilters] = useState(emptyFilters);
+  const [otherEnginesOnly, setOtherEnginesOnly] = useState(false);
+  const popularEngines = useMemo(
+    () => new Set(engineQuickGroups(games).popular.map((group) => group.engine)),
+    [games],
+  );
   const libraryEpoch = useRef(0);
   const currentScanId = useRef<string | null>(null);
   const [scanSearch, setScanSearch] = useState('');
@@ -199,7 +207,7 @@ export default function App() {
   useLayoutEffect(() => {
     viewScroll.current.library = 0;
     if (libraryScroll.current) libraryScroll.current.scrollTop = 0;
-  }, [search, sort, issuesOnly, filters]);
+  }, [search, sort, issuesOnly, filters, otherEnginesOnly]);
   const [scanId, setScanId] = useState<string | null>(null);
   const [taskId, setTaskId] = useState<string | null>(null);
   const [showCheckBanner, setShowCheckBanner] = useState(false);
@@ -549,6 +557,7 @@ export default function App() {
         games.filter(
           (game) =>
             matchesFilters(game, filters) &&
+            (!otherEnginesOnly || !popularEngines.has(game.engine)) &&
             (!issuesOnly || (!!pathChecks[game.id] && pathChecks[game.id].state !== 'available')) &&
             [game.display_title, game.canonical_title, game.install_path, ...game.aliases].some(
               (s) => s.normalize('NFKC').toLocaleLowerCase().includes(needle),
@@ -556,7 +565,7 @@ export default function App() {
         ),
         sort,
       ),
-    [games, needle, sort, pathChecks, issuesOnly, filters],
+    [games, needle, sort, pathChecks, issuesOnly, filters, otherEnginesOnly, popularEngines],
   );
   const [cardColumns, setCardColumns] = useState(1);
   useLayoutEffect(() => {
@@ -820,7 +829,14 @@ export default function App() {
                   </button>
                 </div>
                 <div className="header-actions library-controls">
-                  <LibraryFilters games={games} value={filters} onChange={setFilters} />
+                  <LibraryFilters
+                    games={games}
+                    value={filters}
+                    onChange={(value) => {
+                      setFilters(value);
+                      setOtherEnginesOnly(false);
+                    }}
+                  />
                   <button
                     aria-pressed={issuesOnly}
                     className={`issues-filter ${issuesOnly ? 'active' : ''}`}
@@ -843,6 +859,15 @@ export default function App() {
                   </SortField>
                 </div>
               </div>
+              <EngineQuickFilters
+                games={games}
+                engines={filters.engines}
+                other={otherEnginesOnly}
+                onChange={(engines, other) => {
+                  setFilters((current) => ({ ...current, engines }));
+                  setOtherEnginesOnly(other);
+                }}
+              />
               <div
                 className="library-content"
                 style={
@@ -1111,6 +1136,7 @@ export default function App() {
                   filters.statuses.length ||
                   filters.engines.length ||
                   filters.modes.length ||
+                  otherEnginesOnly ||
                   issuesOnly
                     ? `找到 ${filtered.length} / ${games.length} 个游戏`
                     : `共 ${games.length} 个游戏`}
@@ -2196,6 +2222,27 @@ function GameDetail({
 }) {
   const [draft, setDraft] = useState<GameEdit>({ ...game });
   const formId = useId();
+  const detailTabs = [
+    ['basic', '基础信息', 'info'],
+    ['launch', '启动配置', 'play'],
+    ['saves', '存档位置', 'save'],
+    ['aliases', '别名管理', 'tag'],
+    ['records', '记录与管理', 'clock'],
+  ] as const;
+  type DetailTab = (typeof detailTabs)[number][0];
+  const [detailTab, setDetailTab] = useState<DetailTab>('basic');
+  function selectDetailTab(tab: DetailTab) {
+    setDetailTab(tab);
+    const body = document.getElementById(formId)?.closest('.modal-body');
+    if (body) body.scrollTop = 0;
+  }
+  const panelProps = (tab: DetailTab) => ({
+    id: `${formId}-${tab}-panel`,
+    role: 'tabpanel',
+    'aria-labelledby': `${formId}-${tab}-tab`,
+    hidden: detailTab !== tab,
+    'data-detail-tab': tab,
+  });
   const previousStatus = useRef(game.play_status);
   useEffect(() => {
     const old = previousStatus.current;
@@ -2295,6 +2342,8 @@ function GameDetail({
       JSON.stringify(game.external_player ?? null) ||
     aliases !== game.aliases.join('\n') ||
     saves !== game.save_paths.join('\n');
+  const detailStatus =
+    message || analysisNotice || (dirty ? '资料尚未保存；启动使用当前配置。' : '');
   const close = () => {
     if (busy) return;
     if (dirty) setConfirmClose(true);
@@ -2379,13 +2428,15 @@ function GameDetail({
             ))}
           </div>
           <div className="card-badges">
-            <span className="mode">
+            <span className="mode detail-version-badge">
               <Icon name="tag" size={14} />
               {displayVersion(game.current_version)}
             </span>
             <LaunchBadge game={{ ...game, ...configuration }} />
             <PlayBadge game={game} />
-            <span className="mode">{draft.engine === 'Unknown' ? '引擎未识别' : draft.engine}</span>
+            <span className={`mode engine-badge tone-${engineTone(draft.engine)}`}>
+              {draft.engine === 'Unknown' ? '引擎未识别' : draft.engine}
+            </span>
           </div>
           <div className="record-times">
             <p>入库时间：{formatTime(game.created_at)}</p>
@@ -2427,9 +2478,21 @@ function GameDetail({
           </button>
           <button
             disabled={busy || launching || analysisLocked}
-            onClick={() => void run(onAnalyze)}
+            onClick={() => {
+              selectDetailTab('launch');
+              void run(onAnalyze);
+            }}
           >
             分析启动配置
+          </button>
+          <button
+            type="button"
+            className="save-editor-entry"
+            disabled={busy || confirmClose}
+            onClick={() => setSaveEditorOpen(true)}
+          >
+            <Icon name="save" size={16} />
+            编辑存档
           </button>
         </div>
       </div>
@@ -2446,7 +2509,14 @@ function GameDetail({
           onBusy={setMaintenanceBusy}
         />
       )}
-      <p className="path">{game.install_path}</p>
+      <div className="detail-meta-row">
+        <p className="path detail-install-path" title={game.install_path}>
+          {game.install_path}
+        </p>
+        <div className="inline-status" role="status" title={detailStatus}>
+          {detailStatus}
+        </div>
+      </div>
       <PathBadge check={pathCheck} />
       {pathCheck && pathCheck.state !== 'available' && (
         <p className="muted">{pathCheck.message}。可在下方关联新目录或移除库记录。</p>
@@ -2454,11 +2524,50 @@ function GameDetail({
       {analyzing && analysisJob && (
         <TaskProgress page={analysisJob} onCancel={() => void run(onCancelAnalysis)} />
       )}
-      <div className="inline-status" role="status">
-        {message || analysisNotice || (dirty ? '资料尚未保存；启动使用当前配置。' : '\u00a0')}
+      <div className="detail-tabs" role="tablist" aria-label="游戏详情分类">
+        {detailTabs.map(([key, label, icon], index) => (
+          <button
+            type="button"
+            key={key}
+            id={`${formId}-${key}-tab`}
+            role="tab"
+            aria-selected={detailTab === key}
+            aria-controls={`${formId}-${key}-panel`}
+            tabIndex={detailTab === key ? 0 : -1}
+            onClick={() => selectDetailTab(key)}
+            onKeyDown={(event) => {
+              const offset = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
+              if (!offset && event.key !== 'Home' && event.key !== 'End') return;
+              event.preventDefault();
+              const next =
+                event.key === 'Home'
+                  ? 0
+                  : event.key === 'End'
+                    ? detailTabs.length - 1
+                    : (index + offset + detailTabs.length) % detailTabs.length;
+              const tab = detailTabs[next][0];
+              selectDetailTab(tab);
+              document.getElementById(`${formId}-${tab}-tab`)?.focus();
+            }}
+          >
+            <Icon name={icon} size={16} />
+            {label}
+          </button>
+        ))}
       </div>
       <form
         id={formId}
+        onInvalidCapture={(event) => {
+          const panel = (event.target as HTMLElement).closest<HTMLElement>('[data-detail-tab]');
+          if (panel) {
+            event.preventDefault();
+            selectDetailTab(panel.dataset.detailTab as DetailTab);
+            const input = event.target as HTMLElement;
+            const details = input.closest('details');
+            if (details) details.open = true;
+            requestAnimationFrame(() => input.focus());
+          }
+        }}
         onSubmit={(event) => {
           event.preventDefault();
           void run(async () => {
@@ -2473,7 +2582,7 @@ function GameDetail({
       >
         <fieldset disabled={busy || launching || confirmClose}>
           <div className="detail-card-grid">
-            <section className="panel detail-card">
+            <section className="panel detail-card" {...panelProps('basic')}>
               <CardTitle icon="info">基础信息</CardTitle>
               <div className="form-grid">
                 <label>
@@ -2529,7 +2638,7 @@ function GameDetail({
                 </label>
               </div>
             </section>
-            <section className="panel detail-card">
+            <section className="panel detail-card" {...panelProps('launch')}>
               <CardTitle icon="play">启动配置</CardTitle>
               {(analysis?.qsp || draft.engine === 'QSP') &&
                 draft.launch_type !== 'EXTERNAL_PLAYER' && (
@@ -2665,8 +2774,53 @@ function GameDetail({
                   />
                 )}
               </div>
+
+              {analysis && (
+                <details className="analysis" open>
+                  <summary>查看分析详情</summary>
+                  <p>
+                    识别引擎：{analysis.engine === 'Unknown' ? '未识别' : analysis.engine}{' '}
+                    {analysis.status === 'ready' &&
+                      analysis.engine !== 'Unknown' &&
+                      analysis.engine !== draft.engine && (
+                        <button
+                          type="button"
+                          disabled={busy || launching || analyzing}
+                          onClick={() => field('engine', analysis.engine)}
+                        >
+                          使用识别引擎
+                        </button>
+                      )}
+                  </p>
+                  <Warnings warnings={analysis.warnings} />
+                  <ul>
+                    {analysis.executables.map((exe) => (
+                      <li key={exe.relative_path}>
+                        {exe.relative_path} · {exe.architecture}
+                      </li>
+                    ))}
+                  </ul>
+                  <BatResults candidate={analysis} onUse={useRecipe} disabled={busy || launching} />
+                </details>
+              )}
+              {game.launch_type === 'MTOOL' && (
+                <div className="analysis">
+                  <button
+                    type="button"
+                    disabled={busy || dirty}
+                    onClick={() =>
+                      void run(async () => {
+                        setDebugText(await api.debugBat(game.id));
+                      })
+                    }
+                  >
+                    预览调试 BAT
+                  </button>
+                  {debugText && <CodeBlock>{debugText}</CodeBlock>}
+                </div>
+              )}
             </section>
-            <section className="panel detail-card">
+            <section className="panel detail-card" {...panelProps('aliases')}>
               <CardTitle icon="tag">别名管理</CardTitle>
               <div className="form-grid">
                 <label className="full">
@@ -2681,7 +2835,7 @@ function GameDetail({
                 </label>
               </div>
             </section>
-            <section className="panel detail-card">
+            <section className="panel detail-card" {...panelProps('saves')}>
               <CardTitle icon="save">存档位置</CardTitle>
               <div className="form-grid">
                 <label className="full">
@@ -2750,7 +2904,7 @@ function GameDetail({
               <option key={exe.relative_path} value={exe.relative_path} />
             ))}
           </datalist>
-          <div className="footer-actions">
+          <div className="footer-actions" hidden={detailTab !== 'basic'}>
             <span className="muted">
               版本来源：
               {(
@@ -2765,94 +2919,54 @@ function GameDetail({
           </div>
         </fieldset>
       </form>
-      <GameMaintenance
-        game={game}
-        locked={dirty || launching || analysisLocked}
-        onBusy={setMaintenanceBusy}
-        onRemoved={onRemoved}
-        onDeleted={onDeleted}
-        onRelocated={(saved) => {
-          setDraft({ ...saved });
-          setAliases(saved.aliases.join('\n'));
-          setSaves(saved.save_paths.join('\n'));
-          onRelocated(saved);
-        }}
-      />
-      {analysis && (
-        <details className="analysis" open>
-          <summary>查看分析详情</summary>
-          <p>
-            识别引擎：{analysis.engine === 'Unknown' ? '未识别' : analysis.engine}{' '}
-            {analysis.status === 'ready' &&
-              analysis.engine !== 'Unknown' &&
-              analysis.engine !== draft.engine && (
-                <button
-                  type="button"
-                  disabled={busy || launching || analyzing}
-                  onClick={() => field('engine', analysis.engine)}
-                >
-                  使用识别引擎
-                </button>
-              )}
-          </p>
-          <Warnings warnings={analysis.warnings} />
-          <ul>
-            {analysis.executables.map((exe) => (
-              <li key={exe.relative_path}>
-                {exe.relative_path} · {exe.architecture}
-              </li>
-            ))}
-          </ul>
-          <BatResults candidate={analysis} onUse={useRecipe} disabled={busy || launching} />
+      <div {...panelProps('records')}>
+        <GameMaintenance
+          game={game}
+          locked={dirty || launching || analysisLocked}
+          onBusy={setMaintenanceBusy}
+          onRemoved={onRemoved}
+          onDeleted={onDeleted}
+          onRelocated={(saved) => {
+            setDraft({ ...saved });
+            setAliases(saved.aliases.join('\n'));
+            setSaves(saved.save_paths.join('\n'));
+            onRelocated(saved);
+          }}
+        />
+
+        <details className="analysis">
+          <summary>版本更新历史</summary>
+          {versionError ? (
+            <p className="error">{versionError}</p>
+          ) : versions.length ? (
+            <ol>
+              {versions.map((version) => (
+                <li key={version.operation}>
+                  {displayVersion(version.old_version)} → {displayVersion(version.new_version)} ·{' '}
+                  {version.status === 'rolled_back' ? '已回退' : '已更新'} ·{' '}
+                  {formatTime(version.created_at)}
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <p>暂无更新记录。版本回退可在导入页的已导入记录中操作。</p>
+          )}
         </details>
-      )}
-      {game.launch_type === 'MTOOL' && (
-        <div className="analysis">
-          <button
-            disabled={busy || dirty}
-            onClick={() =>
-              void run(async () => {
-                setDebugText(await api.debugBat(game.id));
-              })
-            }
-          >
-            预览调试 BAT
-          </button>
-          {debugText && <CodeBlock>{debugText}</CodeBlock>}
-        </div>
-      )}
-      <details className="analysis">
-        <summary>版本更新历史</summary>
-        {versionError ? (
-          <p className="error">{versionError}</p>
-        ) : versions.length ? (
-          <ol>
-            {versions.map((version) => (
-              <li key={version.operation}>
-                {displayVersion(version.old_version)} → {displayVersion(version.new_version)} ·{' '}
-                {version.status === 'rolled_back' ? '已回退' : '已更新'} ·{' '}
-                {formatTime(version.created_at)}
-              </li>
-            ))}
-          </ol>
-        ) : (
-          <p>暂无更新记录。版本回退可在导入页的已导入记录中操作。</p>
-        )}
-      </details>
-      <details className="analysis">
-        <summary>运行历史（最近 100 次启动请求）</summary>
-        {historyError ? (
-          <p className="error">{historyError}</p>
-        ) : history.length ? (
-          <ol>
-            {history.map((time, i) => (
-              <li key={`${time}-${i}`}>{formatTime(time)}</li>
-            ))}
-          </ol>
-        ) : (
-          <p>暂无运行记录。</p>
-        )}
-      </details>
+        <details className="analysis">
+          <summary>运行历史（最近 100 次启动请求）</summary>
+          {historyError ? (
+            <p className="error">{historyError}</p>
+          ) : history.length ? (
+            <ol>
+              {history.map((time, i) => (
+                <li key={`${time}-${i}`}>{formatTime(time)}</li>
+              ))}
+            </ol>
+          ) : (
+            <p>暂无运行记录。</p>
+          )}
+        </details>
+      </div>
       {saveEditorOpen && <SaveEditor game={game} onClose={() => setSaveEditorOpen(false)} />}
     </Modal>
   );
@@ -2896,7 +3010,7 @@ function BatResults({
                 <dd>{bat.recipe.runtime}</dd>
               </dl>
               <p className="muted">采用 target / loader；共享 root 和 runtime 另在设置确认。</p>
-              <button disabled={disabled} onClick={() => onUse(bat.recipe!)}>
+              <button type="button" disabled={disabled} onClick={() => onUse(bat.recipe!)}>
                 采用此 target / loader
               </button>
             </>

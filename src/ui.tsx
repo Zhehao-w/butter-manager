@@ -179,7 +179,7 @@ export function Icon({ name, size = 20 }: { name: IconName; size?: number }) {
     />
   );
 }
-export function GameMark({ game, large = false }: { game: Game; large?: boolean }) {
+export function engineTone(engine: string) {
   const tones: Record<string, string> = {
     Unity: 'unity',
     "Ren'Py": 'renpy',
@@ -191,7 +191,10 @@ export function GameMark({ game, large = false }: { game: Game; large?: boolean 
     HTML: 'web',
     QSP: 'qsp',
   };
-  const tone = tones[game.engine] || 'unknown';
+  return tones[engine] || 'unknown';
+}
+export function GameMark({ game, large = false }: { game: Game; large?: boolean }) {
+  const tone = engineTone(game.engine);
   return (
     <span className={`game-mark tone-${tone}${large ? ' large' : ''}`} aria-hidden="true">
       <Icon name="library" size={large ? 50 : 23} />

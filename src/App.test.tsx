@@ -2,12 +2,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { api } from './api';
 import App from './App';
+import { engineQuickGroups } from './gameStatus';
 import type { Game, JobPage, ScanCandidate, Settings } from './types';
 
 vi.mock('@tauri-apps/api/core', () => ({ isTauri: () => true }));
 vi.mock('./api', () => ({
   api: {
     openDataDirectory: vi.fn().mockResolvedValue(undefined),
+    listEditableSaves: vi.fn().mockResolvedValue({ slots: [], warnings: [] }),
+    releaseExternalSaves: vi.fn().mockResolvedValue(undefined),
     appearance: vi.fn(),
     saveAppearance: vi.fn(),
     importPlans: vi.fn().mockResolvedValue([]),
@@ -125,6 +128,10 @@ const game: Game = {
   save_paths: [],
 };
 
+function showDetailTab(name: string) {
+  fireEvent.click(screen.getByRole('tab', { name }));
+}
+
 function mockLibraryViewport() {
   // jsdom has no layout: provide real viewport and row sizes, keeping the real virtualizer.
   const viewport = { width: 900, height: 320 };
@@ -211,6 +218,139 @@ function openConfig(section: 'MTool' | '设置') {
   fireEvent.click(screen.getByRole('button', { name: section }));
 }
 describe('iteration interactions', () => {
+  it('opens the same save editor from the fourth hero action and the retained save tab entry', async () => {
+    render(<App />);
+    fireEvent.click(await screen.findByRole('button', { name: game.display_title }));
+    const detail = screen.getByRole('dialog', { name: game.display_title });
+    const actions = detail.querySelector('.detail-actions') as HTMLElement;
+    expect(
+      within(actions)
+        .getAllByRole('button')
+        .map((button) => button.textContent),
+    ).toEqual(['启动', '打开目录', '分析启动配置', '编辑存档']);
+    fireEvent.click(within(actions).getByRole('button', { name: '编辑存档' }));
+    const editor = await screen.findByRole('dialog', { name: `编辑存档 · ${game.display_title}` });
+    await waitFor(() => expect(api.listEditableSaves).toHaveBeenCalledWith(game.id));
+    fireEvent.click(within(editor).getByRole('button', { name: '关闭弹窗' }));
+    expect(screen.queryByRole('dialog', { name: `编辑存档 · ${game.display_title}` })).toBeNull();
+    showDetailTab('存档位置');
+    const panel = within(detail).getByRole('tabpanel', { name: '存档位置' });
+    fireEvent.click(within(panel).getByRole('button', { name: '编辑存档' }));
+    expect(
+      await screen.findByRole('dialog', { name: `编辑存档 · ${game.display_title}` }),
+    ).toBeTruthy();
+    await waitFor(() => expect(api.listEditableSaves).toHaveBeenCalledTimes(2));
+    expect(api.saveGame).not.toHaveBeenCalled();
+  });
+  it('preserves drafts across detail tabs, submits all changes together and supports keyboard navigation', async () => {
+    vi.mocked(api.saveGame).mockImplementation(async (edit) => ({ ...game, ...edit }));
+    render(<App />);
+    fireEvent.click(await screen.findByRole('button', { name: game.display_title }));
+    const detail = screen.getByRole('dialog', { name: game.display_title });
+    expect(
+      within(detail)
+        .getAllByRole('tabpanel')
+        .map((panel) => panel.getAttribute('data-detail-tab')),
+    ).toEqual(['basic']);
+    fireEvent.change(within(detail).getByRole('textbox', { name: '显示名称' }), {
+      target: { value: '修改标题' },
+    });
+    showDetailTab('启动配置');
+    fireEvent.change(within(detail).getByRole('combobox', { name: /启动文件（/ }), {
+      target: { value: 'new.exe' },
+    });
+    showDetailTab('存档位置');
+    fireEvent.change(within(detail).getByRole('textbox', { name: /存档位置/ }), {
+      target: { value: '<GAME>/save' },
+    });
+    showDetailTab('别名管理');
+    fireEvent.change(within(detail).getByRole('textbox', { name: /别名（/ }), {
+      target: { value: '另一个名称' },
+    });
+    fireEvent.keyDown(within(detail).getByRole('tab', { name: '别名管理' }), { key: 'ArrowRight' });
+    expect(
+      within(detail).getByRole('tab', { name: '记录与管理' }).getAttribute('aria-selected'),
+    ).toBe('true');
+    expect(within(detail).queryByRole('textbox', { name: '显示名称' })).toBeNull();
+    fireEvent.keyDown(within(detail).getByRole('tab', { name: '记录与管理' }), { key: 'Home' });
+    expect(
+      (within(detail).getByRole('textbox', { name: '显示名称' }) as HTMLInputElement).value,
+    ).toBe('修改标题');
+    expect(api.saveGame).not.toHaveBeenCalled();
+    fireEvent.click(within(detail).getByRole('button', { name: '保存资料' }));
+    await waitFor(() =>
+      expect(api.saveGame).toHaveBeenCalledWith(
+        expect.objectContaining({
+          display_title: '修改标题',
+          main_executable: 'new.exe',
+          save_paths: ['<GAME>/save'],
+          aliases: ['另一个名称'],
+        }),
+      ),
+    );
+    showDetailTab('存档位置');
+    expect(
+      (within(detail).getByRole('textbox', { name: /存档位置/ }) as HTMLTextAreaElement).value,
+    ).toBe('<GAME>/save');
+    expect(api.play).not.toHaveBeenCalled();
+  });
+  it('applies Other and engine capsules with existing search and status filters', async () => {
+    const games = ['Unity', 'Unity', "Ren'Py", 'HTML', 'Godot', 'QSP', 'KiriKiri', 'Unknown'].map(
+      (engine, index) => ({ ...game, id: String(index), display_title: `Title ${index}`, engine }),
+    );
+    vi.mocked(api.games).mockResolvedValue(games);
+    render(<App />);
+    await screen.findByRole('button', { name: 'Title 0' });
+    const quick = within(screen.getByRole('group', { name: '引擎快捷筛选' }));
+    const popular = engineQuickGroups(games).popular.map((group) => group.engine);
+    fireEvent.click(quick.getByRole('button', { name: '其他1' }));
+    for (const entry of games)
+      expect(!!screen.queryByRole('button', { name: entry.display_title })).toBe(
+        !popular.includes(entry.engine),
+      );
+    expect(screen.getByText('找到 1 / 8 个游戏')).toBeTruthy();
+    fireEvent.change(screen.getByRole('textbox', { name: '搜索游戏或别名' }), {
+      target: { value: 'Title 7' },
+    });
+    expect(screen.getByText('找到 1 / 8 个游戏')).toBeTruthy();
+    expect(quick.getByRole('button', { name: 'Unity2' })).toBeTruthy();
+    fireEvent.change(screen.getByRole('textbox', { name: '搜索游戏或别名' }), {
+      target: { value: '' },
+    });
+    fireEvent.click(quick.getByRole('button', { name: 'Unity2' }));
+    expect(screen.getByRole('button', { name: 'Title 0' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Title 7' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '筛选 (1)' }));
+    const filters = within(screen.getByRole('dialog', { name: '筛选游戏' }));
+    fireEvent.click(filters.getByRole('checkbox', { name: '正在玩' }));
+    fireEvent.click(filters.getByRole('button', { name: '完成' }));
+    fireEvent.click(quick.getByRole('button', { name: '全部8' }));
+    expect(screen.queryByRole('button', { name: 'Title 0' })).toBeNull();
+    expect(screen.getByRole('button', { name: '筛选 (1)' })).toBeTruthy();
+  });
+  it('returns to a hidden invalid field without discarding edits in another tab', async () => {
+    render(<App />);
+    fireEvent.click(await screen.findByRole('button', { name: game.display_title }));
+    const detail = screen.getByRole('dialog', { name: game.display_title });
+    const title = within(detail).getByRole('textbox', { name: '显示名称' });
+    fireEvent.change(title, { target: { value: '' } });
+    showDetailTab('别名管理');
+    fireEvent.change(within(detail).getByRole('textbox', { name: /别名（/ }), {
+      target: { value: '保留的别名' },
+    });
+    fireEvent.invalid(title);
+    expect(
+      within(detail).getByRole('tab', { name: '基础信息' }).getAttribute('aria-selected'),
+    ).toBe('true');
+    await waitFor(() => expect(document.activeElement).toBe(title));
+    showDetailTab('别名管理');
+    expect(
+      (within(detail).getByRole('textbox', { name: /别名（/ }) as HTMLTextAreaElement).value,
+    ).toBe('保留的别名');
+    fireEvent.click(within(detail).getByRole('button', { name: '关闭弹窗' }));
+    expect(screen.getByRole('dialog', { name: '放弃未保存修改？' })).toBeTruthy();
+    expect(api.saveGame).not.toHaveBeenCalled();
+  });
   it.each([true, false])(
     'allows incomplete scan registration only with an available launch file: %s',
     async (hasFile) => {
@@ -329,6 +469,7 @@ describe('iteration interactions', () => {
     fireEvent.click(screen.getByRole('button', { name: game.display_title }));
     const detail = screen.getByRole('dialog');
     scanPage = { ...job, changes: [{ ...candidate, registered_id: game.id }] };
+    showDetailTab('存档位置');
     await waitFor(() =>
       expect(
         (within(detail).getByRole('textbox', { name: /存档位置/ }) as HTMLTextAreaElement).value,
@@ -402,6 +543,7 @@ describe('iteration interactions', () => {
     vi.mocked(api.saveGame).mockImplementation(async (edit) => ({ ...qsp, ...edit }));
     render(<App />);
     fireEvent.click(await screen.findByRole('button', { name: game.display_title }));
+    showDetailTab('启动配置');
     expect((screen.getByRole('combobox', { name: 'QSP 播放器' }) as HTMLInputElement).value).toBe(
       'qspgui.exe',
     );
@@ -461,6 +603,7 @@ describe('iteration interactions', () => {
     expect(
       (screen.getByRole('combobox', { name: 'QSP 主游戏文件' }) as HTMLInputElement).value,
     ).toBe('');
+    showDetailTab('基础信息');
     expect((screen.getByRole('combobox', { name: /游戏引擎/ }) as HTMLSelectElement).value).toBe(
       'QSP',
     );
@@ -662,6 +805,7 @@ describe('iteration interactions', () => {
       target: { value: 'QSP' },
     });
     expect(detail.querySelector('.game-mark')!.classList.contains('tone-qsp')).toBe(true);
+    showDetailTab('存档位置');
     fireEvent.click(within(detail).getByRole('button', { name: '添加存档目录…' }));
     await waitFor(() =>
       expect(
@@ -689,6 +833,7 @@ describe('iteration interactions', () => {
     render(<App />);
     fireEvent.click(await screen.findByRole('button', { name: game.display_title }));
     const detail = screen.getByRole('dialog');
+    showDetailTab('存档位置');
     const paths = within(detail).getByRole('textbox', { name: /存档位置/ }) as HTMLTextAreaElement;
     const browse = within(detail).getByRole('button', { name: '添加存档目录…' });
     fireEvent.change(paths, { target: { value: '<GAME>/save\nD:/Save' } });
@@ -710,6 +855,7 @@ describe('iteration interactions', () => {
     render(<App />);
     fireEvent.click(await screen.findByRole('button', { name: game.display_title }));
     const detail = screen.getByRole('dialog');
+    showDetailTab('存档位置');
     const paths = within(detail).getByRole('textbox', { name: /存档位置/ });
     const open = within(detail).getByRole('button', { name: '打开存档位置' });
     expect((open as HTMLButtonElement).disabled).toBe(true);
@@ -887,12 +1033,14 @@ describe('iteration interactions', () => {
     const version = within(modal).getByRole('textbox', { name: '版本' }) as HTMLInputElement;
     expect(version.value).toBe('');
     expect(version.placeholder).toBe('-');
+    showDetailTab('启动配置');
     fireEvent.click(within(modal).getByRole('button', { name: '浏览启动文件…' }));
     await waitFor(() =>
       expect(
         (within(modal).getByRole('combobox', { name: /启动文件（/ }) as HTMLInputElement).value,
       ).toBe('包装/游戏 & test.html'),
     );
+    showDetailTab('基础信息');
     fireEvent.change(within(modal).getByRole('textbox', { name: '版本' }), {
       target: { value: '' },
     });
@@ -921,14 +1069,14 @@ describe('iteration interactions', () => {
     await screen.findByRole('button', { name: 'Game 0' });
     await waitFor(() =>
       expect(screen.getByRole('button', { name: 'Game 1' }).closest('tr')?.style.transform).toBe(
-        'translateY(94px)',
+        'translateY(78px)',
       ),
     );
     expect(screen.queryByRole('navigation', { name: /游戏库.*分页/ })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Game 120' })).toBeNull();
     const rows = () => within(screen.getByRole('table')).getAllByRole('row');
     expect(rows().length).toBeLessThan(30);
-    fireEvent.scroll(screen.getByLabelText('游戏列表'), { target: { scrollTop: 10923 } });
+    fireEvent.scroll(screen.getByLabelText('游戏列表'), { target: { scrollTop: 9003 } });
     fireEvent.click(await screen.findByRole('button', { name: 'Game 120' }));
     expect(screen.getByRole('dialog', { name: 'Game 120' })).toBeTruthy();
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '关闭弹窗' }));
@@ -938,8 +1086,8 @@ describe('iteration interactions', () => {
     await screen.findByText('启动文件：main-v1.2.exe');
     goLibrary();
     await screen.findByRole('button', { name: 'Game 120' });
-    expect(screen.getByLabelText('游戏列表').scrollTop).toBe(10923);
-    fireEvent.scroll(screen.getByLabelText('游戏列表'), { target: { scrollTop: 51693 } });
+    expect(screen.getByLabelText('游戏列表').scrollTop).toBe(9003);
+    fireEvent.scroll(screen.getByLabelText('游戏列表'), { target: { scrollTop: 42678 } });
     await screen.findByRole('button', { name: 'Game 569' });
     expect(rows().length).toBeLessThan(30);
     fireEvent.change(screen.getByRole('textbox', { name: '搜索游戏或别名' }), {
@@ -1273,6 +1421,8 @@ describe('iteration interactions', () => {
     const modal = screen.getByRole('dialog');
     expect(within(modal).getByText(/入库时间：/)).toBeTruthy();
     expect(within(modal).getByText(/上次运行：/)).toBeTruthy();
+    showDetailTab('记录与管理');
+    fireEvent.click(within(modal).getByText('运行历史（最近 100 次启动请求）'));
     await waitFor(() => expect(within(modal).getAllByRole('listitem').length).toBe(1));
     fireEvent.click(within(modal).getByRole('button', { name: '关闭弹窗' }));
     expect(screen.queryByRole('button', { name: '补充引擎/版本' })).toBeNull();
@@ -1501,6 +1651,7 @@ describe('iteration interactions', () => {
       fireEvent.change(within(detail).getByRole('textbox', { name: '显示名称' }), {
         target: { value: '未保存标题' },
       });
+      showDetailTab('启动配置');
       fireEvent.change(within(detail).getByRole('combobox', { name: '启动方式' }), {
         target: { value: mode },
       });
@@ -1543,6 +1694,7 @@ describe('iteration interactions', () => {
       });
       expect(api.saveGame).not.toHaveBeenCalled();
       expect((save as HTMLButtonElement).disabled).toBe(false);
+      showDetailTab('基础信息');
       expect(
         (within(detail).getByRole('textbox', { name: '显示名称' }) as HTMLInputElement).value,
       ).toBe('未保存标题');
@@ -1603,6 +1755,7 @@ describe('iteration interactions', () => {
       change_count: 1,
     };
     vi.mocked(api.startGameAnalysis).mockResolvedValue('detail-analysis-2');
+    showDetailTab('基础信息');
     fireEvent.change(within(modal).getByRole('combobox', { name: '游戏引擎' }), {
       target: { value: 'Unity' },
     });
@@ -1610,12 +1763,14 @@ describe('iteration interactions', () => {
     fireEvent.click(within(modal).getByRole('button', { name: '分析启动配置' }));
     await within(modal).findByText('分析结束，可查看下方详情。');
     expect(within(modal).getByText('main-v1.2.exe · Unknown')).toBeTruthy();
+    showDetailTab('基础信息');
     expect((within(modal).getByRole('textbox', { name: '版本' }) as HTMLInputElement).value).toBe(
       'Final',
     );
     const engine = within(modal).getByRole('combobox', { name: '游戏引擎' }) as HTMLSelectElement;
     expect(engine.value).toBe('Unity');
     expect(api.saveGame).not.toHaveBeenCalled();
+    showDetailTab('启动配置');
     fireEvent.click(within(modal).getByRole('button', { name: '使用识别引擎' }));
     expect(engine.value).toBe('WOLF RPG Editor');
     expect(api.saveGame).not.toHaveBeenCalled();
@@ -1722,6 +1877,7 @@ describe('iteration interactions', () => {
       await screen.findByText('启动文件缺失');
       fireEvent.click(screen.getByRole('button', { name: game.display_title }));
       const modal = screen.getByRole('dialog');
+      showDetailTab('启动配置');
       fireEvent.change(
         within(modal).getByRole('combobox', {
           name: /启动文件（相对游戏目录）/,
@@ -1758,6 +1914,7 @@ describe('iteration interactions', () => {
     render(<App />);
     fireEvent.click(await screen.findByRole('button', { name: game.display_title }));
     const detail = screen.getByRole('dialog', { name: game.display_title });
+    showDetailTab('启动配置');
     fireEvent.change(within(detail).getByRole('combobox', { name: '启动方式' }), {
       target: { value: 'MTOOL' },
     });
@@ -2016,6 +2173,7 @@ describe('iteration interactions', () => {
     render(<App />);
     fireEvent.click(await screen.findByRole('button', { name: game.display_title }));
     const modal = screen.getByRole('dialog');
+    showDetailTab('记录与管理');
     fireEvent.click(within(modal).getByRole('button', { name: '从库中移除' }));
     const confirmation = screen.getByRole('dialog', { name: `从库中移除：${game.display_title}` });
     expect(api.removeGame).not.toHaveBeenCalled();
@@ -2137,6 +2295,7 @@ describe('iteration interactions', () => {
     render(<App />);
     fireEvent.click(await screen.findByRole('button', { name: game.display_title }));
     const modal = screen.getByRole('dialog');
+    showDetailTab('记录与管理');
     fireEvent.click(within(modal).getByRole('button', { name: '关联新目录' }));
     await waitFor(() =>
       expect(
@@ -2149,6 +2308,7 @@ describe('iteration interactions', () => {
     await within(modal).findByText('已关联新目录，原有游戏资料保留。');
     expect(api.relocateGame).toHaveBeenCalledWith(plan);
     expect(screen.getByRole('dialog')).toBe(modal);
+    showDetailTab('基础信息');
     expect((within(modal).getByRole('textbox', { name: '版本' }) as HTMLInputElement).value).toBe(
       game.current_version,
     );

@@ -1833,6 +1833,7 @@ function SettingsPage({
   onReset: (confirmation: string) => Promise<void>;
 }) {
   const [draft, setDraft] = useState(settings);
+  const formId = useId();
   const section = initialSection;
   const sectionScroll = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
@@ -1895,7 +1896,10 @@ function SettingsPage({
     }
   }
   return (
-    <section className="settings-page" aria-label={section === 'mtool' ? 'MTool页面' : '设置页面'}>
+    <section
+      className={`settings-page${section === 'library' ? ' settings-page-library' : ''}`}
+      aria-label={section === 'mtool' ? 'MTool页面' : '设置页面'}
+    >
       <PageHeader
         icon={section === 'mtool' ? 'tool' : 'settings'}
         title={section === 'mtool' ? 'MTool' : '设置'}
@@ -1904,7 +1908,19 @@ function SettingsPage({
             ? '配置共享 MTool 的目录与启动程序，配置仅保存在本机。'
             : '选择已有游戏目录，配置扫描线程与本地资料。'
         }
-      />
+      >
+        {section === 'library' && (
+          <button
+            type="submit"
+            form={formId}
+            className="primary settings-save"
+            disabled={!dirty || busy || locked || confirmClose || resetOpen}
+          >
+            <Icon name="save" size={16} />
+            保存设置
+          </button>
+        )}
+      </PageHeader>
       {confirmClose && (
         <DiscardConfirmation
           actionLabel="放弃并切换"
@@ -1928,8 +1944,10 @@ function SettingsPage({
         }}
       >
         <form
+          id={formId}
           onSubmit={(event) => {
             event.preventDefault();
+            if (!dirty || busy || locked || confirmClose || resetOpen) return;
             setBusy(true);
             setError('');
             void onSave(draft)
@@ -1945,7 +1963,7 @@ function SettingsPage({
           <fieldset disabled={busy || locked || confirmClose || resetOpen}>
             <section className="settings-card panel" hidden={section !== 'library'}>
               <CardTitle icon="folder" description="扫描根目录中的游戏，游戏文件保留原位。">
-                游戏库目录
+                游戏库与扫描
               </CardTitle>
               <div className="form-grid settings-library-fields">
                 <label>
@@ -2061,7 +2079,7 @@ function SettingsPage({
                 </label>
               </div>
             </section>
-            <div className="footer-actions">
+            <div className="footer-actions" hidden={section !== 'mtool'}>
               <span className="muted">配置保存在本地。</span>
               <button className="primary" disabled={!dirty}>
                 保存设置
@@ -2069,81 +2087,106 @@ function SettingsPage({
             </div>
           </fieldset>
         </form>
-        <section className="reset-library panel" hidden={section !== 'library'}>
-          <h3>清空游戏库</h3>
-          <p>
-            删除数据库中的全部游戏、别名、存档路径记录、运行历史和设置。游戏与存档文件保持原位。
-          </p>
-          {resetOpen ? (
-            <div role="alert">
-              <label>
-                输入“清空数据库”确认
-                <input
-                  aria-label="清空确认"
-                  value={confirmation}
-                  disabled={busy}
-                  onChange={(e) => setConfirmation(e.target.value)}
-                />
-              </label>
-              <div className="footer-actions">
-                <button
-                  disabled={busy}
-                  onClick={() => {
-                    setResetOpen(false);
-                    setConfirmation('');
-                  }}
-                >
-                  取消清空
-                </button>
-                <button
-                  className="danger"
-                  disabled={busy || locked || confirmation !== '清空数据库'}
-                  onClick={() => {
-                    setBusy(true);
-                    setError('');
-                    void onReset(confirmation)
-                      .catch((reason) => setError(String(reason)))
-                      .finally(() => setBusy(false));
-                  }}
-                >
-                  {busy ? '正在清空…' : '确认清空数据库'}
-                </button>
-              </div>
-            </div>
-          ) : (
-            <button
-              className="danger"
-              disabled={busy || locked || confirmClose}
-              onClick={() => setResetOpen(true)}
-            >
-              清空库…
-            </button>
-          )}
-        </section>
         <section className="about-card panel" hidden={section !== 'library'} aria-label="关于应用">
           <div className="settings-about-heading">
-            <div className="settings-about-identity">
-              <img src={appIcon} alt="" />
-              <div>
-                <h3>关于 butter-manager</h3>
-                <p>by Zhehao-w</p>
-              </div>
-            </div>
+            <CardTitle icon="info">关于应用</CardTitle>
             <span className="mode">v0.3.1</span>
           </div>
-          <p>本地游戏库 · 整理游戏、批量导入、保留存档更新与快捷启动。</p>
+          <p className="settings-about-description">本地游戏管理与存档工具。</p>
           <BrowseButton disabled={busy} onClick={() => void toolAction(api.openDataDirectory)}>
             打开数据目录
           </BrowseButton>
-          <details className="icon-credits">
-            <summary>开源图标：Lucide · 许可说明</summary>
-            <CodeBlock>{iconLicense}</CodeBlock>
-          </details>
-          <details className="icon-credits">
-            <summary>虚拟列表：TanStack Virtual · 许可说明</summary>
-            <CodeBlock>{virtualLicense}</CodeBlock>
-          </details>
+          <div className="settings-licenses">
+            <details className="icon-credits">
+              <summary>开源图标：Lucide · 许可说明</summary>
+              <CodeBlock>{iconLicense}</CodeBlock>
+            </details>
+            <details className="icon-credits">
+              <summary>虚拟列表：TanStack Virtual · 许可说明</summary>
+              <CodeBlock>{virtualLicense}</CodeBlock>
+            </details>
+          </div>
         </section>
+        <details
+          className="settings-maintenance panel"
+          hidden={section !== 'library'}
+          onToggle={(event) => {
+            if (!event.currentTarget.open && !busy) {
+              setResetOpen(false);
+              setConfirmation('');
+            }
+          }}
+        >
+          <summary
+            onClick={(event) => {
+              if (busy) event.preventDefault();
+            }}
+          >
+            <span className="section-icon">
+              <Icon name="tool" size={18} />
+            </span>
+            <span className="maintenance-heading">
+              <span className="maintenance-title">
+                高级维护 <span className="maintenance-warning">谨慎操作</span>
+              </span>
+              <span className="muted">仅影响管理记录，游戏与存档文件保留原位。</span>
+            </span>
+            <span className="maintenance-chevron">
+              <Icon name="next" size={18} />
+            </span>
+          </summary>
+          <section className="reset-library" aria-label="清空游戏库">
+            <h3>清空游戏库</h3>
+            <p>
+              删除数据库中的全部游戏、别名、存档路径记录、运行历史和设置。游戏与存档文件保持原位。
+            </p>
+            {resetOpen ? (
+              <div role="alert">
+                <label>
+                  输入“清空数据库”确认
+                  <input
+                    aria-label="清空确认"
+                    value={confirmation}
+                    disabled={busy}
+                    onChange={(e) => setConfirmation(e.target.value)}
+                  />
+                </label>
+                <div className="footer-actions">
+                  <button
+                    disabled={busy}
+                    onClick={() => {
+                      setResetOpen(false);
+                      setConfirmation('');
+                    }}
+                  >
+                    取消清空
+                  </button>
+                  <button
+                    className="danger"
+                    disabled={busy || locked || confirmation !== '清空数据库'}
+                    onClick={() => {
+                      setBusy(true);
+                      setError('');
+                      void onReset(confirmation)
+                        .catch((reason) => setError(String(reason)))
+                        .finally(() => setBusy(false));
+                    }}
+                  >
+                    {busy ? '正在清空…' : '确认清空数据库'}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                className="danger"
+                disabled={busy || locked || confirmClose}
+                onClick={() => setResetOpen(true)}
+              >
+                清空库…
+              </button>
+            )}
+          </section>
+        </details>
       </div>
     </section>
   );

@@ -414,9 +414,7 @@ describe('iteration interactions', () => {
     );
     expect(screen.queryByRole('region', { name: '外观设置' })).toBeNull();
     expect(container.querySelector('.brand img')?.getAttribute('src')).toContain('app-icon-new');
-    expect(container.querySelector('.settings-about-identity img')?.getAttribute('src')).toContain(
-      'app-icon-new',
-    );
+    expect(screen.getByRole('region', { name: '关于应用' }).querySelector('img')).toBeNull();
     expect(container.querySelector('.sidebar-art img')?.getAttribute('src')).toContain(
       'character-new',
     );
@@ -974,8 +972,13 @@ describe('iteration interactions', () => {
     const select = within(screen.getByRole('region', { name: '设置页面' })).getByRole('combobox', {
       name: /扫描线程/,
     });
+    const save = screen.getByRole('button', { name: '保存设置' }) as HTMLButtonElement;
+    expect(save.disabled).toBe(true);
+    expect(save.closest('.page-heading')).toBeTruthy();
+    expect(save.form).toBe(select.closest('form'));
     expect((select as HTMLSelectElement).value).toBe('2');
     fireEvent.change(select, { target: { value: '4' } });
+    expect(save.disabled).toBe(false);
     fireEvent.click(screen.getByRole('button', { name: '保存设置' }));
     await waitFor(() =>
       expect((screen.getByRole('button', { name: '保存设置' }) as HTMLButtonElement).disabled).toBe(
@@ -1333,6 +1336,9 @@ describe('iteration interactions', () => {
     goLibrary();
     fireEvent.click(screen.getByRole('button', { name: '设置' }));
     const modal = screen.getByRole('region', { name: '设置页面' });
+    const maintenance = modal.querySelector<HTMLDetailsElement>('.settings-maintenance')!;
+    expect(maintenance.open).toBe(false);
+    fireEvent.click(maintenance.querySelector('summary')!);
     fireEvent.click(within(modal).getByRole('button', { name: '清空库…' }));
     const confirm = within(modal).getByRole('button', { name: '确认清空数据库' });
     expect((confirm as HTMLButtonElement).disabled).toBe(true);

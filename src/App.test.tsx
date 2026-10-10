@@ -2470,9 +2470,7 @@ describe('iteration interactions', () => {
       ),
     );
     await screen.findByText('游戏资料已保存。');
-    expect((screen.getByRole('radio', { name: '已通关' }) as HTMLInputElement).checked).toBe(
-      true,
-    );
+    expect((screen.getByRole('radio', { name: '已通关' }) as HTMLInputElement).checked).toBe(true);
   });
   it('applies state and engine filters together to the real library rows', async () => {
     const games = [

@@ -2292,9 +2292,13 @@ function DetailTitle({ title, version }: { title: string; version: string }) {
       setLabel(candidate(low));
     };
     fit();
-    const observer = new ResizeObserver(fit);
-    observer.observe(element);
-    return () => observer.disconnect();
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(fit);
+    observer?.observe(element);
+    window.addEventListener('resize', fit);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', fit);
+    };
   }, [title, version]);
   return (
     <h1 ref={heading} title={title}>
@@ -2775,6 +2779,7 @@ function GameDetail({
                 <label>
                   版本
                   <input
+                    aria-label="版本"
                     placeholder="-"
                     value={versionInput(draft.current_version)}
                     onChange={(event) => field('current_version', event.target.value || 'Unknown')}

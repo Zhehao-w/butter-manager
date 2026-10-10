@@ -32,7 +32,7 @@ export const statusGame: Game = {
   save_paths: [],
 };
 describe('library status and preferences', () => {
-  it('ranks seven engine types by total counts, keeping all remaining types and Unknown in Other', () => {
+  it('ranks five engine types by total counts, keeping all remaining types and Unknown in Other', () => {
     const games = [
       'Unity',
       'Unity',
@@ -47,18 +47,18 @@ describe('library status and preferences', () => {
     ].map((engine, index) => ({ ...statusGame, id: String(index), engine }));
     const { popular, otherCount } = engineQuickGroups(games);
     expect(popular[0]).toEqual({ engine: 'Unity', count: 2 });
-    expect(popular).toHaveLength(7);
+    expect(popular).toHaveLength(5);
     expect(popular.some((group) => group.engine === 'Unknown')).toBe(false);
-    expect(otherCount).toBe(9);
+    expect(otherCount).toBe(11);
     expect(engineQuickGroups([...games].reverse())).toEqual({ popular, otherCount });
     const onChange = vi.fn();
     const { rerender } = render(
       <EngineQuickFilters games={games} engines={[]} other={false} onChange={onChange} />,
     );
     const buttons = screen.getAllByRole('button');
-    expect(buttons[0].textContent).toBe('全部17');
-    expect(buttons[1].textContent).toBe('Unity2');
-    expect(buttons.at(-1)?.textContent).toBe('其他9');
+    expect(buttons[0].textContent).toBe('Unity');
+    expect(buttons).toHaveLength(6);
+    expect(buttons.at(-1)?.textContent).toBe('其他');
     fireEvent.click(buttons.at(-1)!);
     expect(onChange).toHaveBeenLastCalledWith([], true);
     const changed = [
@@ -70,11 +70,14 @@ describe('library status and preferences', () => {
       })),
     ];
     rerender(<EngineQuickFilters games={changed} engines={[]} other={true} onChange={onChange} />);
-    expect(screen.getAllByRole('button')[1].textContent).toBe('QSP5');
+    expect(screen.getAllByRole('button')[0].textContent).toBe('QSP');
     expect(screen.getAllByRole('button').at(-1)?.getAttribute('aria-pressed')).toBe('true');
-    fireEvent.click(screen.getByRole('button', { name: 'QSP5' }));
+    fireEvent.click(screen.getByRole('button', { name: 'QSP' }));
     expect(onChange).toHaveBeenLastCalledWith(['QSP'], false);
-    fireEvent.click(screen.getByRole('button', { name: '全部21' }));
+    rerender(
+      <EngineQuickFilters games={changed} engines={['QSP']} other={false} onChange={onChange} />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'QSP' }));
     expect(onChange).toHaveBeenLastCalledWith([], false);
   });
   it('keeps an empty Other capsule last and does not mark a multi-engine filter as a single selection', () => {
@@ -88,10 +91,8 @@ describe('library status and preferences', () => {
     );
     expect(
       screen.getAllByRole('button').map((button) => button.getAttribute('aria-pressed')),
-    ).toEqual(['false', 'false', 'false']);
-    expect((screen.getByRole('button', { name: '其他0' }) as HTMLButtonElement).disabled).toBe(
-      true,
-    );
+    ).toEqual(['false', 'false']);
+    expect((screen.getByRole('button', { name: '其他' }) as HTMLButtonElement).disabled).toBe(true);
     expect(engineQuickGroups([])).toEqual({ popular: [], otherCount: 0 });
   });
   it('combines groups with AND and alternatives within each group with OR', () => {

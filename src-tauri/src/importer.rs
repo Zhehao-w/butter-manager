@@ -16,8 +16,11 @@ mod import_matching;
 #[path = "import_recommendations.rs"]
 mod import_recommendations;
 pub use import_recommendations::MatchIndex;
+#[path = "mtool_cleanup.rs"]
+mod mtool_cleanup;
 #[path = "updater.rs"]
 mod updater;
+pub use mtool_cleanup::{CleanupJournal, CleanupView, MtoolBundle};
 #[cfg(test)]
 #[path = "updater_test.rs"]
 mod updater_test;
@@ -104,7 +107,7 @@ pub fn matches(candidate: &ScanCandidate, games: &[Game]) -> Vec<Match> {
     MatchIndex::new(games).matches(candidate, &|| false)
 }
 
-pub fn analyze(job: &Arc<Job>, sources: &[String], workers: usize) -> Result<()> {
+pub fn analyze(job: &Arc<Job>, sources: &[String], workers: usize, shared: &str) -> Result<()> {
     job.stage("分析待导入目录", sources.len());
     let next = std::sync::atomic::AtomicUsize::new(0);
     std::thread::scope(|scope| {
@@ -118,7 +121,11 @@ pub fn analyze(job: &Arc<Job>, sources: &[String], workers: usize) -> Result<()>
                 match scanner::analyze_quick_controlled(Path::new(source), &|| job.stop(), &|p| {
                     job.progress(source, p)
                 }) {
-                    Ok(candidate) => job.publish(candidate),
+                    Ok(mut candidate) => {
+                        candidate.bundled_mtool =
+                            mtool_cleanup::detect(Path::new(source), shared, &|| job.stop());
+                        job.publish(candidate);
+                    }
                     Err(e) => {
                         if let Ok(mut c) = scanner::pending_candidate(Path::new(source)) {
                             c.status = "error".into();
@@ -158,6 +165,8 @@ pub struct Selection {
     pub preserve_saves: bool,
     #[serde(default)]
     pub saves_confirmed: bool,
+    #[serde(default)]
+    pub cleanup_mtool: bool,
 }
 #[derive(Clone, Deserialize, Serialize, PartialEq, Debug)]
 struct Entry {
@@ -238,6 +247,8 @@ pub struct Item {
     #[serde(default)]
     pub update: Option<UpdateData>,
     #[serde(default)]
+    pub mtool_cleanup: Option<CleanupJournal>,
+    #[serde(default)]
     basic_transfer: bool,
     candidate: ScanCandidate,
     #[serde(skip)]
@@ -276,6 +287,7 @@ pub struct ItemView {
     pub cross_volume: bool,
     pub blockers: Vec<String>,
     pub update: Option<UpdateData>,
+    pub mtool_cleanup: Option<CleanupView>,
 }
 impl Plan {
     fn view(&self) -> PlanView {
@@ -299,6 +311,7 @@ impl Plan {
                     cross_volume: i.cross_volume,
                     blockers: i.blockers.clone(),
                     update: i.update.clone(),
+                    mtool_cleanup: i.mtool_cleanup.as_ref().map(CleanupJournal::view),
                 })
                 .collect(),
         }
@@ -432,6 +445,7 @@ impl ImportStore {
                             }
                         }
                         updater::validate_record(&plan.id, &plan.root, index, item)?;
+                        mtool_cleanup::validate_journal(item)?;
                     }
                     Ok(plan)
                 })();
@@ -623,7 +637,7 @@ impl ImportStore {
         let mut updating = HashSet::new();
         let mut matching = MatchIndex::new(games);
         job.stage("检查文件与生成导入更新计划", selections.len());
-        for (mut selection, candidate) in selections.into_iter().zip(candidates) {
+        for (mut selection, mut candidate) in selections.into_iter().zip(candidates) {
             stopped(job)?;
             let source = checked_dir(Path::new(&selection.source))?;
             let mut blockers = vec![];
@@ -713,6 +727,10 @@ impl ImportStore {
             if selection.title.trim().is_empty() {
                 blockers.push("游戏名称不能为空".into());
             }
+            if selection.cleanup_mtool {
+                selection.mtool = true;
+                selection.external_player = None;
+            }
             if selection.mtool
                 && !Path::new(&selection.executable)
                     .extension()
@@ -720,7 +738,10 @@ impl ImportStore {
             {
                 blockers.push("MTool 需要游戏 EXE；文档请使用直接启动".into());
             }
-            if selection.engine == "QSP" && selection.external_player.is_none() {
+            if selection.engine == "QSP"
+                && selection.external_player.is_none()
+                && !selection.cleanup_mtool
+            {
                 selection.external_player = crate::external_player::qsp_config(&candidate);
             }
             let launch_check = if let Some(config) = &selection.external_player {
@@ -752,6 +773,19 @@ impl ImportStore {
                 selection.version.trim().into()
             };
             selection.source = paths::path_text(&source)?;
+            candidate.bundled_mtool =
+                mtool_cleanup::detect(&source, &settings.mtool_root, &|| job.stop());
+            let cleanup = if selection.cleanup_mtool {
+                match mtool_cleanup::prepare(&source, &candidate.bundled_mtool, job) {
+                    Ok(cleanup) => Some(cleanup),
+                    Err(error) => {
+                        blockers.push(error.to_string());
+                        None
+                    }
+                }
+            } else {
+                None
+            };
             let manifest = if blockers.is_empty() {
                 inventory(&source, job)?
             } else {
@@ -796,6 +830,7 @@ impl ImportStore {
                 cross_volume,
                 blockers,
                 update,
+                mtool_cleanup: cleanup,
                 candidate,
                 manifest: Arc::new(manifest),
                 game_id: existing
@@ -805,6 +840,30 @@ impl ImportStore {
                 payload_id: None,
             });
             job.completed_one(&paths::path_text(&source)?);
+            let item = plan.items.last_mut().unwrap();
+            if let Some(cleanup) = &item.mtool_cleanup {
+                let config = updater::configuration(item)?;
+                if let Err(error) = mtool_cleanup::check_dependencies(
+                    cleanup,
+                    &config,
+                    &settings,
+                    &item.candidate.save_paths,
+                ) {
+                    item.blockers.push(error.to_string());
+                }
+                if let Err(error) = mtool_cleanup::check_launch_paths(&source, cleanup, &config) {
+                    item.blockers.push(error.to_string());
+                }
+                if let Err(error) = mtool_cleanup::check_shared_launch(&source, &config, &settings)
+                {
+                    item.blockers.push(error.to_string());
+                }
+                if let Some(game) = existing {
+                    if let Err(error) = mtool_cleanup::check_save_paths(cleanup, &game.save_paths) {
+                        item.blockers.push(error.to_string());
+                    }
+                }
+            }
         }
         let needed: u64 = plan
             .items
@@ -839,10 +898,17 @@ impl ImportStore {
         self.ensure_recovery_clear()?;
         let mut plan = self.get(id)?;
         let settings = database.lock().unwrap().settings()?;
-        if settings.game_root != plan.settings.game_root
-            || settings.mtool_root != plan.settings.mtool_root
-            || settings.mtool_injector != plan.settings.mtool_injector
-            || settings.mtool_runtime != plan.settings.mtool_runtime
+        let unfinished = plan.items.iter().any(|item| {
+            !matches!(
+                item.state.as_str(),
+                "completed" | "withdrawn" | "rolled_back"
+            )
+        });
+        if unfinished
+            && (settings.game_root != plan.settings.game_root
+                || settings.mtool_root != plan.settings.mtool_root
+                || settings.mtool_injector != plan.settings.mtool_injector
+                || settings.mtool_runtime != plan.settings.mtool_runtime)
         {
             return Err(invalid(
                 "相关设置已改变，计划不能继续，请撤回未完成项并重新生成",
@@ -896,6 +962,9 @@ impl ImportStore {
                 plan.items[index].state.as_str(),
                 "completed" | "withdrawn" | "rolled_back"
             ) {
+                if plan.items[index].state == "completed" {
+                    self.cleanup_mtool(&mut plan, index, job, database)?;
+                }
                 job.completed_one(&plan.items[index].target);
                 continue;
             }
@@ -919,6 +988,7 @@ impl ImportStore {
                 self.save(&plan)?;
                 return Err(e);
             }
+            self.cleanup_mtool(&mut plan, index, job, database)?;
             job.completed_one(&plan.items[index].target);
         }
         plan.status = "completed".into();
@@ -1745,6 +1815,7 @@ mod tests {
             new_override: false,
             preserve_saves: true,
             saves_confirmed: false,
+            cleanup_mtool: false,
         };
         let job = f
             .tasks
@@ -1836,6 +1907,7 @@ mod tests {
                 new_override: false,
                 preserve_saves: true,
                 saves_confirmed: false,
+                cleanup_mtool: false,
             })
             .collect();
         let job = f
@@ -1948,6 +2020,7 @@ mod tests {
                     new_override: false,
                     preserve_saves: true,
                     saves_confirmed: false,
+                    cleanup_mtool: false,
                 })
                 .collect();
             let job = self

@@ -142,7 +142,7 @@ pub fn architecture(path: &Path) -> String {
     .into()
 }
 
-fn analyze_bat(path: &Path, relative: String) -> BatAnalysis {
+pub(crate) fn analyze_bat(path: &Path, relative: String) -> BatAnalysis {
     let result = (|| -> std::result::Result<String, String> {
         let metadata = fs::metadata(path).map_err(|e| e.to_string())?;
         if metadata.len() > MAX_BAT_BYTES {
@@ -202,6 +202,7 @@ pub fn pending_candidate(path: &Path) -> Result<ScanCandidate> {
         executables: vec![],
         bats: vec![],
         bundled_tool: false,
+        bundled_mtool: vec![],
         mtool_detected: false,
         warnings: vec![],
         registered_id: None,

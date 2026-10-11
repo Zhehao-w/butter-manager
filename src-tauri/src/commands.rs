@@ -116,7 +116,7 @@ fn start_import_analysis(
     if sources.is_empty() || sources.len() > 5000 {
         return Err("请选择 1–5000 个游戏目录".into());
     }
-    let workers = with_db(&state, |db| Ok(db.settings()?.scan_workers))?;
+    let settings = with_db(&state, |db| db.settings())?;
     let job = state
         .tasks
         .begin("import_analysis", String::new())
@@ -124,7 +124,7 @@ fn start_import_analysis(
     let id = job.id.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            importer::analyze(&job, &sources, workers)
+            importer::analyze(&job, &sources, settings.scan_workers, &settings.mtool_root)
         }));
         job.finish(match result {
             Ok(r) => r.map(|_| vec![]).map_err(|e| e.to_string()),
@@ -305,7 +305,12 @@ fn start_import_apply(
         return Err("请先结束启动请求".into());
     }
     let plan = state.imports.get(&plan_id).map_err(|e| e.to_string())?;
-    if matches!(plan.status.as_str(), "completed" | "withdrawn") {
+    let cleanup_retry = !withdraw
+        && plan.status == "completed"
+        && plan.items.iter().any(|item| {
+            item.state == "completed" && item.mtool_cleanup.as_ref().is_some_and(|c| c.pending())
+        });
+    if matches!(plan.status.as_str(), "completed" | "withdrawn") && !cleanup_retry {
         return Err("该计划已经结束".into());
     }
     let item_count = plan.items.len();

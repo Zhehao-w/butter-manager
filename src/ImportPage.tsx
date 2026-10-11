@@ -10,7 +10,7 @@ import { useSavedSort } from './preferences';
 import { LaunchBadge } from './gameStatus';
 import { ProgressBar } from './ProgressBar';
 import { ImportDuplicateDialog, sameImportVersion } from './ImportDuplicateDialog';
-import { ImportHistory, isImportRecord } from './ImportHistory';
+import { ImportHistory, isImportRecord, MtoolCleanupStatus } from './ImportHistory';
 import { isQspFile, localQsp, qspConfig, suggestedPlayer } from './qsp';
 import type {
   Game,
@@ -204,7 +204,11 @@ export function ImportPage({
               engine: c.engine,
               executable: suggestedPlayer(c) || '',
               external_player: qspConfig(c),
-              mtool: !c.qsp && !!c.mtool_detected,
+              mtool:
+                !!c.bundled_mtool?.some((bundle) => bundle.safe) || (!c.qsp && !!c.mtool_detected),
+              ...(c.bundled_mtool?.some((bundle) => bundle.safe)
+                ? { cleanup_mtool: true, external_player: null }
+                : {}),
               existing_id: null,
               new_override: false,
               preserve_saves: true,
@@ -270,6 +274,18 @@ export function ImportPage({
               const applied = values.find((p) => p.id === planId);
               if (applied?.status === 'completed') setView('completed');
               else if (applied) setView('pending');
+              if (
+                result.kind === 'import_apply' &&
+                result.status === 'completed' &&
+                applied?.items.some(
+                  (item) =>
+                    item.state === 'completed' &&
+                    item.mtool_cleanup?.targets.some((target) => target.state !== 'recycled'),
+                )
+              )
+                setNotice(
+                  '导入操作已完成，部分随包 MTool 尚未清理。请查看导入记录中的原因与未清理内容。',
+                );
             } else if (result.kind === 'import_withdraw') {
               const remaining = values.find((p) => !['completed', 'withdrawn'].includes(p.status));
               setPlanId(remaining?.id || null);
@@ -663,6 +679,12 @@ export function ImportPage({
             setRollbackIndex(index);
             setConfirmation('rollback');
           }}
+          onRetryCleanup={(id) =>
+            void action(async () => {
+              setPlanId(id);
+              setJobId(await api.importApply(id));
+            })
+          }
         />
       ) : (
         <div
@@ -870,6 +892,7 @@ export function ImportPage({
                             {item.error}
                           </p>
                         )}
+                        <MtoolCleanupStatus item={item} />
                       </>
                     ) : (
                       <>
@@ -972,8 +995,8 @@ export function ImportPage({
                             <label>
                               <input
                                 type="checkbox"
-                                checked={choice.mtool}
-                                disabled={disabled}
+                                checked={!!choice.cleanup_mtool || choice.mtool}
+                                disabled={disabled || !!choice.cleanup_mtool}
                                 onChange={(e) => update(source, { mtool: e.target.checked })}
                               />
                               公共 MTool
@@ -1172,6 +1195,49 @@ export function ImportPage({
                                 : '不迁移内部旧存档，使用新包存档；外部存档不操作。'}
                             </p>
                             <p className="muted">旧版移入回收站，清空后无法回退。</p>
+                          </div>
+                        )}
+                        {!!candidate?.bundled_mtool?.length && (
+                          <div className="import-mtool-review">
+                            <strong>
+                              <Icon name="tool" size={16} /> 随包 MTool
+                            </strong>
+                            {candidate.bundled_mtool.map((bundle) => (
+                              <div key={bundle.folder}>
+                                <span className="path">
+                                  {bundle.folder}/
+                                  {bundle.bats.length ? ` · ${bundle.bats.join('、')}` : ''}
+                                </span>
+                                {!bundle.safe && <p className="muted">{bundle.reason}</p>}
+                              </div>
+                            ))}
+                            {candidate.bundled_mtool.some((bundle) => bundle.safe) && (
+                              <label>
+                                <input
+                                  type="checkbox"
+                                  checked={!!choice.cleanup_mtool}
+                                  disabled={disabled}
+                                  onChange={(event) =>
+                                    update(source, {
+                                      cleanup_mtool: event.target.checked,
+                                      ...(event.target.checked
+                                        ? { mtool: true, external_player: null }
+                                        : {}),
+                                    })
+                                  }
+                                />
+                                导入成功后清理随包 MTool
+                              </label>
+                            )}
+                            <p className="muted">
+                              仅回收已确认的一级工具目录和关联 BAT。勾选后使用公共 MTool
+                              启动，请确认游戏 EXE 与公共工具配置。
+                            </p>
+                            {!!choice.cleanup_mtool && !settings.mtool_root && (
+                              <p className="notice">
+                                请先在 MTool 设置中配置公共工具，或取消清理。
+                              </p>
+                            )}
                           </div>
                         )}
                         <div className="import-row-meta">

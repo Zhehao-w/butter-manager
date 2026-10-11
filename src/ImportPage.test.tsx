@@ -122,6 +122,92 @@ beforeEach(() => {
   vi.mocked(api.cancel).mockResolvedValue();
 });
 describe('batch import flow', () => {
+  it.each([true, false])(
+    'reviews bundled MTool with default cleanup and opt-out: %s',
+    async (keepChecked) => {
+      const bundled: ScanCandidate = {
+        ...candidate,
+        bundled_mtool: [
+          {
+            folder: '辅助工具',
+            bats: ['与工具一同启动.bat', 'StartWithTool.bat'],
+            safe: true,
+            reason: '已确认',
+          },
+        ],
+      };
+      vi.mocked(api.job).mockResolvedValue({ ...page, changes: [bundled] });
+      render(<ImportPage {...props()} settings={{ ...settings, mtool_root: 'E:/SharedMTool' }} />);
+      fireEvent.click(screen.getByRole('button', { name: '添加文件夹' }));
+      const cleanup = await screen.findByRole('checkbox', { name: '导入成功后清理随包 MTool' });
+      expect((cleanup as HTMLInputElement).checked).toBe(true);
+      expect(
+        (screen.getByRole('checkbox', { name: '公共 MTool' }) as HTMLInputElement).checked,
+      ).toBe(true);
+      expect(screen.getByText(/StartWithTool.bat/)).toBeTruthy();
+      if (!keepChecked) fireEvent.click(cleanup);
+      const selection = screen.getByRole('checkbox', {
+        name: '选择 Game v1.2',
+      }) as HTMLInputElement;
+      if (!selection.checked) fireEvent.click(selection);
+      fireEvent.click(screen.getByRole('button', { name: '生成导入与更新计划（1）' }));
+      await waitFor(() => expect(api.importPlan).toHaveBeenCalledOnce());
+      expect(vi.mocked(api.importPlan).mock.calls[0][1][0].cleanup_mtool).toBe(keepChecked);
+    },
+  );
+  it('keeps ambiguous bundles without a cleanup option and explains the reason', async () => {
+    vi.mocked(api.job).mockResolvedValue({
+      ...page,
+      changes: [
+        {
+          ...candidate,
+          bundled_mtool: [
+            { folder: 'tool', bats: [], safe: false, reason: '混有游戏资源，保留目录' },
+          ],
+        },
+      ],
+    });
+    render(<ImportPage {...props()} />);
+    fireEvent.click(screen.getByRole('button', { name: '添加文件夹' }));
+    await screen.findByText('混有游戏资源，保留目录');
+    expect(screen.queryByRole('checkbox', { name: '导入成功后清理随包 MTool' })).toBeNull();
+  });
+  it('shows retained MTool paths and failure reasons in successful import history with retry', async () => {
+    vi.mocked(api.importPlans).mockResolvedValue([
+      {
+        ...plan,
+        status: 'completed',
+        items: [
+          {
+            ...plan.items[0],
+            state: 'completed',
+            registered_id: oldGame.id,
+            mtool_cleanup: {
+              bundles: [
+                { folder: 'tool', bats: ['StartWithTool.bat'], safe: true, reason: '已确认' },
+              ],
+              targets: [
+                { path: 'tool', state: 'failed', error: '工具文件占用，保留文件' },
+                { path: 'StartWithTool.bat', state: 'recycled', error: null },
+              ],
+            },
+          },
+        ],
+      },
+    ]);
+    render(
+      <ImportPage
+        {...props()}
+        games={[{ ...oldGame, current_version: plan.items[0].selection.version }]}
+      />,
+    );
+    fireEvent.click(await screen.findByRole('tab', { name: /导入记录/ }));
+    fireEvent.click(await screen.findByRole('button', { name: '详情' }));
+    await screen.findByText('工具文件占用，保留文件');
+    expect(screen.getByText('tool · 未清理')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '重试随包 MTool 清理' }));
+    await waitFor(() => expect(api.importApply).toHaveBeenCalledWith(plan.id));
+  });
   it.each([
     [['completed', 'copying'], 1, 1],
     [['completed', 'withdrawn', 'rolled_back', 'pending', 'update_copy', 'rollback_restore'], 3, 2],

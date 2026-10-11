@@ -123,6 +123,7 @@ export interface BatAnalysis {
 }
 
 export interface ScanCandidate {
+  bundled_mtool?: MtoolBundle[];
   save_paths?: string[];
   qsp?: QspDetection | null;
   mtool_detected?: boolean;
@@ -210,6 +211,7 @@ export interface RegistrationSelection {
 }
 
 export interface ImportSelection {
+  cleanup_mtool?: boolean;
   external_player?: ExternalPlayer | null;
   working_directory?: string | null;
   // Omitted/null inherits; an empty string explicitly selects automatic detection.
@@ -251,6 +253,14 @@ export interface ImportMatch {
   auto_associate?: boolean;
 }
 export interface ImportItem {
+  mtool_cleanup?: {
+    bundles: MtoolBundle[];
+    targets: {
+      path: string;
+      state: 'pending' | 'recycling' | 'recycled' | 'failed';
+      error: string | null;
+    }[];
+  } | null;
   completed_at_ms?: number | null;
   update?: {
     old_version: string;
@@ -288,6 +298,12 @@ export interface ImportPlan {
   root: string;
   status: string;
   items: ImportItem[];
+}
+export interface MtoolBundle {
+  folder: string;
+  bats: string[];
+  safe: boolean;
+  reason: string;
 }
 export interface ImportRecoveryIssue {
   record: string;

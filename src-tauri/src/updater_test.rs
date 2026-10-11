@@ -110,6 +110,7 @@ impl Fixture {
             new_override: false,
             preserve_saves: preserve,
             saves_confirmed: confirmed,
+            cleanup_mtool: false,
         };
         configure(&mut selection);
         let settings = self.db.lock().unwrap().settings().unwrap();
@@ -1067,6 +1068,7 @@ fn source_containing_an_external_save_is_blocked_but_ordinary_payload_changes_ar
         new_override: false,
         preserve_saves: true,
         saves_confirmed: true,
+        cleanup_mtool: false,
     };
     assert!(f
         .store

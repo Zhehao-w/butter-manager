@@ -1048,7 +1048,7 @@ impl ImportStore {
         Ok(self.recycled_versions()?.remove(expected))
     }
 
-    fn recycle_version(&self, path: &Path) -> Result<()> {
+    pub(super) fn recycle_version(&self, path: &Path) -> Result<()> {
         #[cfg(test)]
         {
             let bin = self.directory.join("test-recycle-bin");

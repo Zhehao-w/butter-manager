@@ -219,6 +219,8 @@ pub struct ScanCandidate {
     pub bats: Vec<BatAnalysis>,
     pub bundled_tool: bool,
     #[serde(default)]
+    pub bundled_mtool: Vec<crate::importer::MtoolBundle>,
+    #[serde(default)]
     pub mtool_detected: bool,
     pub warnings: Vec<String>,
     pub registered_id: Option<String>,

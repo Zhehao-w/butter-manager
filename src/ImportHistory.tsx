@@ -17,6 +17,37 @@ function resultText(item: ImportItem) {
     : '新增到游戏库';
 }
 
+export function MtoolCleanupStatus({ item }: { item: ImportItem }) {
+  if (!item.mtool_cleanup) return null;
+  if (item.state === 'rolled_back' || item.state === 'withdrawn')
+    return <p className="muted">随包 MTool 清理记录已结束；回退或撤回后不继续清理。</p>;
+  return (
+    <section className="import-mtool-review" aria-label="随包 MTool 清理结果">
+      <strong>
+        <Icon name="tool" size={16} /> 随包 MTool · 导入后移入回收站
+      </strong>
+      {item.mtool_cleanup.targets.map((target) => (
+        <div key={target.path}>
+          <span className="path">
+            {target.path} ·{' '}
+            {target.state === 'recycled'
+              ? '已移入回收站'
+              : target.state === 'failed'
+                ? '未清理'
+                : target.state === 'recycling'
+                  ? '回收中 / 待恢复确认'
+                  : '待清理'}
+          </span>
+          {target.error && <p className="notice">{target.error}</p>}
+        </div>
+      ))}
+      {item.mtool_cleanup.targets.some((target) => target.state === 'failed') && (
+        <p className="muted">游戏已成功导入，未清理文件保留。排除原因后可以重试清理。</p>
+      )}
+    </section>
+  );
+}
+
 export function ImportHistory({
   plans,
   games,
@@ -28,6 +59,7 @@ export function ImportHistory({
   onScrollOffset,
   onOpenGame,
   onRollback,
+  onRetryCleanup,
 }: {
   plans: ImportPlan[];
   games: Game[];
@@ -39,6 +71,7 @@ export function ImportHistory({
   onScrollOffset: (offset: number) => void;
   onOpenGame: (id: string) => void;
   onRollback: (planId: string, index: number) => void;
+  onRetryCleanup?: (planId: string) => void;
 }) {
   const [detailKey, setDetailKey] = useState<string | null>(null);
   const [highlightedKey, setHighlightedKey] = useState<string | null>(null);
@@ -196,6 +229,10 @@ export function ImportHistory({
                       >
                         {record.timeLabel}
                       </time>
+                      {item.mtool_cleanup?.targets.some((target) => target.state !== 'recycled') &&
+                        item.state === 'completed' && (
+                          <span className="maintenance-warning">MTool 未清理</span>
+                        )}
                     </div>
                   </div>
                   <div className="import-history-actions">
@@ -346,6 +383,21 @@ export function ImportHistory({
             </section>
           )}
           {detail.item.error && <p className="notice">{detail.item.error}</p>}
+          <MtoolCleanupStatus item={detail.item} />
+          {detail.item.state === 'completed' &&
+            detail.item.mtool_cleanup?.targets.some((target) => target.state !== 'recycled') &&
+            onRetryCleanup && (
+              <button
+                disabled={
+                  rollbackDisabled ||
+                  !detail.game ||
+                  detail.game.current_version !== detail.item.selection.version
+                }
+                onClick={() => onRetryCleanup(detail.planId)}
+              >
+                重试随包 MTool 清理
+              </button>
+            )}
         </Modal>
       )}
     </>

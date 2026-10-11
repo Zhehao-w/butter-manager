@@ -2797,6 +2797,25 @@ tbody tr:not(:last-child) td {
   white-space: nowrap;
   flex: none;
 }
+
+.import-mtool-review {
+  padding: 12px 14px;
+  margin-top: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(232, 242, 255, 0.55);
+  display: grid;
+  gap: 8px;
+}
+.import-mtool-review > strong,
+.import-mtool-review > label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.import-mtool-review p {
+  margin: 4px 0 0;
+}
 .play-unplayed {
   color: #78869c;
   background: #f1f4f8;

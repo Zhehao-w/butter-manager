@@ -1,14 +1,17 @@
-export type SaveValue = string | number | boolean | null;
+export type SaveValue = string | number | boolean | null | string[];
 export type SaveField = {
   id: string;
   name: string;
   path: string;
   category: string;
-  kind: 'number' | 'string' | 'boolean' | 'readonly';
+  kind: 'number' | 'string' | 'boolean' | 'readonly' | 'container' | 'null' | 'string_set';
   value: SaveValue;
   editable: boolean;
   reason: string | null;
   description: string | null;
+  type_name?: string;
+  parent_id?: string;
+  child_count?: number;
 };
 export type SaveSlot = {
   id: string;

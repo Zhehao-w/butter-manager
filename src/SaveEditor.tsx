@@ -1,9 +1,15 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { api } from './api';
-import { Modal, SearchField } from './ui';
+import { Icon, Modal, SearchField } from './ui';
 import type { Game } from './types';
-import type { SaveCatalog, SaveDocument, SaveField, SaveChange } from './saveEditorTypes';
+import type {
+  SaveCatalog,
+  SaveDocument,
+  SaveField,
+  SaveChange,
+  SaveValue,
+} from './saveEditorTypes';
 
 const rowHeight = 56;
 const signatureLabels = {
@@ -26,7 +32,9 @@ export function SaveEditor({ game, onClose }: { game: Game; onClose: () => void 
   const [slotId, setSlotId] = useState('');
   const [category, setCategory] = useState('variables');
   const [search, setSearch] = useState('');
-  const [drafts, setDrafts] = useState<Record<string, string | boolean>>({});
+  const [drafts, setDrafts] = useState<Record<string, SaveValue>>({});
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [valueEditor, setValueEditor] = useState<SaveField | null>(null);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -43,6 +51,8 @@ export function SaveEditor({ game, onClose }: { game: Game; onClose: () => void 
   const viewport = useRef<HTMLDivElement>(null);
   async function load(id: string) {
     setDrafts({});
+    setExpanded(new Set());
+    setValueEditor(null);
     setSearch('');
     if (!id) {
       setDocument(null);
@@ -94,12 +104,14 @@ export function SaveEditor({ game, onClose }: { game: Game; onClose: () => void 
     if (dirty) setPending(() => action);
     else action();
   }
-  function edit(field: SaveField, value: string | boolean) {
+  function edit(field: SaveField, value: SaveValue) {
     setNotice('');
     setDrafts((current) => {
       const next = { ...current };
-      const original = field.kind === 'boolean' ? field.value : String(field.value ?? '');
-      if (value === original) delete next[field.id];
+      const original = ['boolean', 'null', 'string_set'].includes(field.kind)
+        ? field.value
+        : String(field.value ?? '');
+      if (JSON.stringify(value) === JSON.stringify(original)) delete next[field.id];
       else next[field.id] = value;
       return next;
     });
@@ -206,15 +218,23 @@ export function SaveEditor({ game, onClose }: { game: Game; onClose: () => void 
   }
   const fields = useMemo(() => {
     const needle = search.trim().toLocaleLowerCase();
-    return (document?.fields ?? []).filter(
-      (field) =>
-        field.category === category &&
-        (!needle ||
-          `${field.name} ${field.path} ${field.description ?? ''}`
-            .toLocaleLowerCase()
-            .includes(needle)),
-    );
-  }, [document, category, search]);
+    const byId = new Map(document?.fields.map((field) => [field.id, field]) ?? []);
+    return (document?.fields ?? []).filter((field) => {
+      if (field.category !== category) return false;
+      if (needle)
+        return `${field.name} ${field.path} ${field.type_name ?? ''} ${field.description ?? ''}`
+          .toLocaleLowerCase()
+          .includes(needle);
+      let parent = field.parent_id;
+      const visited = new Set<string>();
+      while (parent) {
+        if (!expanded.has(parent) || visited.has(parent)) return false;
+        visited.add(parent);
+        parent = byId.get(parent)?.parent_id;
+      }
+      return true;
+    });
+  }, [document, category, search, expanded]);
   const virtual = useVirtualizer({
     count: fields.length,
     getScrollElement: () => viewport.current,
@@ -231,19 +251,53 @@ export function SaveEditor({ game, onClose }: { game: Game; onClose: () => void 
     const changed = field.id in drafts;
     const value = changed ? drafts[field.id] : field.value;
     return (
-      <div className={`save-editor-field ${changed ? 'is-changed' : ''}`} key={field.id}>
+      <div
+        className={`save-editor-field ${changed ? 'is-changed' : ''}${field.parent_id ? ' is-child' : ''}`}
+        key={field.id}
+      >
+        {field.kind === 'container' && (
+          <button
+            type="button"
+            className="save-editor-expand"
+            aria-label={`${expanded.has(field.id) ? '收起' : '展开'} ${field.name}`}
+            aria-expanded={expanded.has(field.id)}
+            onClick={() =>
+              setExpanded((current) => {
+                const next = new Set(current);
+                if (next.has(field.id)) next.delete(field.id);
+                else next.add(field.id);
+                return next;
+              })
+            }
+          >
+            <Icon name="next" size={14} />
+          </button>
+        )}
         <div className="save-editor-field-info">
           <label htmlFor={`save-${field.id}`} title={`${field.name}\n${field.path}`}>
             <strong>{field.name}</strong>
             {changed && <span className="save-editor-dirty">已修改</span>}
           </label>
-          {(field.reason || field.description) && (
+          {(field.reason || field.description || field.type_name) && (
             <span className="muted" title={field.reason ?? field.description ?? undefined}>
-              {field.reason ?? field.description}
+              {[field.type_name, field.reason ?? field.description].filter(Boolean).join(' · ')}
             </span>
           )}
         </div>
-        {field.editable && field.kind === 'boolean' ? (
+        {field.editable && (field.kind === 'null' || field.kind === 'string_set') ? (
+          <button
+            type="button"
+            className="save-editor-value-button"
+            disabled={busy}
+            onClick={() => setValueEditor(field)}
+          >
+            {field.kind === 'string_set'
+              ? `编辑成员 (${Array.isArray(value) ? value.length : 0})`
+              : value === null
+                ? '设置值…'
+                : `修改：${String(value)}`}
+          </button>
+        ) : field.editable && field.kind === 'boolean' ? (
           <input
             id={`save-${field.id}`}
             className="save-editor-switch"
@@ -265,7 +319,13 @@ export function SaveEditor({ game, onClose }: { game: Game; onClose: () => void 
           />
         ) : (
           <span className="save-editor-readonly" title={field.reason ?? undefined}>
-            {field.kind === 'readonly' ? '只读' : String(field.value ?? '只读')}
+            {field.kind === 'container'
+              ? `${field.child_count ?? 0} 项`
+              : field.kind === 'string_set'
+                ? `${field.child_count ?? 0} 个成员 · 只读`
+                : field.kind === 'null'
+                  ? 'None · 只读'
+                  : String(field.value ?? '只读')}
           </span>
         )}
       </div>
@@ -442,6 +502,17 @@ export function SaveEditor({ game, onClose }: { game: Game; onClose: () => void 
           </>
         )}
       </Modal>
+      {valueEditor && (
+        <SaveValueEditor
+          field={valueEditor}
+          value={valueEditor.id in drafts ? drafts[valueEditor.id] : valueEditor.value}
+          onClose={() => setValueEditor(null)}
+          onApply={(value) => {
+            edit(valueEditor, value);
+            setValueEditor(null);
+          }}
+        />
+      )}
       {pending && (
         <Modal title="放弃未保存的存档修改？" variant="confirm" onClose={() => setPending(null)}>
           <p>未保存的修改将被放弃，磁盘存档保持不变。</p>
@@ -484,5 +555,140 @@ export function SaveEditor({ game, onClose }: { game: Game; onClose: () => void 
         </Modal>
       )}
     </>
+  );
+}
+
+function SaveValueEditor({
+  field,
+  value,
+  onClose,
+  onApply,
+}: {
+  field: SaveField;
+  value: SaveValue;
+  onClose: () => void;
+  onApply: (value: SaveValue) => void;
+}) {
+  const set = field.kind === 'string_set';
+  const [type, setType] = useState<string>(value === null ? 'boolean' : typeof value);
+  const [text, setText] = useState(
+    Array.isArray(value) ? value.join('\n') : value === null ? '' : String(value),
+  );
+  const [boolean, setBoolean] = useState(value === true);
+  const [error, setError] = useState('');
+  function apply() {
+    let next: SaveValue;
+    if (set) {
+      const members = text.split(/\r?\n/).filter((member) => member !== '');
+      if (
+        members.length > 2000 ||
+        members.some((member) => new TextEncoder().encode(member).length > 1024)
+      ) {
+        setError('最多 2000 个成员，每个成员最多 1024 字节。');
+        return;
+      }
+      if (new Set(members).size !== members.length) {
+        setError('成员不能重复，请删除重复行。');
+        return;
+      }
+      next = members.sort();
+    } else if (type === 'boolean') next = boolean;
+    else if (type === 'number') {
+      next = Number(text);
+      if (!text.trim() || !Number.isFinite(next) || Math.abs(next) > Number.MAX_SAFE_INTEGER) {
+        setError('请输入安全精度范围内的有效数值。');
+        return;
+      }
+    } else if (type === 'null') next = null;
+    else next = text;
+    onApply(next);
+  }
+  return (
+    <Modal
+      title={`${set ? '编辑集合成员' : '设置空值'} · ${field.name}`}
+      variant="confirm"
+      className="save-value-editor"
+      onClose={onClose}
+      footer={
+        <>
+          <button onClick={onClose}>取消</button>
+          <button className="primary" onClick={apply}>
+            应用到待保存修改
+          </button>
+        </>
+      }
+    >
+      {set ? (
+        <label>
+          成员标识（每行一个）
+          <textarea
+            aria-label="集合成员"
+            rows={8}
+            value={text}
+            onChange={(event) => {
+              setText(event.target.value);
+              setError('');
+            }}
+          />
+          <span className="muted">
+            保留大小写与空格。增删成员会改变集合内容，保存修改后才写入存档。
+          </span>
+        </label>
+      ) : (
+        <div className="save-null-editor">
+          <label>
+            值类型
+            <select
+              aria-label="空值初始化类型"
+              value={type}
+              onChange={(event) => {
+                setType(event.target.value);
+                setError('');
+              }}
+            >
+              <option value="boolean">布尔值</option>
+              <option value="number">数值</option>
+              <option value="string">文本</option>
+              <option value="null">None（空值）</option>
+            </select>
+          </label>
+          {type === 'boolean' ? (
+            <label>
+              值
+              <select
+                aria-label="初始化布尔值"
+                value={String(boolean)}
+                onChange={(event) => setBoolean(event.target.value === 'true')}
+              >
+                <option value="false">False</option>
+                <option value="true">True</option>
+              </select>
+            </label>
+          ) : (
+            type !== 'null' && (
+              <label>
+                值
+                <input
+                  aria-label="初始化值"
+                  type={type === 'number' ? 'number' : 'text'}
+                  step="any"
+                  value={text}
+                  onChange={(event) => {
+                    setText(event.target.value);
+                    setError('');
+                  }}
+                />
+              </label>
+            )
+          )}
+          <p className="muted">请根据游戏字段含义选择类型，不会根据变量名自动赋值。</p>
+        </div>
+      )}
+      {error && (
+        <p role="alert" className="error">
+          {error}
+        </p>
+      )}
+    </Modal>
   );
 }

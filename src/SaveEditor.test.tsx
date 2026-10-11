@@ -80,6 +80,96 @@ beforeEach(() => {
 });
 afterEach(() => vi.restoreAllMocks());
 describe('Save Editor Lite', () => {
+  it('expands container children and searches collapsed paths without losing pending edits', async () => {
+    const original = doc();
+    original.fields = [
+      { ...field('data', null, 'container'), editable: false, type_name: 'dict', child_count: 1 },
+      {
+        ...field('child', 5, 'number'),
+        name: 'data["money"]',
+        path: 'data["money"]',
+        parent_id: 'data',
+        type_name: 'int',
+      },
+    ];
+    vi.mocked(api.readEditableSave).mockResolvedValue(original);
+    render(<SaveEditor game={game} onClose={vi.fn()} />);
+    const expand = await screen.findByRole('button', { name: '展开 data' });
+    expect(screen.queryByLabelText('data["money"]')).toBeNull();
+    fireEvent.click(expand);
+    fireEvent.change(screen.getByLabelText('data["money"]'), { target: { value: '19' } });
+    fireEvent.click(screen.getByRole('button', { name: '收起 data' }));
+    fireEvent.change(screen.getByRole('textbox', { name: '存档字段' }), {
+      target: { value: 'money' },
+    });
+    expect((screen.getByLabelText('data["money"]') as HTMLInputElement).value).toBe('19');
+    fireEvent.click(screen.getByRole('button', { name: '保存修改 (1)' }));
+    await waitFor(() =>
+      expect(api.applySaveEdits).toHaveBeenCalledWith('game', 'one', 'revision-1', [
+        { id: 'child', value: 19 },
+      ]),
+    );
+  });
+
+  it('requires explicit null initialization and submits the selected numeric type', async () => {
+    const original = doc();
+    original.fields = [{ ...field('optional', null, 'null'), type_name: 'NoneType' }];
+    vi.mocked(api.readEditableSave).mockResolvedValue(original);
+    render(<SaveEditor game={game} onClose={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: '设置值…' }));
+    const popup = screen.getByRole('dialog', { name: '设置空值 · optional' });
+    fireEvent.change(within(popup).getByRole('combobox', { name: '空值初始化类型' }), {
+      target: { value: 'number' },
+    });
+    fireEvent.click(within(popup).getByRole('button', { name: '应用到待保存修改' }));
+    expect(within(popup).getByRole('alert').textContent).toContain('有效数值');
+    fireEvent.change(within(popup).getByLabelText('初始化值'), { target: { value: '2.75' } });
+    fireEvent.click(within(popup).getByRole('button', { name: '应用到待保存修改' }));
+    expect(api.applySaveEdits).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: '保存修改 (1)' }));
+    await waitFor(() =>
+      expect(api.applySaveEdits).toHaveBeenCalledWith('game', 'one', 'revision-1', [
+        { id: 'optional', value: 2.75 },
+      ]),
+    );
+  });
+
+  it('edits known set members as a draft, rejects duplicates and preserves the trust flow', async () => {
+    const original = renpyDoc('one', 'foreign');
+    original.slot.format = 'Persistent';
+    original.fields = [
+      {
+        ...field('gallery_unlocked', ['cg_a', 'cg_b'], 'string_set', 'persistent'),
+        type_name: 'renpy.revertable.RevertableSet',
+        child_count: 2,
+      },
+    ];
+    vi.mocked(api.listEditableSaves).mockResolvedValue({ slots: [original.slot], warnings: [] });
+    vi.mocked(api.readEditableSave).mockResolvedValue(original);
+    render(<SaveEditor game={game} onClose={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: '编辑成员 (2)' }));
+    const popup = screen.getByRole('dialog', { name: '编辑集合成员 · gallery_unlocked' });
+    fireEvent.change(within(popup).getByLabelText('集合成员'), { target: { value: 'cg_b\ncg_b' } });
+    fireEvent.click(within(popup).getByRole('button', { name: '应用到待保存修改' }));
+    expect(within(popup).getByRole('alert').textContent).toContain('不能重复');
+    fireEvent.change(within(popup).getByLabelText('集合成员'), {
+      target: { value: 'cg_new\ncg_b' },
+    });
+    fireEvent.click(within(popup).getByRole('button', { name: '应用到待保存修改' }));
+    expect(api.applySaveEdits).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: '保存修改 (1)' }));
+    await confirmSource();
+    await waitFor(() =>
+      expect(api.applySaveEdits).toHaveBeenCalledWith(
+        'game',
+        'one',
+        'revision-1',
+        [{ id: 'gallery_unlocked', value: ['cg_b', 'cg_new'] }],
+        true,
+      ),
+    );
+  });
+
   it.each(['foreign', 'unsigned', 'invalid', 'unknown'] as const)(
     'confirms %s associated saves and remembers the revision returned by successful writes',
     async (status) => {

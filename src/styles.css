@@ -4628,6 +4628,42 @@ button.save-editor-entry:active:not(:disabled) {
 .save-editor-field.is-changed {
   background: #f0f6ff;
 }
+.save-editor-field.is-child {
+  padding-left: 34px;
+}
+.save-editor-expand {
+  padding: 0;
+  width: 24px;
+  height: 24px;
+  min-height: 0;
+  flex: 0 0 24px;
+  border: none;
+  background: transparent;
+}
+.save-editor-expand[aria-expanded='true'] .icon {
+  transform: rotate(90deg);
+}
+.save-editor-value-button {
+  height: 32px;
+  min-height: 0;
+  max-width: min(220px, 40%);
+  padding: 4px 10px;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.save-value-editor .modal-body label,
+.save-null-editor {
+  display: grid;
+  gap: 10px;
+}
+.save-value-editor textarea {
+  resize: vertical;
+  min-height: 140px;
+  max-height: 240px;
+  font-family: inherit;
+}
 .save-editor-field-info {
   flex: 1;
   min-width: 0;

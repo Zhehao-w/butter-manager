@@ -1,5 +1,5 @@
 //! A symbolic pickle stack machine. GLOBAL/REDUCE/BUILD never execute code.
-//! Patches replace a parsed scalar's defining opcode, leaving every other opcode intact.
+//! Scalar patches preserve other opcodes; known set edits replace only the BUILD state.
 use super::*;
 use serde_json::json;
 use std::collections::HashMap;
@@ -9,16 +9,26 @@ enum Node {
     Scalar(Value),
     Sequence(Vec<usize>),
     Dict(Vec<(usize, usize)>),
+    Global {
+        module: String,
+        name: String,
+        dependencies: Vec<usize>,
+    },
     Object {
         dependencies: Vec<usize>,
         state: Option<usize>,
     },
     Opaque,
 }
+static EMPTY_LIST: Node = Node::Sequence(Vec::new());
+static EMPTY_DICT: Node = Node::Dict(Vec::new());
 struct Entry {
     node: Node,
     span: std::ops::Range<usize>,
     dictionary_checkpoint: usize,
+    type_name: &'static str,
+    collection: Option<Node>,
+    build_position: Option<usize>,
 }
 pub(super) struct Pickle {
     entries: Vec<Entry>,
@@ -26,6 +36,19 @@ pub(super) struct Pickle {
     protocol: u8,
     frames: Vec<(usize, usize)>,
     references: Vec<usize>,
+}
+struct FieldTarget {
+    field: Field,
+    entry: usize,
+    top_name: String,
+}
+struct FieldLocation {
+    id: String,
+    path: String,
+    parent: Option<String>,
+    top_name: String,
+    safe: bool,
+    ancestors: Vec<usize>,
 }
 fn pop(stack: &mut Vec<Option<usize>>) -> Result<usize> {
     stack
@@ -333,7 +356,15 @@ impl Pickle {
                         .ok_or_else(|| invalid("pickle 缺少列表目标"))?;
                     match &mut entries[target].node {
                         Node::Sequence(items) => items.extend(ids),
-                        Node::Object { dependencies, .. } => dependencies.extend(ids),
+                        Node::Object { .. } => {
+                            let collection = entries[target]
+                                .collection
+                                .get_or_insert_with(|| Node::Sequence(Vec::new()));
+                            let Node::Sequence(items) = collection else {
+                                return Err(invalid("混合 pickle 容器类型"));
+                            };
+                            items.extend(ids);
+                        }
                         _ => return Err(invalid("非标准 pickle APPENDS 目标")),
                     }
                     continue;
@@ -360,22 +391,47 @@ impl Pickle {
                             );
                             entries[target].dictionary_checkpoint = cursor.pos;
                         }
-                        Node::Object { dependencies, .. } => dependencies.extend(ids),
+                        Node::Object { .. } => {
+                            let collection = entries[target]
+                                .collection
+                                .get_or_insert_with(|| Node::Dict(Vec::new()));
+                            let Node::Dict(items) = collection else {
+                                return Err(invalid("混合 pickle 容器类型"));
+                            };
+                            items.extend(
+                                ids.as_chunks::<2>().0.iter().map(|pair| (pair[0], pair[1])),
+                            );
+                        }
                         _ => return Err(invalid("非标准 pickle SETITEMS 目标")),
                     }
                     continue;
                 }
                 b'c' => {
-                    cursor.line()?;
-                    cursor.line()?;
-                    Node::Opaque
+                    let module = std::str::from_utf8(cursor.line()?)
+                        .map_err(format_error)?
+                        .to_owned();
+                    let name = std::str::from_utf8(cursor.line()?)
+                        .map_err(format_error)?
+                        .to_owned();
+                    Node::Global {
+                        module,
+                        name,
+                        dependencies: Vec::new(),
+                    }
                 }
                 0x93 => {
                     let name = pop(&mut stack)?;
                     let module = pop(&mut stack)?;
-                    Node::Object {
-                        dependencies: vec![module, name],
-                        state: None,
+                    match (&entries[module].node, &entries[name].node) {
+                        (
+                            Node::Scalar(Value::String(module_name)),
+                            Node::Scalar(Value::String(class_name)),
+                        ) => Node::Global {
+                            module: module_name.clone(),
+                            name: class_name.clone(),
+                            dependencies: vec![module, name],
+                        },
+                        _ => return Err(invalid("STACK_GLOBAL 模块或名称不是字符串")),
                     }
                 }
                 b'R' | 0x81 | 0x92 => {
@@ -405,6 +461,7 @@ impl Pickle {
                             if old.replace(state).is_some() {
                                 return Err(invalid("重复 BUILD 对象不可可靠编辑"));
                             }
+                            entries[object].build_position = Some(start);
                         }
                         _ => return Err(invalid("pickle BUILD 目标无效")),
                     }
@@ -461,33 +518,56 @@ impl Pickle {
                 node,
                 span: start..cursor.pos,
                 dictionary_checkpoint: cursor.pos,
+                type_name: match op {
+                    b'N' => "NoneType",
+                    b']' | b'l' => "list",
+                    b')' | b't' | 0x85..=0x87 => "tuple",
+                    0x8f => "set",
+                    0x91 => "frozenset",
+                    b'}' | b'd' => "dict",
+                    b'S' | b'T' | b'U' | b'B' | b'C' | 0x8e => "bytes",
+                    0x96 => "bytearray",
+                    b'L' | b'I' | 0x8a | 0x8b => "integer",
+                    b'F' | b'G' => "float",
+                    b'c' | 0x93 => "global",
+                    _ => "object",
+                },
+                collection: None,
+                build_position: None,
             });
             stack.push(Some(id));
         };
         let mut references = vec![0; entries.len()];
         references[root] += 1;
         for entry in &entries {
-            match &entry.node {
-                Node::Sequence(ids) => {
-                    for id in ids {
-                        references[*id] += 1;
+            for node in std::iter::once(&entry.node).chain(entry.collection.iter()) {
+                match node {
+                    Node::Sequence(ids) => {
+                        for id in ids {
+                            references[*id] += 1;
+                        }
                     }
-                }
-                Node::Dict(items) => {
-                    for (k, v) in items {
-                        references[*k] += 1;
-                        references[*v] += 1;
+                    Node::Dict(items) => {
+                        for (k, v) in items {
+                            references[*k] += 1;
+                            references[*v] += 1;
+                        }
                     }
-                }
-                Node::Object {
-                    dependencies,
-                    state,
-                } => {
-                    for id in dependencies.iter().chain(state.iter()) {
-                        references[*id] += 1;
+                    Node::Object {
+                        dependencies,
+                        state,
+                    } => {
+                        for id in dependencies.iter().chain(state.iter()) {
+                            references[*id] += 1;
+                        }
                     }
+                    Node::Global { dependencies, .. } => {
+                        for id in dependencies {
+                            references[*id] += 1;
+                        }
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
         }
         Ok(Self {
@@ -589,7 +669,240 @@ impl Pickle {
         }
         index
     }
-    pub fn fields(&self, persistent: bool) -> Result<Vec<Field>> {
+    fn object_class(&self, id: usize) -> Option<(&str, &str)> {
+        let Node::Object { dependencies, .. } = &self.entries[id].node else {
+            return None;
+        };
+        let Node::Global { module, name, .. } = &self.entries[*dependencies.first()?].node else {
+            return None;
+        };
+        if matches!(module.as_str(), "copy_reg" | "copyreg") && name == "_reconstructor" {
+            let Node::Sequence(args) = &self.entries[*dependencies.get(1)?].node else {
+                return None;
+            };
+            let Node::Global { module, name, .. } = &self.entries[*args.first()?].node else {
+                return None;
+            };
+            return Some((module, name));
+        }
+        Some((module, name))
+    }
+    fn standard_wrapper(&self, id: usize, class: &str) -> bool {
+        self.object_class(id).is_some_and(|(module, name)| {
+            matches!(module, "renpy.revertable" | "renpy.python") && name == class
+        })
+    }
+    fn empty_constructor(&self, id: usize) -> bool {
+        matches!(&self.entries[id].node, Node::Object { dependencies, .. }
+            if dependencies.len() == 2 && matches!(&self.entries[dependencies[1]].node, Node::Sequence(args) if args.is_empty()))
+    }
+    fn string_set_state(&self, id: usize) -> Option<(usize, usize, Vec<String>)> {
+        if !self.standard_wrapper(id, "RevertableSet") || !self.empty_constructor(id) {
+            return None;
+        }
+        let Node::Object {
+            state: Some(state), ..
+        } = &self.entries[id].node
+        else {
+            return None;
+        };
+        let Node::Sequence(parts) = &self.entries[*state].node else {
+            return None;
+        };
+        if parts.len() != 1 || self.entries[*state].type_name != "tuple" {
+            return None;
+        }
+        let dict = parts[0];
+        let Node::Dict(items) = &self.entries[dict].node else {
+            return None;
+        };
+        let mut members = Vec::new();
+        for (key, value) in items {
+            let Node::Scalar(Value::String(name)) = &self.entries[*key].node else {
+                return None;
+            };
+            if !matches!(&self.entries[*value].node, Node::Scalar(Value::Bool(true))) {
+                return None;
+            }
+            members.push(name.clone());
+        }
+        members.sort();
+        if members.windows(2).any(|pair| pair[0] == pair[1]) {
+            return None;
+        }
+        Some((*state, dict, members))
+    }
+    fn collection(&self, id: usize) -> Option<&Node> {
+        match &self.entries[id].node {
+            node @ (Node::Sequence(_) | Node::Dict(_)) => Some(node),
+            Node::Object { state: None, .. }
+                if self.standard_wrapper(id, "RevertableList")
+                    || self.standard_wrapper(id, "RevertableDict") =>
+            {
+                // Only known containers with empty constructor arguments may expose writable children.
+                if !self.empty_constructor(id) {
+                    return None;
+                }
+                self.entries[id]
+                    .collection
+                    .as_ref()
+                    .or(Some(if self.standard_wrapper(id, "RevertableList") {
+                        &EMPTY_LIST
+                    } else {
+                        &EMPTY_DICT
+                    }))
+                    .filter(|node| {
+                        matches!(node, Node::Sequence(_))
+                            && self.standard_wrapper(id, "RevertableList")
+                            || matches!(node, Node::Dict(_))
+                                && self.standard_wrapper(id, "RevertableDict")
+                    })
+            }
+            _ => None,
+        }
+    }
+    fn visit(&self, id: usize, location: FieldLocation, out: &mut Vec<FieldTarget>) -> Result<()> {
+        if out.len() >= 60_000 {
+            return Err(invalid("存档字段数量超过轻量编辑器限制"));
+        }
+        let entry = &self.entries[id];
+        let cycle = location.ancestors.contains(&id);
+        let bounded = location.ancestors.len() < 12;
+        let safe = location.safe && self.references[id] == 1 && !cycle && bounded;
+        let value = match &entry.node {
+            Node::Scalar(value) => value.clone(),
+            _ => Value::Null,
+        };
+        let mut field = Field::new(
+            location.id.clone(),
+            location.path.clone(),
+            "variables",
+            value,
+        );
+        field.path = location.path.clone();
+        field.parent_id = location.parent.clone();
+        field.type_name = Some(match &entry.node {
+            Node::Scalar(Value::String(_)) => "str".into(),
+            Node::Scalar(Value::Bool(_)) => "bool".into(),
+            Node::Scalar(Value::Number(value)) => if value.is_i64() || value.is_u64() {
+                "int"
+            } else {
+                "float"
+            }
+            .into(),
+            Node::Object { .. } => self
+                .object_class(id)
+                .map(|(m, n)| format!("{m}.{n}"))
+                .unwrap_or_else(|| "未知对象".into()),
+            _ => entry.type_name.into(),
+        });
+        if matches!(&entry.node, Node::Scalar(Value::Null)) && entry.type_name == "NoneType" {
+            field.kind = "null".into();
+            field.editable = true;
+            field.reason = None;
+        } else if let Some((state, dict, members)) = self.string_set_state(id) {
+            field.kind = "string_set".into();
+            field.child_count = Some(members.len());
+            field.value = json!(members);
+            field.editable =
+                self.protocol >= 2 && self.references[state] == 1 && self.references[dict] == 1;
+            field.reason =
+                (!field.editable).then(|| "集合状态存在共享引用或协议不支持，只读".into());
+        } else if let Some(collection) = self.collection(id) {
+            field.kind = "container".into();
+            field.child_count = Some(match collection {
+                Node::Sequence(ids) => ids.len(),
+                Node::Dict(items) => items.len(),
+                _ => 0,
+            });
+            field.readonly("展开查看子字段");
+        } else if !matches!(
+            entry.node,
+            Node::Scalar(Value::Number(_) | Value::String(_) | Value::Bool(_))
+        ) {
+            field.readonly("此类型暂未开放编辑");
+        }
+        if !safe {
+            field.readonly(if cycle {
+                "循环引用，只读"
+            } else if !bounded {
+                "嵌套超过 12 层，只读"
+            } else if self.references[id] != 1 {
+                "值存在共享引用，修改可能影响其他对象"
+            } else {
+                "所属容器或字段不允许安全修改"
+            });
+        }
+        out.push(FieldTarget {
+            field,
+            entry: id,
+            top_name: location.top_name.clone(),
+        });
+        if cycle || !bounded {
+            return Ok(());
+        }
+        let Some(collection) = self.collection(id) else {
+            return Ok(());
+        };
+        let mut ancestors = location.ancestors.clone();
+        ancestors.push(id);
+        let child = |suffix: String, path: String, writable: bool| FieldLocation {
+            id: format!("{}{}", location.id, suffix),
+            path,
+            parent: Some(location.id.clone()),
+            top_name: location.top_name.clone(),
+            safe: safe && writable,
+            ancestors: ancestors.clone(),
+        };
+        match collection {
+            Node::Sequence(ids) => {
+                let writable = !matches!(entry.type_name, "set" | "frozenset");
+                for (index, value) in ids.iter().enumerate() {
+                    self.visit(
+                        *value,
+                        child(
+                            format!("/i{index}"),
+                            format!("{}[{index}]", location.path),
+                            writable,
+                        ),
+                        out,
+                    )?;
+                }
+            }
+            Node::Dict(items) => {
+                let mut keys = HashMap::new();
+                for (key, _) in items {
+                    if let Node::Scalar(value) = &self.entries[*key].node {
+                        if value.is_string() || value.is_boolean() || value.is_number() {
+                            *keys.entry(dictionary_key(value)).or_insert(0usize) += 1;
+                        }
+                    }
+                }
+                for (index, (key, value)) in items.iter().enumerate() {
+                    let Node::Scalar(key) = &self.entries[*key].node else {
+                        continue;
+                    };
+                    if !(key.is_string() || key.is_boolean() || key.is_number()) {
+                        continue;
+                    }
+                    let unique = keys.get(&dictionary_key(key)) == Some(&1);
+                    let key = key.to_string();
+                    self.visit(
+                        *value,
+                        child(
+                            format!("/d{index}"),
+                            format!("{}[{key}]", location.path),
+                            unique,
+                        ),
+                        out,
+                    )?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+    fn targets(&self, persistent: bool) -> Result<Vec<FieldTarget>> {
         let items = self.dictionary(persistent)?;
         let timestamp_dict = if persistent {
             self.persistent_timestamps()
@@ -605,89 +918,106 @@ impl Pickle {
         let mut counts = HashMap::new();
         for (key, _) in items {
             if let Node::Scalar(Value::String(name)) = &self.entries[*key].node {
-                *counts.entry(name).or_insert(0) += 1;
+                *counts.entry(name).or_insert(0usize) += 1;
             }
         }
-        let mut fields = Vec::new();
+        let mut targets = Vec::new();
         for (index, (key, id)) in items.iter().enumerate() {
             let Node::Scalar(Value::String(name)) = &self.entries[*key].node else {
                 continue;
             };
-            if persistent {
-                if name.starts_with('_') {
-                    continue;
-                }
-            } else if !name.starts_with("store.") {
+            if persistent && name.starts_with('_') || !persistent && !name.starts_with("store.") {
                 continue;
             }
-            let value = match &self.entries[*id].node {
-                Node::Scalar(value) => value.clone(),
-                _ => Value::Null,
-            };
-            let mut field = Field::new(
-                format!("pickle:{index}"),
-                name.clone(),
-                if persistent {
+            let private = !persistent
+                && (name.split('.').skip(1).any(|part| part.starts_with('_'))
+                    || name.starts_with("store.renpy.")
+                    || name.starts_with("store.config."));
+            let start = targets.len();
+            self.visit(
+                *id,
+                FieldLocation {
+                    id: format!("pickle:{index}"),
+                    path: name.clone(),
+                    parent: None,
+                    top_name: name.clone(),
+                    safe: !private && counts[name] == 1,
+                    ancestors: Vec::new(),
+                },
+                &mut targets,
+            )?;
+            for target in &mut targets[start..] {
+                target.field.category = if persistent {
                     "persistent"
                 } else {
                     "variables"
-                },
-                value,
-            );
-            field.path = name.clone();
-            if !persistent
-                && (name.split('.').skip(1).any(|part| part.starts_with('_'))
-                    || name.starts_with("store.renpy.")
-                    || name.starts_with("store.config."))
-            {
-                field.readonly("Ren’Py 内建或私有状态，只读");
-            }
-            if counts[name] > 1 {
-                field.readonly("变量名称重复，目标不唯一");
-            } else if self.references[*id] != 1 {
-                field.readonly("值存在共享引用，修改可能影响其他对象");
-            } else if field
-                .value
-                .as_f64()
-                .is_some_and(|n| !n.is_finite() || n.abs() > 9_007_199_254_740_991.0)
-            {
-                field.readonly("数值超出安全精度范围");
-            }
-            if persistent && field.editable {
-                if let Err(error) = &timestamp_dict {
-                    field.readonly(&error.to_string());
-                } else if timestamp_values
-                    .as_ref()
-                    .and_then(|map| map.get(name.as_str()))
-                    .is_some_and(Option::is_none)
-                {
-                    field.readonly("此字段的 persistent 时间戳不唯一或存在共享引用");
+                }
+                .into();
+                if private {
+                    target.field.readonly("Ren’Py 内建或私有状态，只读");
+                } else if counts[name] != 1 {
+                    target.field.readonly("变量名称重复，目标不唯一");
+                }
+                if persistent && target.field.editable {
+                    if let Err(error) = &timestamp_dict {
+                        target.field.readonly(&error.to_string());
+                    } else if timestamp_values
+                        .as_ref()
+                        .and_then(|map| map.get(name.as_str()))
+                        .is_some_and(Option::is_none)
+                    {
+                        target
+                            .field
+                            .readonly("此字段的 persistent 时间戳不唯一或存在共享引用");
+                    }
                 }
             }
-            fields.push(field);
         }
-        if fields.len() > 60_000 {
-            return Err(invalid("存档字段数量超过轻量编辑器限制"));
-        }
-        Ok(fields)
+        Ok(targets)
+    }
+    pub fn fields(&self, persistent: bool) -> Result<Vec<Field>> {
+        Ok(self
+            .targets(persistent)?
+            .into_iter()
+            .map(|target| target.field)
+            .collect())
     }
     pub fn patch(&self, bytes: &[u8], persistent: bool, changes: &[Change]) -> Result<Vec<u8>> {
-        let fields = self.fields(persistent)?;
+        let targets = self.targets(persistent)?;
+        let fields: Vec<_> = targets.iter().map(|target| target.field.clone()).collect();
         validate_changes(&fields, changes)?;
+        let by_id: HashMap<_, _> = targets
+            .iter()
+            .map(|target| (target.field.id.as_str(), target))
+            .collect();
         let mut replacements = Vec::new();
         for change in changes {
-            let index: usize = change
-                .id
-                .strip_prefix("pickle:")
-                .ok_or_else(|| invalid("无效 pickle 字段"))?
-                .parse()
-                .map_err(format_error)?;
-            let id = self
-                .dictionary(persistent)?
-                .get(index)
-                .ok_or_else(|| invalid("无效 pickle 字段"))?
-                .1;
-            let entry = &self.entries[id];
+            let target = by_id
+                .get(change.id.as_str())
+                .ok_or_else(|| invalid("无效 pickle 字段"))?;
+            let entry = &self.entries[target.entry];
+            if target.field.kind == "string_set" {
+                let position = entry
+                    .build_position
+                    .ok_or_else(|| invalid("集合缺少 BUILD 位置"))?;
+                let mut state = vec![b'0', b'}']; // Drop the old BUILD state, preserve all original memo definitions.
+                for member in change
+                    .value
+                    .as_array()
+                    .ok_or_else(|| invalid("集合成员无效"))?
+                {
+                    state.extend(unicode_opcode(
+                        member
+                            .as_str()
+                            .ok_or_else(|| invalid("集合成员不是字符串"))?,
+                        self.protocol,
+                    ));
+                    state.extend([0x88, b's']);
+                }
+                state.push(0x85); // RevertableSet.__setstate__ expects (dict-of-members,).
+                replacements.push((position..position, state));
+                continue;
+            }
             let mut out = Vec::new();
             match &change.value {
                 Value::Bool(value) => {
@@ -698,11 +1028,14 @@ impl Pickle {
                     }
                 }
                 Value::Number(number) => {
-                    let original = match &entry.node {
-                        Node::Scalar(Value::Number(n)) => n,
+                    let integer = match &entry.node {
+                        Node::Scalar(Value::Number(n)) => n.is_i64() || n.is_u64(),
+                        Node::Scalar(Value::Null) if target.field.kind == "null" => {
+                            number.is_i64() || number.is_u64()
+                        }
                         _ => return Err(invalid("原字段非数值")),
                     };
-                    if original.is_i64() || original.is_u64() {
+                    if integer {
                         let value = number
                             .as_i64()
                             .ok_or_else(|| invalid("整数变量不能改为小数"))?;
@@ -739,6 +1072,7 @@ impl Pickle {
                         out.extend_from_slice(text.as_bytes());
                     }
                 }
+                Value::Null if target.field.kind == "null" => out.push(b'N'),
                 _ => return Err(invalid("不能修改复杂 pickle 对象")),
             }
             replacements.push((entry.span.clone(), out));
@@ -752,12 +1086,11 @@ impl Pickle {
             time.extend_from_slice(&now.to_be_bytes());
             let dict = self.persistent_timestamps()?;
             let mut additions = Vec::new();
-            for change in changes {
-                let name = &fields
-                    .iter()
-                    .find(|f| f.id == change.id)
-                    .ok_or_else(|| invalid("无效 persistent 字段"))?
-                    .path;
+            let names: std::collections::BTreeSet<_> = changes
+                .iter()
+                .map(|change| by_id[change.id.as_str()].top_name.as_str())
+                .collect();
+            for name in names {
                 let timestamp = dict
                     .map(|id| self.timestamp(id, name))
                     .transpose()?
@@ -821,12 +1154,23 @@ impl Pickle {
                 .unwrap_or(&field.value);
             if !by_id
                 .get(field.id.as_str())
-                .is_some_and(|f| same_value(&f.value, expected) && f.path == field.path)
+                .is_some_and(|f| same_field_value(f, expected) && f.path == field.path)
             {
                 return Err(invalid("pickle 修改后变量或引用校验失败"));
             }
         }
         Ok(output)
+    }
+}
+
+fn dictionary_key(value: &Value) -> String {
+    match value {
+        Value::Bool(value) => format!("number:{}", u8::from(*value)),
+        Value::Number(value) => {
+            let n = value.as_f64().unwrap_or(f64::NAN);
+            format!("number:{}", if n == 0.0 { 0.0 } else { n })
+        }
+        _ => format!("string:{value}"),
     }
 }
 

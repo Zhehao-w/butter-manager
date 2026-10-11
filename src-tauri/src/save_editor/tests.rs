@@ -33,6 +33,151 @@ fn change(field: &Field, value: Value) -> Change {
 fn field<'a>(fields: &'a [Field], name: &str) -> &'a Field {
     fields.iter().find(|f| f.name == name).unwrap()
 }
+
+#[test]
+fn renpy_collections_edit_children_nulls_and_known_sets_preserving_types_and_aliases() {
+    let fixtures: Value =
+        serde_json::from_str(include_str!("fixtures/renpy-collections.json")).unwrap();
+    for fixture in fixtures.as_array().unwrap() {
+        let protocol = fixture["protocol"].as_u64().unwrap();
+        let bytes = raw(fixture, "persistent");
+        let pickle = pickle::Pickle::parse(&bytes).unwrap();
+        let fields = pickle.fields(true).unwrap();
+        assert_eq!(field(&fields, "data").kind, "container");
+        assert_eq!(
+            field(&fields, "data[\"list\"]").type_name.as_deref(),
+            Some("list")
+        );
+        assert_eq!(
+            field(&fields, "data[\"tuple\"]").type_name.as_deref(),
+            Some("tuple")
+        );
+        assert!(field(&fields, "data[\"list\"][0]").editable);
+        assert!(!field(&fields, "shared_a[0][\"score\"]").editable);
+        assert!(
+            fields
+                .iter()
+                .any(|f| f.path.starts_with("cycle[")
+                    && f.reason.as_deref() == Some("循环引用，只读"))
+        );
+        assert!(!field(&fields, "custom").editable);
+        assert!(!field(&fields, "large").editable);
+        let mut changes = vec![
+            change(field(&fields, "data[\"list\"][0]"), json!(42)),
+            change(field(&fields, "data[\"list\"][2]"), json!("initialized")),
+            change(field(&fields, "data[\"tuple\"][1]"), json!(3.75)),
+            change(field(&fields, "null_value"), json!(true)),
+        ];
+        if protocol >= 2 {
+            assert!(field(&fields, "gallery_unlocked").editable);
+            assert_eq!(field(&fields, "gallery_unlocked").kind, "string_set");
+            assert_eq!(
+                field(&fields, "gallery_unlocked").value,
+                json!(["cg_a", "cg_b"])
+            );
+            assert_eq!(field(&fields, "empty_list").child_count, Some(0));
+            changes.extend([
+                change(
+                    field(&fields, "gallery_unlocked"),
+                    json!(["cg_new", "cg_b"]),
+                ),
+                change(field(&fields, "wrapper[\"flags\"][0]"), json!(true)),
+            ]);
+        } else {
+            assert!(!field(&fields, "gallery_unlocked").editable);
+        }
+        let next = pickle.patch(&bytes, true, &changes).unwrap();
+        let after = pickle::Pickle::parse(&next).unwrap().fields(true).unwrap();
+        for change in changes {
+            let field = after.iter().find(|f| f.id == change.id).unwrap();
+            assert!(same_field_value(field, &change.value));
+        }
+        export_fixture(&format!("collections-{protocol}.pickle"), &next);
+        if protocol >= 2 {
+            for invalid in [
+                json!(["duplicate", "duplicate"]),
+                json!([42]),
+                json!(["line\nbreak"]),
+            ] {
+                assert!(pickle
+                    .patch(
+                        &bytes,
+                        true,
+                        &[change(field(&fields, "gallery_unlocked"), invalid)]
+                    )
+                    .is_err());
+            }
+            let empty = pickle
+                .patch(
+                    &bytes,
+                    true,
+                    &[change(field(&fields, "gallery_unlocked"), json!([]))],
+                )
+                .unwrap();
+            assert_eq!(
+                field(
+                    &pickle::Pickle::parse(&empty).unwrap().fields(true).unwrap(),
+                    "gallery_unlocked"
+                )
+                .value,
+                json!([])
+            );
+        }
+    }
+}
+
+#[test]
+fn renpy_nested_duplicates_shared_ancestors_and_globals_cannot_be_modified() {
+    // True and 1 compare equal as Python dictionary keys, despite distinct pickle types.
+    let bytes = b"\x80\x02}X\x01\x00\x00\x00d}(\x88K\x05K\x01K\x06us.";
+    let pickle = pickle::Pickle::parse(bytes).unwrap();
+    let fields = pickle.fields(true).unwrap();
+    assert!(!field(&fields, "d[true]").editable);
+    assert!(!field(&fields, "d[1]").editable);
+    // A displayed string referenced by STACK_GLOBAL must stay read-only.
+    let bytes = b"\x80\x04}(\x8c\x06module\x8c\x10renpy.revertable\x94\x8c\x05otherh\x00\x8c\x05Dummy\x93)\x81u.";
+    let fields = pickle::Pickle::parse(bytes).unwrap().fields(true).unwrap();
+    assert!(!field(&fields, "module").editable);
+}
+
+#[test]
+#[ignore = "explicit read-only compatibility probe; does not write or export game data"]
+fn readonly_persistent_compatibility_probe() {
+    let path = PathBuf::from(
+        std::env::var_os("BUTTER_READONLY_PERSISTENT_PROBE").expect("provide a persistent path"),
+    );
+    let original = fs::read(&path).unwrap();
+    let mut decoded = Vec::new();
+    flate2::read::ZlibDecoder::new(original.as_slice())
+        .take(DECODE_LIMIT as u64 + 1)
+        .read_to_end(&mut decoded)
+        .unwrap();
+    assert!(decoded.len() <= DECODE_LIMIT);
+    let pickle = pickle::Pickle::parse(&decoded).unwrap();
+    let fields = pickle.fields(true).unwrap();
+    let gallery = field(&fields, "gallery_unlocked");
+    assert_eq!(gallery.kind, "string_set");
+    assert!(gallery.editable, "{:?}", gallery.reason);
+    let mut members = gallery.value.as_array().unwrap().clone();
+    if !members.is_empty() {
+        members.remove(0);
+    }
+    members.push(json!("__butter_memory_only_probe__"));
+    let next = pickle
+        .patch(&decoded, true, &[change(gallery, Value::Array(members))])
+        .unwrap();
+    let after = pickle::Pickle::parse(&next).unwrap().fields(true).unwrap();
+    assert_eq!(
+        field(&after, "gallery_unlocked").type_name,
+        gallery.type_name
+    );
+    assert_eq!(fs::read(&path).unwrap(), original);
+    println!(
+        "Read-only probe: {} / {} members; in-memory edit passed, file unchanged",
+        gallery.type_name.as_deref().unwrap(),
+        gallery.child_count.unwrap()
+    );
+}
 fn zip(log: &[u8], signatures: &str) -> Vec<u8> {
     let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
     writer.set_comment("keep archive comment");
@@ -255,7 +400,8 @@ fn pickle_protocols_scalar_changes_complex_objects_and_shared_memo() {
         let fields = pickle.fields(false).unwrap();
         assert_eq!(field(&fields, "store.name").value, "勇者");
         assert!(!field(&fields, "store.list").editable);
-        assert!(!field(&fields, "store.none").editable);
+        assert!(field(&fields, "store.none").editable);
+        assert_eq!(field(&fields, "store.none").kind, "null");
         assert!(!field(&fields, "store.shared").editable);
         let ids: HashSet<_> = fields.iter().map(|field| &field.id).collect();
         assert_eq!(ids.len(), fields.len());

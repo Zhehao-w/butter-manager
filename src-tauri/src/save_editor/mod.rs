@@ -1,4 +1,4 @@
-//! Save Editor Lite: only discovered, associated slots and explicit scalar paths are writable.
+//! Save Editor Lite: associated slots, explicit leaf paths and known string sets are writable.
 mod pickle;
 mod renpy;
 mod rpg;
@@ -60,6 +60,22 @@ fn format_error(error: impl std::fmt::Display) -> Error {
 fn same_value(a: &Value, b: &Value) -> bool {
     a == b || (a.is_number() && b.is_number() && a.as_f64() == b.as_f64())
 }
+fn same_field_value(field: &Field, value: &Value) -> bool {
+    if field.kind == "string_set" {
+        let members = |value: &Value| {
+            value.as_array().map(|items| {
+                items
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect::<std::collections::BTreeSet<_>>()
+            })
+        };
+        members(&field.value).is_some() && members(&field.value) == members(value)
+    } else {
+        same_value(&field.value, value)
+    }
+}
 fn read_limited(path: &Path, limit: usize) -> Result<Vec<u8>> {
     let mut data = Vec::new();
     fs::File::open(path)?
@@ -89,6 +105,12 @@ pub struct Field {
     pub editable: bool,
     pub reason: Option<String>,
     pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub type_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub child_count: Option<usize>,
 }
 impl Field {
     fn new(path: String, name: String, category: &str, value: Value) -> Self {
@@ -109,6 +131,9 @@ impl Field {
             editable,
             reason: (!editable).then(|| "复杂对象或未支持的类型，只读".into()),
             description: None,
+            type_name: None,
+            parent_id: None,
+            child_count: None,
         };
         if field
             .value
@@ -356,8 +381,11 @@ fn validate_changes(fields: &[Field], changes: &[Change]) -> Result<()> {
     }
     if changes
         .iter()
-        .filter_map(|change| change.value.as_str())
-        .map(str::len)
+        .map(|change| match &change.value {
+            Value::String(s) => s.len(),
+            Value::Array(items) => items.iter().filter_map(Value::as_str).map(str::len).sum(),
+            _ => 0,
+        })
         .sum::<usize>()
         > 8 * 1024 * 1024
     {
@@ -390,6 +418,38 @@ fn validate_changes(fields: &[Field], changes: &[Change]) -> Result<()> {
                 .value
                 .as_str()
                 .is_some_and(|s| s.len() <= 1024 * 1024),
+            "null" => {
+                change.value.is_null()
+                    || change.value.is_boolean()
+                    || change
+                        .value
+                        .as_str()
+                        .is_some_and(|s| s.len() <= 1024 * 1024)
+                    || change
+                        .value
+                        .as_f64()
+                        .is_some_and(|n| n.is_finite() && n.abs() <= 9_007_199_254_740_991.0)
+            }
+            "string_set" => change.value.as_array().is_some_and(|items| {
+                items.len() <= 2000
+                    && items.iter().all(|v| {
+                        v.as_str().is_some_and(|s| {
+                            !s.is_empty() && s.len() <= 1024 && !s.contains(['\n', '\r'])
+                        })
+                    })
+                    && items
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .collect::<HashSet<_>>()
+                        .len()
+                        == items.len()
+                    && items
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(str::len)
+                        .sum::<usize>()
+                        <= 1024 * 1024
+            }),
             _ => false,
         };
         if !compatible {
@@ -464,7 +524,7 @@ fn write_document(
         for change in changes {
             if !by_id
                 .get(change.id.as_str())
-                .is_some_and(|f| same_value(&f.value, &change.value))
+                .is_some_and(|f| same_field_value(f, &change.value))
             {
                 return Err(invalid("修改后的字段校验失败"));
             }

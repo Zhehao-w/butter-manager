@@ -10,12 +10,18 @@
 | --- | --- | --- |
 | RPG Maker MV | 标准 `file*.rpgsave`，LZString Base64；变量数字/布尔/字符串、开关、金钱、道具/武器/防具数量 | 不提供任意 JSON 编辑；复杂变量只读 |
 | RPG Maker MZ | 标准 `file*.rmmzsave`，pako zlib 的 UTF-8 二进制字符串，兼容原始 zlib 字节并保留原编码 | ZIP、加密或插件自定义封装拒绝写入 |
-| Ren’Py `.save` | ZIP 的 `log`、`signatures`；唯一的 `store.*` 整数、小数、布尔、Unicode 字符串；元信息与 PNG 截图 | None、列表、字典、自定义对象、内建/私有状态、共享引用、重复名称只读 |
-| Ren’Py `persistent` | zlib pickle + 尾部签名；顶层公开简单字段；同步标准 `_changed` 修改时间戳 | 复杂对象原字节保留，不重建；无法安全维护时间戳时只读 |
+| Ren’Py `.save` | ZIP 的 `log`、`signatures`；公开 `store.*` 简单字段、字典/列表/元组中的简单子字段、None 初始化；元信息与 PNG 截图 | 未知自定义对象、内建/私有状态、共享引用、重复名称只读；不增删字典键或列表元素 |
+| Ren’Py `persistent` | zlib pickle + 尾部签名；公开字段与容器子字段；同步所属顶层字段的 `_changed` 修改时间戳 | 无法安全维护时间戳时只读；不根据变量名推断字段含义 |
 
 RPG Maker 辅助 JSON 只读加载 `System`、`Items`、`Weapons`、`Armors`、`Actors`、`Classes`。优先启动文件旁的 `data/`、`www/data/`，再检查游戏根目录及至多 64 个直接包装目录；不无界递归。数据库缺失时按 ID 显示，不允许凭空创建未知物品。System 声明但未赋值的变量默认为 0，开关为 false，可以赋值；数据库存在但背包没有的物品可以增加。角色展示名称/职业，HP/MP、等级、经验、装备与技能首版全部只读。
 
-MV/MZ 修改保留 JsonEx 元数据和未知 JSON 字段。兼容旧版 MV 的 `@a` 数组包装，编辑时保留 `@c` 身份标记和 `@r` 引用；变量/开关容器存在共享引用时保持只读，避免连带修改其他对象。Ren’Py 通过符号化 pickle 栈、memo 与对象依赖解析定位标量，处理常用协议 0–5；不会执行 GLOBAL/REDUCE、实例化 Python 类或载入游戏脚本。补丁只改标量定义和必要 FRAME 长度，persistent 另外维护标准时间戳。Python 2 字节字符串、外部缓冲区、未知 opcode 或无法明确定位 roots/state 的结构不开放编辑。
+MV/MZ 修改保留 JsonEx 元数据和未知 JSON 字段。兼容旧版 MV 的 `@a` 数组包装，编辑时保留 `@c` 身份标记和 `@r` 引用；变量/开关容器存在共享引用时保持只读，避免连带修改其他对象。Ren’Py 通过符号化 pickle 栈、memo 与对象依赖解析定位字段，处理常用协议 0–5；不会执行 GLOBAL/REDUCE、实例化 Python 类或载入游戏脚本。标量补丁只改值的定义与必要 FRAME 长度，persistent 另外维护标准时间戳。Python 2 字节字符串、外部缓冲区、未知 opcode 或无法明确定位 roots/state 的结构不开放编辑。
+
+Ren’Py 字段显示实际类型，容器默认折叠，搜索可命中折叠容器的子字段路径。None 通过独立弹窗明确初始化为布尔、数值或文本。标准 `RevertableList` / `RevertableDict` 仅在构造及内容结构明确时开放已有子字段；循环引用、共享的祖先容器、重复键及超过 12 层的嵌套不开放修改。
+
+另外支持协议 2–5 的标准 `renpy.revertable.RevertableSet`（兼容 `renpy.python` 类名），其构造参数必须为空，状态必须是唯一的 `(字符串键 → True 的字典,)`。点击 **编辑成员** 后每行填写一个成员标识，允许增删，保留大小写和空格；最多 2000 个不重复成员、每个成员 1024 字节。应用只更新待保存草稿，仍须点击主编辑器的 **保存修改**。写回只替换传给 BUILD 的状态，保留原对象类型、原 memo 定义及其他内容。普通 set/frozenset、旧协议集合及其他自定义集合目前只读，不提供一键全部解锁。
+
+合成集合夹具可用 `scripts/Generate-RenpyEditorFixtures.py` 重建；独立 Python 往返验证仅加载这些人工夹具。真实 persistent 的兼容探针只在内存里解析和修改，并确认原文件未变，不执行 Pickle、不写回或导出游戏存档。
 
 ## Ren’Py 签名
 

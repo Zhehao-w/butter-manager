@@ -1283,7 +1283,10 @@ mod tests {
         assert!(f.store.get(&operation).unwrap().items[0]
             .blockers
             .is_empty());
-        f.apply(&operation).unwrap();
+        f.apply(&operation).unwrap_or_else(|error| {
+            let plan = f.store.get(&operation).unwrap();
+            panic!("update failed at {}: {error}", plan.items[0].state);
+        });
         let target = f.root.join("Game v2");
         assert_eq!(
             fs::read(target.join("www/save/file1.rmmzsave")).unwrap(),

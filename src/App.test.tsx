@@ -1543,9 +1543,16 @@ describe('iteration interactions', () => {
         (within(modal).getByRole('textbox', { name: /Game Root/ }) as HTMLInputElement).value,
       ).toBe('D:/Games'),
     );
+    // The picker publishes its path before clearing busy; navigation is guarded until it finishes.
+    await waitFor(() =>
+      expect(
+        (within(modal).getByRole('button', { name: '保存设置' }) as HTMLButtonElement).disabled,
+      ).toBe(false),
+    );
     goLibrary();
+    const confirmation = await screen.findByRole('dialog', { name: '放弃未保存修改？' });
     expect(screen.getByRole('region', { name: '设置页面' })).toBe(modal);
-    fireEvent.click(within(modal).getByRole('button', { name: '继续编辑' }));
+    fireEvent.click(within(confirmation).getByRole('button', { name: '继续编辑' }));
     expect(
       (within(modal).getByRole('textbox', { name: /Game Root/ }) as HTMLInputElement).value,
     ).toBe('D:/Games');
@@ -1555,7 +1562,11 @@ describe('iteration interactions', () => {
         name: /游戏库/,
       }),
     );
-    fireEvent.click(within(modal).getByRole('button', { name: '放弃并切换' }));
+    fireEvent.click(
+      within(await screen.findByRole('dialog', { name: '放弃未保存修改？' })).getByRole('button', {
+        name: '放弃并切换',
+      }),
+    );
     expect(screen.queryByRole('region', { name: '设置页面' })).toBeNull();
     expect(screen.getByRole('table')).toBeTruthy();
   });

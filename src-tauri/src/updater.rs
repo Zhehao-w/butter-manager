@@ -213,6 +213,11 @@ fn copy_path(source: &Path, target: &Path, job: &Job) -> Result<()> {
         }
     }
     let entries = path_inventory(source, job)?;
+    // Incoming versions may omit the entire parent of an existing internal save folder.
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent)?;
+        checked_dir(parent)?;
+    }
     if fs::metadata(source)?.is_dir() {
         copy_tree(source, target, &entries, job)?;
         unchanged(source, &entries, job)?;
@@ -220,10 +225,6 @@ fn copy_path(source: &Path, target: &Path, job: &Job) -> Result<()> {
     } else {
         if exists(target)? {
             equal_prefix(source, target, job)?;
-        }
-        if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent)?;
-            checked_dir(parent)?;
         }
         let mut input = locked_read(source)?;
         let mut output = OpenOptions::new()

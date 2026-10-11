@@ -1397,7 +1397,8 @@ fn incoming_names_and_folder_are_committed_and_rollback_restores_original_identi
     });
     assert_eq!(
         f.store.get(&id).unwrap().view().items[0].target,
-        paths::path_text(&f.root.join("新目录 v2")).unwrap()
+        // The destination does not exist during preview; canonicalize its existing parent.
+        paths::path_text(&dunce::canonicalize(&f.root).unwrap().join("新目录 v2")).unwrap()
     );
     f.apply(&id).unwrap();
     let game = f.db.lock().unwrap().game(&f.id).unwrap();

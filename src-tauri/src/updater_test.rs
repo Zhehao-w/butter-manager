@@ -1407,7 +1407,8 @@ fn incoming_names_and_folder_are_committed_and_rollback_restores_original_identi
     assert_eq!(game.id, original.id);
     assert_eq!(
         game.install_path,
-        paths::path_text(&f.root.join("新目录 v2")).unwrap()
+        // Windows TEMP may use an 8.3 alias; registration stores the canonical path.
+        paths::path_text(&dunce::canonicalize(f.root.join("新目录 v2")).unwrap()).unwrap()
     );
     assert!(!f.old().exists());
     assert_eq!(
@@ -1501,7 +1502,7 @@ fn completed_legacy_imports_are_repaired_idempotently_and_remain_reversible() {
     assert_eq!(game.display_title, "incoming name");
     assert_eq!(
         game.install_path,
-        paths::path_text(&f.root.join("新版本 v2")).unwrap()
+        paths::path_text(&dunce::canonicalize(f.root.join("新版本 v2")).unwrap()).unwrap()
     );
     f.store = ImportStore::open(f.store.directory.clone()).unwrap();
     assert!(f.store.recovery_issues().is_empty());

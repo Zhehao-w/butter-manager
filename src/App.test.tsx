@@ -11,8 +11,6 @@ vi.mock('./api', () => ({
     openDataDirectory: vi.fn().mockResolvedValue(undefined),
     listEditableSaves: vi.fn().mockResolvedValue({ slots: [], warnings: [] }),
     releaseExternalSaves: vi.fn().mockResolvedValue(undefined),
-    appearance: vi.fn(),
-    saveAppearance: vi.fn(),
     importPlans: vi.fn().mockResolvedValue([]),
     importRecoveryIssues: vi.fn().mockResolvedValue([]),
     openImportRecords: vi.fn(),
@@ -32,7 +30,6 @@ vi.mock('./api', () => ({
     launchHistory: vi.fn().mockResolvedValue([]),
     versionHistory: vi.fn().mockResolvedValue([]),
     clearLibrary: vi.fn(),
-    refreshMetadata: vi.fn(),
     startLibraryCheck: vi.fn().mockResolvedValue(''),
     removeGame: vi.fn(),
     previewRelocation: vi.fn(),
@@ -169,8 +166,6 @@ function mockLibraryViewport() {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(api.openFolder).mockResolvedValue();
-  vi.mocked(api.appearance).mockResolvedValue({ icon: 'new', illustration: 'new' });
-  vi.mocked(api.saveAppearance).mockImplementation(async (value) => value);
   vi.mocked(api.importRecoveryIssues).mockResolvedValue([]);
   vi.mocked(api.startLibraryCheck).mockResolvedValue('');
   vi.mocked(api.syncScanMtool).mockResolvedValue([]);
@@ -381,6 +376,12 @@ describe('iteration interactions', () => {
     expect((dialog.getByRole('checkbox', { name: '已通关' }) as HTMLInputElement).checked).toBe(
       true,
     );
+    expect((dialog.getByRole('checkbox', { name: 'Godot' }) as HTMLInputElement).checked).toBe(
+      true,
+    );
+    expect(screen.queryByRole('button', { name: 'Playing Unity' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Unplayed Unity' })).toBeNull();
+    expect(screen.getByText('找到 1 / 3 个游戏')).toBeTruthy();
     fireEvent.click(dialog.getByRole('checkbox', { name: '已通关' }));
     fireEvent.click(dialog.getByRole('checkbox', { name: '未启动' }));
     fireEvent.click(dialog.getByRole('button', { name: '完成' }));
@@ -477,33 +478,17 @@ describe('iteration interactions', () => {
     expect(screen.getByRole('region', { name: '设置页面' })).toBeTruthy();
   });
 
-  it('uses the new artwork and replaces legacy appearance preferences without a picker', async () => {
-    vi.mocked(api.appearance).mockResolvedValue({ icon: 'original', illustration: 'original' });
+  it('uses the fixed artwork without an appearance picker', async () => {
     const { container } = render(<App />);
     await screen.findByRole('button', { name: '扫描目录' });
     openConfig('设置');
-    await waitFor(() =>
-      expect(api.saveAppearance).toHaveBeenLastCalledWith({ icon: 'new', illustration: 'new' }),
-    );
     expect(screen.queryByRole('region', { name: '外观设置' })).toBeNull();
     expect(container.querySelector('.brand img')?.getAttribute('src')).toContain('app-icon-new');
-    expect(screen.getByRole('region', { name: '关于应用' }).querySelector('img')).toBeNull();
     expect(container.querySelector('.sidebar-art img')?.getAttribute('src')).toContain(
       'character-new',
     );
   });
 
-  it('keeps the new artwork when replacing legacy preferences fails', async () => {
-    vi.mocked(api.appearance).mockResolvedValue({ icon: 'original', illustration: 'original' });
-    vi.mocked(api.saveAppearance).mockRejectedValue(new Error('无法保存外观设置'));
-    const { container } = render(<App />);
-    await screen.findByRole('alert');
-    expect(screen.getByRole('alert').textContent).toContain('无法保存外观设置');
-    expect(container.querySelector('.brand img')?.getAttribute('src')).toContain('app-icon-new');
-    expect(container.querySelector('.sidebar-art img')?.getAttribute('src')).toContain(
-      'character-new',
-    );
-  });
   it('refreshes automatically detected saves in an untouched open detail without creating unsaved edits', async () => {
     let scanPage: JobPage = {
       ...job,
@@ -1452,7 +1437,7 @@ describe('iteration interactions', () => {
       true,
     );
   });
-  it('shows saved times/history and merges metadata updates without reloading the library', async () => {
+  it('shows saved times and launch history without reloading the library', async () => {
     const initial = {
       ...game,
       created_at: '2020-01-01T00:00:00.000Z',
@@ -1462,19 +1447,6 @@ describe('iteration interactions', () => {
     };
     vi.mocked(api.games).mockResolvedValue([initial]);
     vi.mocked(api.launchHistory).mockResolvedValue([initial.last_launched_at]);
-    vi.mocked(api.refreshMetadata).mockResolvedValue('metadata');
-    vi.mocked(api.gamesByIds).mockResolvedValue([
-      { ...initial, current_version: 'Ver1.06', engine: "Ren'Py" },
-    ]);
-    vi.mocked(api.job).mockResolvedValue({
-      ...job,
-      id: 'metadata',
-      kind: 'metadata',
-      changes: [],
-      change_count: 0,
-      next_cursor: 0,
-      registered_ids: [game.id],
-    });
     render(<App />);
     fireEvent.click(await screen.findByRole('button', { name: game.display_title }));
     const modal = screen.getByRole('dialog');
@@ -1485,7 +1457,6 @@ describe('iteration interactions', () => {
     await waitFor(() => expect(within(modal).getAllByRole('listitem').length).toBe(1));
     fireEvent.click(within(modal).getByRole('button', { name: '关闭弹窗' }));
     expect(screen.queryByRole('button', { name: '补充引擎/版本' })).toBeNull();
-    expect(api.refreshMetadata).not.toHaveBeenCalled();
     expect(api.games).toHaveBeenCalledTimes(1);
   });
 
@@ -2482,42 +2453,5 @@ describe('iteration interactions', () => {
     );
     await screen.findByText('游戏资料已保存。');
     expect((screen.getByRole('radio', { name: '已通关' }) as HTMLInputElement).checked).toBe(true);
-  });
-  it('applies state and engine filters together to the real library rows', async () => {
-    const games = [
-      {
-        ...game,
-        id: 'finished',
-        display_title: 'Finished',
-        play_status: 'COMPLETED' as const,
-        engine: 'QSP',
-      },
-      {
-        ...game,
-        id: 'unity',
-        display_title: 'Unity Game',
-        play_status: 'PLAYING' as const,
-        engine: 'Unity',
-      },
-      {
-        ...game,
-        id: 'qsp',
-        display_title: 'QSP Game',
-        play_status: 'PLAYING' as const,
-        engine: 'QSP',
-      },
-    ];
-    vi.mocked(api.games).mockResolvedValue(games);
-    render(<App />);
-    await screen.findByRole('button', { name: 'QSP Game' });
-    fireEvent.click(screen.getByRole('button', { name: '筛选' }));
-    const filters = screen.getByRole('dialog', { name: '筛选游戏' });
-    fireEvent.click(within(filters).getByRole('checkbox', { name: '正在玩' }));
-    fireEvent.click(within(filters).getByRole('checkbox', { name: 'QSP' }));
-    fireEvent.click(within(filters).getByRole('button', { name: '完成' }));
-    expect(screen.getByRole('button', { name: 'QSP Game' })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Finished' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Unity Game' })).toBeNull();
-    expect(screen.getByText('找到 1 / 3 个游戏')).toBeTruthy();
   });
 });

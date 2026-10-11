@@ -1,6 +1,6 @@
 //! Isolated CLI verification using a hidden real WebView, never the production profile.
 //! Copy this executable into a disposable folder before invoking `write` then `read`.
-use butter_manager::{appearance, data_directory, db::Database, domain::Settings};
+use butter_manager::{data_directory, db::Database, domain::Settings};
 use std::path::PathBuf;
 use tauri::{Manager, State};
 
@@ -22,9 +22,7 @@ fn probe_done(
             return Err("localStorage did not survive restart/move".into());
         }
         let database = Database::open(&state.data.join(data_directory::DATABASE))?;
-        if database.settings()?.scan_workers != 4
-            || appearance::load(&state.data)?.icon != appearance::Choice::Original
-        {
+        if database.settings()?.scan_workers != 4 {
             return Err("application preferences did not persist".into());
         }
         let report = serde_json::json!({
@@ -78,7 +76,6 @@ fn main() {
                 assert!(data_directory::is_empty(&data)?);
                 let db = Database::open(&data.join(data_directory::DATABASE))?;
                 db.save_settings(Settings { scan_workers: 4, mtool_injector: "loaders/inject.exe".into(), mtool_runtime: "MTool.exe".into(), ..Settings::default() })?;
-                appearance::save(&data, appearance::Appearance { icon: appearance::Choice::Original, illustration: appearance::Choice::New })?;
                 std::fs::create_dir(data.join("imports"))?;
                 std::fs::write(data.join("imports/probe.manifest"), b"isolated fixture")?;
             }

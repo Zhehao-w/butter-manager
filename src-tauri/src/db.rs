@@ -779,29 +779,6 @@ impl Database {
         Ok(())
     }
 
-    pub fn supplement_metadata(
-        &mut self,
-        values: &[(String, ScanCandidate)],
-        cancelled: &dyn Fn() -> bool,
-    ) -> Result<Vec<String>> {
-        let transaction = self.connection.transaction()?;
-        let mut ids = vec![];
-        for (id, c) in values {
-            if cancelled() {
-                return Err(Error::Validation("补充已取消，改动已回滚".into()));
-            }
-            let changed = transaction.prepare_cached("UPDATE games SET engine=CASE WHEN engine_source='manual' THEN engine ELSE ?2 END,current_version=CASE WHEN current_version='Unknown' AND version_source!='manual' THEN ?3 ELSE current_version END,version_source=CASE WHEN current_version='Unknown' AND version_source!='manual' THEN ?4 ELSE version_source END WHERE id=?1 AND (engine_source!='manual' AND engine!=?2 OR current_version='Unknown' AND version_source!='manual' AND ?3!='Unknown')")?.execute(params![id,c.engine,c.suggested_version,c.version_source])?;
-            if changed > 0 {
-                ids.push(id.clone());
-            }
-        }
-        if cancelled() {
-            return Err(Error::Validation("补充已取消，改动已回滚".into()));
-        }
-        transaction.commit()?;
-        Ok(ids)
-    }
-
     pub fn edit_game(&mut self, mut edit: GameEdit) -> Result<Game> {
         let existing = self.game(&edit.id)?;
         let engine = edit.engine.trim();
@@ -1342,7 +1319,7 @@ mod tests {
         );
     }
     #[test]
-    fn engine_migration_and_manual_override_survive_refresh_and_reopen() {
+    fn engine_migration_and_manual_override_survive_scan_and_reopen() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("library.db");
         let connection = Connection::open(&path).unwrap();
@@ -1365,12 +1342,11 @@ mod tests {
         db.edit_game(edit).unwrap();
         let mut candidate = analyze_directory(temp.path()).unwrap();
         candidate.engine = "Ren'Py".into();
-        candidate.suggested_version = "v1.2.3".into();
-        candidate.version_source = "folder_name".into();
-        db.supplement_metadata(&[("old".into(), candidate.clone())], &|| false)
+        candidate.registered_id = Some("old".into());
+        db.sync_mtool_defaults(std::slice::from_ref(&candidate))
             .unwrap();
         assert_eq!(db.game("old").unwrap().engine, "QSP");
-        assert_eq!(db.game("old").unwrap().current_version, "v1.2.3");
+        assert_eq!(db.game("old").unwrap().current_version, "Unknown");
         drop(db);
         let mut db = Database::open(&path).unwrap();
         let saved = db.game("old").unwrap();
@@ -1381,12 +1357,12 @@ mod tests {
         edit.display_title = "Renamed".into();
         db.edit_game(edit.clone()).unwrap();
         assert!(db
-            .supplement_metadata(&[("old".into(), candidate.clone())], &|| false)
+            .sync_mtool_defaults(std::slice::from_ref(&candidate))
             .unwrap()
             .is_empty());
         edit.engine = "Unknown".into();
         db.edit_game(edit.clone()).unwrap();
-        db.supplement_metadata(&[("old".into(), candidate)], &|| false)
+        db.sync_mtool_defaults(std::slice::from_ref(&candidate))
             .unwrap();
         assert_eq!(db.game("old").unwrap().engine, "Unknown");
         edit.engine = "bad\nengine".into();
@@ -1532,52 +1508,6 @@ mod tests {
         assert!(db.clear_library().unwrap().warning.is_none());
     }
     #[test]
-    fn supplementation_is_atomic_and_preserves_manual_versions_and_added_time() {
-        let temp = tempfile::tempdir().unwrap();
-        let candidate = analyze_directory(temp.path()).unwrap();
-        let mut db = Database::open(&temp.path().join("test.db")).unwrap();
-        let id = db
-            .register(std::slice::from_ref(&candidate))
-            .unwrap()
-            .remove(0);
-        let added = db.game(&id).unwrap().created_at;
-        let mut changed = candidate;
-        changed.suggested_version = "Ver1.06".into();
-        changed.version_source = "folder_name".into();
-        changed.engine = "Ren'Py".into();
-        let values = vec![(id.clone(), changed.clone())];
-        let calls = std::cell::Cell::new(0);
-        assert!(db
-            .supplement_metadata(&values, &|| {
-                calls.set(calls.get() + 1);
-                calls.get() > 1
-            })
-            .is_err());
-        assert_eq!(db.game(&id).unwrap().current_version, "Unknown");
-        assert_eq!(db.game(&id).unwrap().engine, "Unknown");
-        assert_eq!(
-            db.supplement_metadata(&values, &|| false).unwrap(),
-            vec![id.clone()]
-        );
-        assert_eq!(db.game(&id).unwrap().current_version, "Ver1.06");
-        let mut edit = draft(&db.game(&id).unwrap());
-        edit.current_version = "Final manual".into();
-        db.edit_game(edit).unwrap();
-        changed.suggested_version = "v2.0".into();
-        changed.engine = "Unity".into();
-        db.supplement_metadata(&[(id.clone(), changed)], &|| false)
-            .unwrap();
-        assert_eq!(db.game(&id).unwrap().current_version, "Final manual");
-        let mut unknown = analyze_directory(temp.path()).unwrap();
-        unknown.engine = "Unknown".into();
-        db.supplement_metadata(&[(id.clone(), unknown)], &|| false)
-            .unwrap();
-        assert_eq!(db.game(&id).unwrap().engine, "Unknown");
-        assert_eq!(db.game(&id).unwrap().current_version, "Final manual");
-        assert_eq!(db.game(&id).unwrap().created_at, added);
-        assert!(db.game(&id).unwrap().last_launched_at.is_none());
-    }
-    #[test]
     fn version_one_migration_preserves_existing_library_and_settings() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("old.sqlite3");
@@ -1703,8 +1633,6 @@ mod tests {
             .sync_mtool_defaults(&[conflicting.clone()])
             .unwrap()
             .is_empty());
-        db.supplement_metadata(&[(id.clone(), conflicting)], &|| false)
-            .unwrap();
         assert_eq!(db.game(&id).unwrap().engine, "Custom Engine");
         let saved = db.game(&id).unwrap();
         assert_eq!(saved.launch_type, original.launch_type);

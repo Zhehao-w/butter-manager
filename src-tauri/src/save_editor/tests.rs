@@ -140,44 +140,6 @@ fn renpy_nested_duplicates_shared_ancestors_and_globals_cannot_be_modified() {
     assert!(!field(&fields, "module").editable);
 }
 
-#[test]
-#[ignore = "explicit read-only compatibility probe; does not write or export game data"]
-fn readonly_persistent_compatibility_probe() {
-    let path = PathBuf::from(
-        std::env::var_os("BUTTER_READONLY_PERSISTENT_PROBE").expect("provide a persistent path"),
-    );
-    let original = fs::read(&path).unwrap();
-    let mut decoded = Vec::new();
-    flate2::read::ZlibDecoder::new(original.as_slice())
-        .take(DECODE_LIMIT as u64 + 1)
-        .read_to_end(&mut decoded)
-        .unwrap();
-    assert!(decoded.len() <= DECODE_LIMIT);
-    let pickle = pickle::Pickle::parse(&decoded).unwrap();
-    let fields = pickle.fields(true).unwrap();
-    let gallery = field(&fields, "gallery_unlocked");
-    assert_eq!(gallery.kind, "string_set");
-    assert!(gallery.editable, "{:?}", gallery.reason);
-    let mut members = gallery.value.as_array().unwrap().clone();
-    if !members.is_empty() {
-        members.remove(0);
-    }
-    members.push(json!("__butter_memory_only_probe__"));
-    let next = pickle
-        .patch(&decoded, true, &[change(gallery, Value::Array(members))])
-        .unwrap();
-    let after = pickle::Pickle::parse(&next).unwrap().fields(true).unwrap();
-    assert_eq!(
-        field(&after, "gallery_unlocked").type_name,
-        gallery.type_name
-    );
-    assert_eq!(fs::read(&path).unwrap(), original);
-    println!(
-        "Read-only probe: {} / {} members; in-memory edit passed, file unchanged",
-        gallery.type_name.as_deref().unwrap(),
-        gallery.child_count.unwrap()
-    );
-}
 fn zip(log: &[u8], signatures: &str) -> Vec<u8> {
     let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
     writer.set_comment("keep archive comment");

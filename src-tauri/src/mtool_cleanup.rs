@@ -4,7 +4,7 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 
 const MAX_ENTRIES: usize = 4096;
-const MAX_BYTES: u64 = 512 * 1024 * 1024;
+const MAX_SMALL_FILE: u64 = 256 * 1024;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MtoolBundle {
@@ -19,7 +19,7 @@ struct Stamp {
     bytes: u64,
     modified: u128,
     identity: String,
-    // Only small launch/manifest files need content fingerprints; resource trees use identity + metadata.
+    // Only BATs/manifests need hashes; new journals record directory and key-file identities.
     digest: Option<String>,
 }
 #[derive(Clone, Serialize, Deserialize)]
@@ -85,97 +85,84 @@ fn plain(path: &Path) -> Result<fs::Metadata> {
     }
     Ok(metadata)
 }
-fn fingerprint(path: &Path, stop: &dyn Fn() -> bool) -> Result<String> {
-    if plain(path)?.len() > MAX_BYTES {
-        return Err(invalid("工具文件超过检查上限"));
-    }
-    let mut reader = File::open(path)?;
-    let mut digest = Sha256::new();
-    let mut buffer = [0; 64 * 1024];
-    let mut bytes = 0;
-    loop {
-        if stop() {
-            return Err(invalid("已停止工具检查"));
+// Only BATs and package manifests are hashed; never read the tool resource tree.
+fn stamp(path: &Path) -> Result<Stamp> {
+    let metadata = plain(path)?;
+    let small = path
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("bat"))
+        || path
+            .file_name()
+            .is_some_and(|n| n.eq_ignore_ascii_case("package.json"));
+    let digest = if metadata.is_file() && small {
+        if metadata.len() > MAX_SMALL_FILE {
+            return Err(invalid("工具启动文件超过检查上限"));
         }
-        let count = reader.read(&mut buffer)?;
-        if count == 0 {
-            break;
-        }
-        bytes += count as u64;
-        if bytes > MAX_BYTES {
-            return Err(invalid("工具文件超过检查上限"));
-        }
-        digest.update(&buffer[..count]);
-    }
-    Ok(format!("{:x}", digest.finalize()))
-}
-fn snapshot(
-    path: &Path,
-    record_identity: bool,
-    stop: &dyn Fn() -> bool,
-) -> Result<BTreeMap<String, Stamp>> {
-    let mut queue = vec![path.to_path_buf()];
-    let mut result = BTreeMap::new();
-    let mut bytes: u64 = 0;
-    while let Some(current) = queue.pop() {
-        if stop() {
-            return Err(invalid("已停止工具检查"));
-        }
-        let metadata = plain(&current)?;
-        let relative = current
-            .strip_prefix(path)
-            .map_err(|_| invalid("工具路径越界"))?;
-        let name = paths::path_text(relative)?.replace('\\', "/");
-        let small = current
-            .extension()
-            .is_some_and(|e| e.eq_ignore_ascii_case("bat"))
-            || current
-                .file_name()
-                .is_some_and(|n| n.eq_ignore_ascii_case("package.json"));
-        let digest = if record_identity && metadata.is_file() && small {
-            Some(fingerprint(&current, stop)?)
-        } else {
-            None
-        };
-        bytes = bytes.saturating_add(if metadata.is_file() {
+        Some(format!("{:x}", Sha256::digest(fs::read(path)?)))
+    } else {
+        None
+    };
+    Ok(Stamp {
+        directory: metadata.is_dir(),
+        bytes: if metadata.is_file() {
             metadata.len()
         } else {
             0
-        });
-        if result.len() >= MAX_ENTRIES || bytes > MAX_BYTES {
-            return Err(invalid("工具内容超过检查上限，保留文件"));
+        },
+        modified: if metadata.is_file() {
+            metadata
+                .modified()?
+                .duration_since(UNIX_EPOCH)
+                .map_err(|_| invalid("工具文件时间无效"))?
+                .as_nanos()
+        } else {
+            0
+        },
+        identity: identity(path)?,
+        digest,
+    })
+}
+fn capture(
+    path: &Path,
+    keys: impl IntoIterator<Item = String>,
+    stop: &dyn Fn() -> bool,
+) -> Result<BTreeMap<String, Stamp>> {
+    let mut result = BTreeMap::new();
+    for name in keys {
+        if stop() {
+            return Err(invalid("已停止工具检查"));
         }
-        result.insert(
-            name,
-            Stamp {
-                directory: metadata.is_dir(),
-                bytes: if metadata.is_file() {
-                    metadata.len()
-                } else {
-                    0
-                },
-                modified: if metadata.is_file() {
-                    metadata
-                        .modified()?
-                        .duration_since(UNIX_EPOCH)
-                        .map_err(|_| invalid("工具文件时间无效"))?
-                        .as_nanos()
-                } else {
-                    0
-                },
-                identity: if record_identity {
-                    identity(&current)?
-                } else {
-                    String::new()
-                },
-                digest,
-            },
-        );
-        if metadata.is_dir() {
-            queue.extend(children(&current)?);
-        }
+        let member = if name.is_empty() {
+            path.to_path_buf()
+        } else {
+            path.join(paths::relative_path(&name)?)
+        };
+        result.insert(name, stamp(&member)?);
     }
     Ok(result)
+}
+fn snapshot(path: &Path, stop: &dyn Fn() -> bool) -> Result<BTreeMap<String, Stamp>> {
+    let mut keys = vec![String::new()];
+    if plain(path)?.is_dir() {
+        let tool = if tool_signature(path) {
+            path.to_path_buf()
+        } else {
+            children(path)?
+                .into_iter()
+                .find(|p| tool_signature(p))
+                .ok_or_else(|| invalid("未确认一级目录中的 MTool"))?
+        };
+        let prefix = tool
+            .strip_prefix(path)
+            .map_err(|_| invalid("工具路径越界"))?;
+        if !prefix.as_os_str().is_empty() {
+            keys.push(paths::path_text(prefix)?);
+        }
+        for key in ["package.json", "MTool.exe", "loaders/inject.exe"] {
+            keys.push(paths::path_text(&prefix.join(key))?.replace('\\', "/"));
+        }
+    }
+    capture(path, keys, stop)
 }
 fn same_content(a: &BTreeMap<String, Stamp>, b: &BTreeMap<String, Stamp>, ids: bool) -> bool {
     a.len() == b.len()
@@ -221,8 +208,9 @@ fn tool_signature(root: &Path) -> bool {
 fn bat_root(root: &Path, bat: &Path) -> Option<PathBuf> {
     let relative = paths::path_text(bat.file_name().map(Path::new)?).ok()?;
     let analysis = scanner::analyze_bat(bat, relative);
-    let observed = if let Some(recipe) = analysis.recipe {
-        recipe.observed_root
+    let recipe = analysis.recipe;
+    let observed = if let Some(recipe) = &recipe {
+        recipe.observed_root.clone()
     } else {
         let bytes = fs::read(bat).ok()?;
         if bytes.len() > 256 * 1024 {
@@ -273,121 +261,86 @@ fn bat_root(root: &Path, bat: &Path) -> Option<PathBuf> {
         }
         PathBuf::from(observed)
     };
-    let path = checked_dir(&path).ok()?;
     let root = checked_dir(root).ok()?;
-    path.strip_prefix(&root).ok()?;
-    (path != root).then_some(path)
+    if let Ok(path) = checked_dir(&path) {
+        path.strip_prefix(&root).ok()?;
+        return (path != root).then_some(path);
+    }
+    // Generated launchers often retain absolute paths from the machine that packaged the game.
+    // Relocate only a complete known recipe with a missing old root and a unique matching package.
+    let recipe = recipe?;
+    if !crate::mtool::generated_launcher_name(&bat.file_name()?.to_string_lossy())
+        || !path.is_absolute()
+        || !matches!(fs::symlink_metadata(&path), Err(e) if e.kind() == std::io::ErrorKind::NotFound)
+        || !root
+            .join(paths::relative_path(&recipe.target_exe).ok()?)
+            .is_file()
+    {
+        return None;
+    }
+    let parts: Vec<_> = recipe
+        .observed_root
+        .trim_end_matches(['\\', '/'])
+        .split(['\\', '/'])
+        .collect();
+    let mut matches = vec![];
+    for depth in 1..=2.min(parts.len()) {
+        let suffix = parts[parts.len() - depth..].join("/");
+        let candidate = root.join(paths::relative_path(&suffix).ok()?);
+        if let Ok(candidate) = checked_dir(&candidate) {
+            if tool_signature(&candidate)
+                && [&recipe.runtime, &recipe.injector, &recipe.loader]
+                    .into_iter()
+                    .all(|p| {
+                        paths::relative_path(p)
+                            .is_ok_and(|p| plain(&candidate.join(p)).is_ok_and(|m| m.is_file()))
+                    })
+            {
+                matches.push(candidate);
+            }
+        }
+    }
+    (matches.len() == 1).then(|| matches.remove(0))
 }
-fn known_file(relative: &str) -> bool {
-    let lower = relative.to_ascii_lowercase();
-    matches!(
-        lower.as_str(),
-        "mtool.exe"
-            | "nw.exe"
-            | "package.json"
-            | "nw.dll"
-            | "nw_elf.dll"
-            | "node.dll"
-            | "ffmpeg.dll"
-            | "libegl.dll"
-            | "libglesv2.dll"
-            | "icudtl.dat"
-            | "resources.pak"
-            | "nw_100_percent.pak"
-            | "nw_200_percent.pak"
-            | "d3dcompiler_47.dll"
-            | "v8_context_snapshot.bin"
-            | "snapshot_blob.bin"
-            | "credits.html"
-            | "mtool-runtime"
-            | "loaders/inject.exe"
-            | "loaders/inject.bin"
-            | "loaders/inject.ver"
-            | "loaders/mzhook.dll"
-            | "loaders/mzhook32.dll"
-            | "loaders/rgsshook.dll"
-            | "loaders/rgsshook64.dll"
-            | "loaders/pythonhook.dll"
-            | "loaders/pythonhook64.dll"
-    )
-}
-fn safe_tree(top: &Path, tool: &Path, shared: &str, stop: &dyn Fn() -> bool) -> Result<()> {
+fn safe_bundle(top: &Path, tool: &Path) -> Result<()> {
     if !tool_signature(tool) {
         return Err(invalid("未确认 MTool package.json 与注入器，保留目录"));
     }
-    let reference = (!shared.is_empty())
-        .then(|| checked_dir(Path::new(shared)).ok())
-        .flatten()
-        .filter(|p| tool_signature(p));
-    let tree = snapshot(top, false, stop)?;
-    let prefix = tool
-        .strip_prefix(top)
-        .map_err(|_| invalid("工具路径越界"))?;
-    for (name, stamp) in &tree {
-        if name.is_empty() {
-            continue;
-        }
-        let path = paths::relative_path(name)?;
-        // An outer wrapper must contain just the tool package, not siblings or extra files.
-        if !path.starts_with(prefix) {
-            if stamp.directory && prefix.starts_with(&path) {
-                continue;
-            }
-            return Err(invalid(format!("一级目录混有其他内容：{name}")));
-        }
-        let member = path
-            .strip_prefix(prefix)
-            .map_err(|_| invalid("工具路径越界"))?;
-        let relative = paths::path_text(member)?.replace('\\', "/");
-        let lower = relative.to_ascii_lowercase();
-        if stamp.directory
-            && matches!(lower.as_str(), "gamelib" | "gamesavebackup")
-            && children(&top.join(&path))?.is_empty()
+    // A wrapper must belong entirely to the tool. Its unrelated siblings are never recycled.
+    if top != tool && children(top)?.iter().any(|p| p != tool) {
+        return Err(invalid("一级目录混有其他内容，保留目录"));
+    }
+    // Reject clear game layouts at the package root, without inspecting MTool's own data/runtime.
+    for entry in children(tool)? {
+        let name = entry
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .to_ascii_lowercase();
+        if scanner::is_link(&fs::symlink_metadata(&entry)?)
+            || name == "game.exe"
+            || matches!(name.as_str(), "save" | "saves")
+            || ["rpa", "xp3", "qsp", "rpgsave", "rmmzsave", "save"]
+                .iter()
+                .any(|ext| {
+                    entry
+                        .extension()
+                        .is_some_and(|e| e.eq_ignore_ascii_case(ext))
+                })
         {
-            continue;
+            return Err(invalid("工具根目录混有游戏资源、存档或链接，保留目录"));
         }
-        if lower
-            .split('/')
-            .any(|s| matches!(s, "save" | "saves" | "gamesavebackup" | "gamelib"))
-            || lower.ends_with(".rpa")
-            || lower.ends_with(".xp3")
-            || lower.ends_with(".qsp")
-            || lower.ends_with(".rpgsave")
-            || lower.ends_with(".rmmzsave")
-            || lower.ends_with(".save")
-            || lower.ends_with("/system.json")
-            || lower.ends_with("/game.exe")
-            || lower.contains("/map0")
-        {
-            return Err(invalid(format!("疑似游戏资源、存档或工具用户资料：{name}")));
-        }
-        if relative.is_empty()
-            || (stamp.directory && lower == "loaders")
-            || (!stamp.directory && known_file(&relative))
-        {
-            continue;
-        }
-        // Unknown package assets are removable only when an identical shared-tool member proves ownership.
-        let Some(reference) = &reference else {
-            return Err(invalid(format!("无法确认工具内容：{name}；未清理")));
-        };
-        let reference_file = reference.join(member);
-        let meta = plain(&reference_file)
-            .map_err(|_| invalid(format!("公共 MTool 中没有对应内容：{name}")))?;
-        if meta.is_dir() != stamp.directory
-            || (!stamp.directory
-                && (meta.len() != stamp.bytes
-                    || fingerprint(&reference_file, stop)? != fingerprint(&top.join(&path), stop)?))
-        {
-            return Err(invalid(format!(
-                "无法确认工具内容：{name}；与公共 MTool 不同"
-            )));
-        }
+    }
+    if ["data/System.json", "www/data/System.json"]
+        .iter()
+        .any(|p| tool.join(p).exists())
+    {
+        return Err(invalid("工具目录混有游戏数据，保留目录"));
     }
     Ok(())
 }
 
-pub(super) fn detect(root: &Path, shared: &str, stop: &dyn Fn() -> bool) -> Vec<MtoolBundle> {
+pub(super) fn detect(root: &Path, stop: &dyn Fn() -> bool) -> Vec<MtoolBundle> {
     let Ok(root) = checked_dir(root) else {
         return vec![];
     };
@@ -467,7 +420,7 @@ pub(super) fn detect(root: &Path, shared: &str, stop: &dyn Fn() -> bool) -> Vec<
             if !named(tool, "MTool.exe").is_some_and(|p| plain(&p).is_ok_and(|m| m.is_file())) {
                 Err(invalid("没有确认 MTool.exe，保留目录"))
             } else {
-                safe_tree(&top, tool, shared, stop)
+                safe_bundle(&top, tool)
             };
         let bundle = MtoolBundle {
             folder: folder.clone(),
@@ -522,7 +475,7 @@ pub(super) fn prepare(root: &Path, bundles: &[MtoolBundle], job: &Job) -> Result
     let mut entries = 0;
     let mut targets = vec![];
     for path in paths.keys() {
-        let snapshot = snapshot(&root.join(path), true, &|| job.stop())?;
+        let snapshot = snapshot(&root.join(path), &|| job.stop())?;
         entries += snapshot.len();
         if entries > MAX_ENTRIES {
             return Err(invalid("工具清理记录超过检查上限，保留文件"));
@@ -772,7 +725,7 @@ impl ImportStore {
                     }
                 }
             }
-            check_item_idle(std::slice::from_ref(&root), job)
+            Ok(())
         })();
         if let Err(error) = validation {
             for target in &mut plan.items[index].mtool_cleanup.as_mut().unwrap().targets {
@@ -810,7 +763,8 @@ impl ImportStore {
                     }
                     return Err(invalid("清理目标消失且无法确认回收身份；未处理其他文件"));
                 }
-                let actual = snapshot(&path, true, &|| job.stop())?;
+                // Recheck only recorded anchors. Old journals retain their recorded identities too.
+                let actual = capture(&path, target.snapshot.keys().cloned(), &|| job.stop())?;
                 if !same_content(
                     &target.snapshot,
                     &actual,
@@ -1030,93 +984,104 @@ mod tests {
     fn recognizes_chinese_bat_nested_and_reverse_lookup_without_name_guessing() {
         for nested in [false, true] {
             let f = Fixture::new(nested);
-            let bundles = detect(&f.source, "", &|| false);
+            let bundles = detect(&f.source, &|| false);
             assert_eq!(bundles.len(), 1);
             assert_eq!(bundles[0].folder, "辅助工具");
             assert!(bundles[0].safe);
             assert_eq!(bundles[0].bats, vec!["与工具一同启动.bat"]);
+            launcher(
+                &f.source,
+                if nested {
+                    "辅助工具/client"
+                } else {
+                    "辅助工具"
+                },
+                "StartWithTool.bat",
+            );
+            assert!(detect(&f.source, &|| false)[0]
+                .bats
+                .contains(&"StartWithTool.bat".into()));
+            fs::write(
+                f.source.join("StartWithTool.bat"),
+                b"@echo off\ndel Game.exe",
+            )
+            .unwrap();
+            assert!(!detect(&f.source, &|| false)[0]
+                .bats
+                .contains(&"StartWithTool.bat".into()));
             fs::remove_file(f.source.join("与工具一同启动.bat")).unwrap();
-            assert!(detect(&f.source, "", &|| false)[0].safe);
-            assert!(detect(&f.source, "", &|| false)[0].bats.is_empty());
+            assert!(detect(&f.source, &|| false)[0].safe);
+            assert!(detect(&f.source, &|| false)[0].bats.is_empty());
         }
     }
     #[test]
-    fn recognizes_both_known_root_removal_scripts_without_executing_them() {
-        let f = Fixture::new(false);
-        for name in [
-            "从游戏中移除工具文件.bat",
-            "Remove Tool files from game.bat",
-        ] {
-            fs::write(f.source.join(name), b"this script must never execute").unwrap();
-        }
-        let id = f.plan(true, None, "Game.exe", false);
-        let plan = f.store.get(&id).unwrap();
-        assert_eq!(
-            plan.items[0].mtool_cleanup.as_ref().unwrap().targets.len(),
-            4
-        );
-        f.apply(&id).unwrap();
-        for name in [
-            "从游戏中移除工具文件.bat",
-            "Remove Tool files from game.bat",
-        ] {
-            assert!(!f.root.join("Game v2").join(name).exists());
-        }
-        assert!(f.root.join("Game v2/Game.exe").exists());
-    }
-    #[test]
-    fn conservatively_keeps_mixed_resources_unknown_files_user_data_and_multiple_packages() {
-        for relative in [
-            "Game.exe",
-            "notes.txt",
-            "gameSaveBackup/file.dat",
-            "www/data/System.json",
-        ] {
+    fn keeps_mixed_game_resources_and_wrapper_siblings() {
+        for relative in ["Game.exe", "www/data/System.json", "save/file.rmmzsave"] {
             let f = Fixture::new(false);
             let file = f.source.join("辅助工具").join(relative);
             fs::create_dir_all(file.parent().unwrap()).unwrap();
             fs::write(file, b"keep").unwrap();
-            assert!(
-                !detect(&f.source, &paths::path_text(&f.shared).unwrap(), &|| false)[0].safe,
-                "{relative}"
-            );
+            assert!(!detect(&f.source, &|| false)[0].safe, "{relative}");
         }
         let f = Fixture::new(true);
         package(&f.source.join("辅助工具/other"));
-        assert!(!detect(&f.source, "", &|| false)[0].safe);
+        assert!(!detect(&f.source, &|| false)[0].safe);
     }
+    #[cfg(windows)]
     #[test]
-    fn unknown_tool_assets_require_exact_shared_member_and_unrelated_bats_are_preserved() {
+    fn stale_generated_absolute_bat_is_associated_only_with_matching_local_package() {
         let f = Fixture::new(false);
-        for root in [&f.source.join("辅助工具"), &f.shared] {
-            fs::create_dir(root.join("www")).unwrap();
-            fs::write(root.join("www/client.js"), b"known tool asset").unwrap();
-        }
-        assert!(!detect(&f.source, "", &|| false)[0].safe);
-        assert!(detect(&f.source, &paths::path_text(&f.shared).unwrap(), &|| false)[0].safe);
-        fs::write(f.source.join("辅助工具/www/client.js"), b"unconfirmed code").unwrap();
-        assert!(!detect(&f.source, &paths::path_text(&f.shared).unwrap(), &|| false)[0].safe);
-        launcher(&f.source, "辅助工具", "StartWithTool.bat");
-        fs::remove_file(f.source.join("辅助工具/www/client.js")).unwrap();
-        fs::remove_dir(f.source.join("辅助工具/www")).unwrap();
-        assert!(detect(&f.source, "", &|| false)[0]
-            .bats
-            .contains(&"StartWithTool.bat".into()));
-        fs::write(
-            f.source.join("StartWithTool.bat"),
-            b"@echo off\ndel Game.exe",
-        )
-        .unwrap();
-        assert!(!detect(&f.source, "", &|| false)[0]
-            .bats
-            .contains(&"StartWithTool.bat".into()));
+        let bat = f.source.join("与工具一同启动.bat");
+        let stale = f._temp.path().join("old/辅助工具");
+        let content = fs::read_to_string(&bat)
+            .unwrap()
+            .replace("%~dp0辅助工具", &stale.to_string_lossy());
+        fs::write(&bat, &content).unwrap();
+        assert_eq!(
+            detect(&f.source, &|| false)[0].bats,
+            vec!["与工具一同启动.bat"]
+        );
+        // An existing external package is not assumed to be bundled.
+        package(&stale);
+        assert!(detect(&f.source, &|| false)[0].bats.is_empty());
+        fs::write(&bat, format!("{content}\ndel Game.exe")).unwrap();
+        assert!(detect(&f.source, &|| false)[0].bats.is_empty());
     }
     #[test]
     fn cleanup_works_after_new_import_and_copy_switches_to_shared_mtool_and_is_idempotent() {
-        for cross in [false, true] {
-            let f = Fixture::new(true);
+        for (nested, cross) in [(false, false), (true, false), (true, true)] {
+            let f = Fixture::new(nested);
+            let folder = if nested {
+                "辅助工具/client"
+            } else {
+                "辅助工具"
+            };
+            for relative in [
+                "gameLib/old.gljson",
+                "gameSaveBackup/other-game/save/file.rmmzsave",
+                "loaders/Wolf/Game.exe",
+                "www/client.js",
+            ] {
+                let path = f.source.join(folder).join(relative);
+                fs::create_dir_all(path.parent().unwrap()).unwrap();
+                fs::write(path, b"tool-owned data").unwrap();
+            }
+            for name in [
+                "从游戏中移除工具文件.bat",
+                "Remove Tool files from game.bat",
+            ] {
+                fs::write(f.source.join(name), b"never execute this script").unwrap();
+            }
+            assert!(detect(&f.source, &|| false)[0].safe);
             let id = f.plan(true, None, "Game.exe", cross);
             assert!(f.store.get(&id).unwrap().items[0].blockers.is_empty());
+            let cleanup = f.store.get(&id).unwrap().items[0]
+                .mtool_cleanup
+                .clone()
+                .unwrap();
+            assert_eq!(cleanup.targets.len(), 4);
+            assert!(cleanup.targets.iter().any(|t| t.path == "辅助工具"));
+            assert!(cleanup.targets.iter().all(|t| t.snapshot.len() <= 5));
             let ids = f.apply(&id).unwrap();
             let target = f.root.join("Game v2");
             assert!(target.join("Game.exe").is_file());
@@ -1127,6 +1092,14 @@ mod tests {
             assert_eq!(game.launch_type, "MTOOL");
             assert_eq!(game.mtool_target_exe.as_deref(), Some("Game.exe"));
             assert!(f.shared.join("MTool.exe").is_file());
+            assert!(!f.shared.join("gameLib").exists());
+            assert!(!f.shared.join("gameSaveBackup").exists());
+            for name in [
+                "从游戏中移除工具文件.bat",
+                "Remove Tool files from game.bat",
+            ] {
+                assert!(!target.join(name).exists());
+            }
             assert!(f.store.get(&id).unwrap().items[0]
                 .mtool_cleanup
                 .as_ref()
@@ -1157,12 +1130,12 @@ mod tests {
         assert!(!f.store.get(&id).unwrap().items[0].blockers.is_empty());
     }
     #[test]
-    fn changed_content_is_retained_and_recycling_failure_keeps_successful_game_retryable() {
+    fn changed_tool_identity_and_recycling_failure_keep_successful_game_retryable() {
         let f = Fixture::new(false);
         let id = f.plan(true, None, "Game.exe", false);
         fs::write(
-            f.source.join("辅助工具/loaders/mzHook.dll"),
-            b"changed loader",
+            f.source.join("辅助工具/package.json"),
+            br#"{"name":"changed_package"}"#,
         )
         .unwrap();
         let ids = f.apply(&id).unwrap();
@@ -1215,6 +1188,21 @@ mod tests {
     fn reopened_cleanup_retries_failure_before_shell_and_retains_reoccupied_path_after_shell() {
         let mut f = Fixture::new(false);
         let id = f.plan(true, None, "Game.exe", false);
+        // Older journals recorded every member. Preserve their recovery without a second tree scan.
+        let mut legacy = f.store.get(&id).unwrap();
+        let folder = legacy.items[0]
+            .mtool_cleanup
+            .as_mut()
+            .unwrap()
+            .targets
+            .iter_mut()
+            .find(|t| t.path == "辅助工具")
+            .unwrap();
+        folder.snapshot.insert(
+            "loaders/mzHook.dll".into(),
+            stamp(&f.source.join("辅助工具/loaders/mzHook.dll")).unwrap(),
+        );
+        f.store.save(&legacy).unwrap();
         FAIL_CHECKPOINT.with(|v| *v.borrow_mut() = Some("mtool_before_recycle".into()));
         f.apply(&id).unwrap();
         assert!(f.store.get(&id).unwrap().items[0]

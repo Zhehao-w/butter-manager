@@ -299,7 +299,7 @@ impl Job {
         data.active.clear();
         match result {
             // A successful registration commit wins over a cancellation arriving afterwards.
-            Ok(ids) if matches!(self.kind.as_str(), "register" | "metadata") => {
+            Ok(ids) if self.kind == "register" => {
                 data.registered_ids = ids;
                 data.status = "completed".into();
             }
@@ -936,14 +936,14 @@ mod tests {
         let scan = tasks.begin("scan", "fixture".into()).unwrap();
         assert!(tasks.clear_finished().is_err());
         scan.finish(Ok(vec![]));
-        let metadata = tasks.begin("metadata", String::new()).unwrap();
-        metadata.request_cancel();
-        metadata.finish(Ok(vec!["committed".into()]));
-        assert_eq!(metadata.page(0).status, "completed");
-        assert_eq!(metadata.page(0).registered_ids, vec!["committed"]);
+        let register = tasks.begin("register", String::new()).unwrap();
+        register.request_cancel();
+        register.finish(Ok(vec!["committed".into()]));
+        assert_eq!(register.page(0).status, "completed");
+        assert_eq!(register.page(0).registered_ids, vec!["committed"]);
         tasks.clear_finished().unwrap();
         assert!(tasks.get(&scan.id).is_err());
-        assert!(tasks.get(&metadata.id).is_err());
+        assert!(tasks.get(&register.id).is_err());
     }
     #[test]
     fn paged_results_freeze_elapsed_time_and_terminal_status() {

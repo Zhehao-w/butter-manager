@@ -1,7 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { SaveCatalog, SaveDocument, SaveChange } from './saveEditorTypes';
 import type {
-  Appearance,
   Game,
   DeletePlan,
   DeleteReport,
@@ -40,8 +39,6 @@ export const api = {
     invoke<SaveDocument | null>('choose_external_renpy_save', { gameId }),
   releaseExternalSaves: (gameId: string) => invoke<void>('release_external_saves', { gameId }),
   openDataDirectory: () => invoke<void>('open_data_directory'),
-  appearance: () => invoke<Appearance>('get_appearance'),
-  saveAppearance: (appearance: Appearance) => invoke<Appearance>('save_appearance', { appearance }),
   versionHistory: (id: string) => invoke<VersionHistory[]>('version_history', { id }),
   rollbackVersion: (planId: string, index: number) =>
     invoke<string>('start_version_rollback', { planId, index }),
@@ -110,7 +107,6 @@ export const api = {
     invoke<Game>('play_game', { id, configuration }),
   launchHistory: (id: string) => invoke<string[]>('launch_history', { id }),
   clearLibrary: (confirmation: string) => invoke<ResetReport>('clear_library', { confirmation }),
-  refreshMetadata: () => invoke<string>('start_metadata_refresh'),
   openFolder: (id: string) => invoke<void>('open_game_folder', { id }),
   openSaveFolder: (id: string, path: string) => invoke<void>('open_save_folder', { id, path }),
   chooseSaveDirectory: (id: string, path: string | null) =>

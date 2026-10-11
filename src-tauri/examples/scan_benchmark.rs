@@ -1,8 +1,9 @@
-//! Read-only measurements. Without --root, generate isolated synthetic games in a temp directory.
+//! Read-only measurements: --root GAME_ROOT or --import SOURCE_ROOT.
+//! Without either flag, generate isolated synthetic games in a temp directory.
 use butter_manager::{
     db::Database,
     domain::{RegistrationSelection, Result},
-    jobs, paths, registration,
+    importer, jobs, paths, registration,
 };
 use std::{
     collections::HashMap,
@@ -13,6 +14,25 @@ use std::{
 
 fn main() -> Result<()> {
     let args: Vec<_> = std::env::args().collect();
+    if let Some(index) = args.iter().position(|v| v == "--import") {
+        let source = args.get(index + 1).ok_or_else(|| {
+            butter_manager::domain::Error::Validation("--import requires SOURCE_ROOT".into())
+        })?;
+        let manager = jobs::TaskManager::default();
+        let job = manager.begin("import_analysis", String::new())?;
+        let started = Instant::now();
+        importer::analyze(&job, std::slice::from_ref(source), 1)?;
+        let bundles: Vec<_> = job
+            .candidates()
+            .into_iter()
+            .flat_map(|c| c.bundled_mtool)
+            .collect();
+        println!(
+            "{}",
+            serde_json::json!({"bundles": bundles, "elapsed_ms": started.elapsed().as_millis()})
+        );
+        return Ok(());
+    }
     let fixture = tempfile::tempdir()?;
     let real = args
         .iter()

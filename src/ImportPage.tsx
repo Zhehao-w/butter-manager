@@ -1230,8 +1230,8 @@ export function ImportPage({
                               </label>
                             )}
                             <p className="muted">
-                              仅回收已确认的一级工具目录和关联 BAT。勾选后使用公共 MTool
-                              启动，请确认游戏 EXE 与公共工具配置。
+                              回收整个已确认的一级工具目录（包含工具自己的记录和备份）及关联
+                              BAT。勾选后使用公共 MTool 启动，请确认游戏 EXE 与公共工具配置。
                             </p>
                             {!!choice.cleanup_mtool && !settings.mtool_root && (
                               <p className="notice">

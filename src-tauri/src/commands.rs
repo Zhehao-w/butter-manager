@@ -14,7 +14,6 @@ use tauri_plugin_dialog::DialogExt;
 struct AppState {
     #[cfg(windows)]
     _data_guard: crate::data_directory::InstanceGuard,
-    appearance: Mutex<crate::appearance::Appearance>,
     db: Arc<Mutex<Database>>,
     tasks: Arc<TaskManager>,
     activity: Arc<Mutex<usize>>,
@@ -37,29 +36,6 @@ fn open_data_directory(state: State<'_, AppState>) -> CommandResult<()> {
         .spawn()
         .map(|_| ())
         .map_err(|error| format!("无法打开数据目录：{error}"))
-}
-#[tauri::command]
-fn get_appearance(state: State<'_, AppState>) -> CommandResult<crate::appearance::Appearance> {
-    let _guard = state.appearance.lock().map_err(|_| "外观设置锁不可用")?;
-    crate::appearance::load(&state.data).map_err(|e| format!("无法读取外观设置：{e}"))
-}
-#[tauri::command]
-fn save_appearance(
-    app: tauri::AppHandle,
-    state: State<'_, AppState>,
-    appearance: crate::appearance::Appearance,
-) -> CommandResult<crate::appearance::Appearance> {
-    let mut current = state.appearance.lock().map_err(|_| "外观设置锁不可用")?;
-    let window = app.get_webview_window("main").ok_or("应用窗口不可用")?;
-    window
-        .set_icon(crate::appearance::icon(appearance.icon))
-        .map_err(|e| e.to_string())?;
-    if let Err(error) = crate::appearance::save(&state.data, appearance) {
-        let _ = window.set_icon(crate::appearance::icon(current.icon));
-        return Err(format!("无法保存外观设置：{error}"));
-    }
-    *current = appearance;
-    Ok(appearance)
 }
 fn with_db<T>(
     state: &AppState,
@@ -124,7 +100,7 @@ fn start_import_analysis(
     let id = job.id.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            importer::analyze(&job, &sources, settings.scan_workers, &settings.mtool_root)
+            importer::analyze(&job, &sources, settings.scan_workers)
         }));
         job.finish(match result {
             Ok(r) => r.map(|_| vec![]).map_err(|e| e.to_string()),
@@ -964,57 +940,6 @@ async fn clear_library(
     .map_err(|e| e.to_string())?
 }
 #[tauri::command]
-fn start_metadata_refresh(state: State<'_, AppState>) -> CommandResult<String> {
-    let _gate = state.activity.lock().map_err(|_| "操作锁不可用")?;
-    let games = with_db(&state, |db| db.games())?;
-    let job = state
-        .tasks
-        .begin("metadata", String::new())
-        .map_err(|e| e.to_string())?;
-    let id = job.id.clone();
-    let db = state.db.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
-            || -> crate::domain::Result<Vec<String>> {
-                job.stage("补充引擎与未知版本", games.len());
-                let mut values = vec![];
-                for game in games {
-                    if job.stop() {
-                        return Err(Error::Validation("补充已取消".into()));
-                    }
-                    match scanner::analyze_quick_selected(
-                        Path::new(&game.install_path),
-                        game.main_executable.as_deref(),
-                        &|| job.stop(),
-                        &|p| job.progress(&game.install_path, p),
-                    ) {
-                        Ok(mut candidate) if candidate.status == "ready" => {
-                            (candidate.suggested_version, candidate.version_source) =
-                                crate::version::suggest(
-                                    &candidate.suggested_title,
-                                    game.main_executable.as_deref(),
-                                );
-                            values.push((game.id, candidate));
-                        }
-                        Ok(_) => job.warn(format!("目录未完整读取：{}", game.install_path)),
-                        Err(e) => job.warn(format!("{}：{e}", game.install_path)),
-                    }
-                    job.completed_one(&game.install_path);
-                }
-                job.stage("保存补充结果", values.len());
-                db.lock()
-                    .map_err(|_| Error::Validation("数据库锁不可用".into()))?
-                    .supplement_metadata(&values, &|| job.stop())
-            },
-        ));
-        job.finish(match result {
-            Ok(r) => r.map_err(|e| e.to_string()),
-            Err(_) => Err("补充任务异常退出".into()),
-        });
-    });
-    Ok(id)
-}
-#[tauri::command]
 fn open_game_folder(state: State<'_, AppState>, id: String) -> CommandResult<()> {
     with_db(&state, |db| launcher::open_folder(&db.game(&id)?))
 }
@@ -1281,14 +1206,9 @@ fn initialize(app: &tauri::AppHandle) -> std::result::Result<(), Box<dyn std::er
     let data_guard = crate::data_directory::InstanceGuard::acquire(&data)?;
     std::fs::create_dir_all(app.path().app_cache_dir()?)?;
     std::fs::create_dir_all(app.path().app_log_dir()?)?;
-    let appearance = crate::appearance::load(&data).unwrap_or_else(|error| {
-        eprintln!("Unable to load appearance settings: {error}");
-        crate::appearance::Appearance::default()
-    });
     app.manage(AppState {
         #[cfg(windows)]
         _data_guard: data_guard,
-        appearance: Mutex::new(appearance),
         db: Arc::new(Mutex::new(Database::open(
             &data.join(crate::data_directory::DATABASE),
         )?)),
@@ -1306,7 +1226,7 @@ fn initialize(app: &tauri::AppHandle) -> std::result::Result<(), Box<dyn std::er
         tauri::WebviewWindowBuilder::from_config(app, &app.config().app.windows[0])?.build()?;
     #[cfg(windows)]
     style_native_title_bar(&window);
-    window.set_icon(crate::appearance::icon(appearance.icon))?;
+    window.set_icon(crate::appearance::icon())?;
     if let Err(error) = crate::window_placement::position(&window) {
         eprintln!("Unable to position startup window: {error}");
         let _ = window.center();
@@ -1350,8 +1270,6 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             open_data_directory,
-            get_appearance,
-            save_appearance,
             list_games,
             choose_import_sources,
             discover_import_sources,
@@ -1391,7 +1309,6 @@ pub fn run() {
             play_game,
             launch_history,
             clear_library,
-            start_metadata_refresh,
             open_game_folder,
             open_save_folder,
             list_editable_saves,

@@ -309,8 +309,3 @@ export interface ImportRecoveryIssue {
   record: string;
   message: string;
 }
-export type AppearanceChoice = 'original' | 'new';
-export interface Appearance {
-  icon: AppearanceChoice;
-  illustration: AppearanceChoice;
-}

@@ -30,7 +30,7 @@ function Invoke-PortableProbe($Directory, $Executable, $Mode, $Phase) {
     if ($taskReportedPath.StartsWith('\\?\')) { $taskReportedPath = $taskReportedPath.Substring(4) }
     if ([IO.Path]::GetFullPath($taskReportedPath) -ne [IO.Path]::GetFullPath($taskData)) { throw 'Unexpected data directory' }
     if ($taskReport.config -ne $taskReport.data -or $taskReport.cache -ne (Join-Path $taskReport.data 'caches') -or $taskReport.logs -ne (Join-Path $taskReport.data 'logs')) { throw 'App directory APIs disagree' }
-    foreach ($taskFile in @('library.sqlite3', 'appearance.json', 'imports/probe.manifest')) {
+    foreach ($taskFile in @('library.sqlite3', 'imports/probe.manifest')) {
         if (-not (Test-Path -LiteralPath (Join-Path $taskData $taskFile))) { throw "Missing application data: $taskFile" }
     }
     $taskLevelDb = Join-Path $taskData 'EBWebView/Default/Local Storage/leveldb'

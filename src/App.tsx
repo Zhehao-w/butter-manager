@@ -5,7 +5,7 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { useStableVirtualizer } from './useStableVirtualizer';
 import { api } from './api';
 import { useNotifications, NotificationToast } from './notifications';
-import { appIcon, sidebarCharacter, defaultAppearance } from './appearance';
+import { appIcon, sidebarCharacter } from './appearance';
 import {
   Icon,
   Modal,
@@ -328,13 +328,8 @@ export default function App() {
             .catch((reason) =>
               setError(`记录已保存，但列表更新失败：${String(reason)}。可重新打开应用查看。`),
             );
-          setToast(
-            job.kind === 'metadata'
-              ? `已补充 ${job.registered_ids.length} 项记录。`
-              : `已加入游戏库：${job.registered_ids.length} 项。`,
-          );
-        } else
-          setToast(job.kind === 'metadata' ? '补充结束，没有需要修改的记录。' : '单独分析结束。');
+          setToast(`已加入游戏库：${job.registered_ids.length} 项。`);
+        } else setToast('单独分析结束。');
         void scanJob.refresh().catch((reason) => setError(String(reason)));
       } else {
         setToast(
@@ -358,16 +353,6 @@ export default function App() {
   useEffect(() => {
     if (!desktop) return;
     let stale = false;
-    api
-      .appearance()
-      .then(async (value) => {
-        if (!stale && (value.icon !== 'new' || value.illustration !== 'new')) {
-          await api.saveAppearance(defaultAppearance);
-        }
-      })
-      .catch((reason) => {
-        if (!stale) setError(String(reason));
-      });
     Promise.all([api.games(), api.settings()])
       .then(([library, config]) => {
         if (stale) return;
@@ -1617,9 +1602,7 @@ function TaskProgress({
                 ? '分析'
                 : page.kind === 'paths'
                   ? '检查目录'
-                  : page.kind === 'metadata'
-                    ? '补充资料'
-                    : '加入游戏库'}{' '}
+                  : '加入游戏库'}{' '}
             · {page.status === 'cancel_requested' ? '正在取消，等待磁盘操作返回…' : page.phase}
           </h3>
           <p>

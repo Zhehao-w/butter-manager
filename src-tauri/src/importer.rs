@@ -107,7 +107,7 @@ pub fn matches(candidate: &ScanCandidate, games: &[Game]) -> Vec<Match> {
     MatchIndex::new(games).matches(candidate, &|| false)
 }
 
-pub fn analyze(job: &Arc<Job>, sources: &[String], workers: usize, shared: &str) -> Result<()> {
+pub fn analyze(job: &Arc<Job>, sources: &[String], workers: usize) -> Result<()> {
     job.stage("分析待导入目录", sources.len());
     let next = std::sync::atomic::AtomicUsize::new(0);
     std::thread::scope(|scope| {
@@ -123,7 +123,7 @@ pub fn analyze(job: &Arc<Job>, sources: &[String], workers: usize, shared: &str)
                 }) {
                     Ok(mut candidate) => {
                         candidate.bundled_mtool =
-                            mtool_cleanup::detect(Path::new(source), shared, &|| job.stop());
+                            mtool_cleanup::detect(Path::new(source), &|| job.stop());
                         job.publish(candidate);
                     }
                     Err(e) => {
@@ -773,8 +773,7 @@ impl ImportStore {
                 selection.version.trim().into()
             };
             selection.source = paths::path_text(&source)?;
-            candidate.bundled_mtool =
-                mtool_cleanup::detect(&source, &settings.mtool_root, &|| job.stop());
+            candidate.bundled_mtool = mtool_cleanup::detect(&source, &|| job.stop());
             let cleanup = if selection.cleanup_mtool {
                 match mtool_cleanup::prepare(&source, &candidate.bundled_mtool, job) {
                     Ok(cleanup) => Some(cleanup),
@@ -2736,8 +2735,6 @@ mod tests {
         candidate.engine = "Unity".into();
         let mut db = f.db.lock().unwrap();
         db.sync_mtool_defaults(std::slice::from_ref(&candidate))
-            .unwrap();
-        db.supplement_metadata(&[(game_id.clone(), candidate)], &|| false)
             .unwrap();
         let game = db.game(&game_id).unwrap();
         assert_eq!(game.launch_type, "DIRECT");

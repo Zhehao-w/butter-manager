@@ -298,15 +298,6 @@ pub fn analyze_quick_controlled(
     analyze_inner(path, false, false, None, stop, progress)
 }
 
-pub fn analyze_quick_selected(
-    path: &Path,
-    executable: Option<&str>,
-    stop: &dyn Fn() -> bool,
-    progress: &dyn Fn(&Path),
-) -> Result<ScanCandidate> {
-    analyze_inner(path, false, false, executable, stop, progress)
-}
-
 fn analyze_inner(
     path: &Path,
     deep: bool,
@@ -957,9 +948,14 @@ mod tests {
         fs::write(temp.path().join("other/www/js/rpg_core.js"), b"").unwrap();
         fs::write(temp.path().join("other/Launcher.exe"), b"fixture").unwrap();
         assert_eq!(
-            analyze_quick_selected(temp.path(), Some("other/Launcher.exe"), &|| false, &|_| {})
-                .unwrap()
-                .engine,
+            analyze_selected_controlled(
+                temp.path(),
+                Some("other/Launcher.exe"),
+                &|| false,
+                &|_| {}
+            )
+            .unwrap()
+            .engine,
             "RPG Maker MV"
         );
         assert_eq!(analyze_directory(temp.path()).unwrap().engine, "Unknown");

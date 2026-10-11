@@ -307,65 +307,57 @@ fn explicit_update_launch_overrides_and_automatic_loader_choice_do_not_change_ro
 }
 
 #[test]
-fn mtool_to_direct_update_discards_loader_and_restores_old_configuration_on_rollback() {
-    assert_launch_mode_transition(true, "DIRECT");
-}
-
-#[test]
-fn mtool_to_qsp_update_discards_loader_and_restores_old_configuration_on_rollback() {
-    assert_launch_mode_transition(true, "EXTERNAL_PLAYER");
-}
-
-#[test]
-fn direct_to_mtool_update_accepts_loader_override_or_automatic_detection_and_rolls_back() {
-    assert_launch_mode_transition(false, "MTOOL");
-}
-
-fn assert_launch_mode_transition(old_mtool: bool, launch_type: &str) {
-    for loader in [None, Some("loaders/replacement.dll"), Some("")] {
-        let mut f = manual_launch_fixture(old_mtool);
-        let before = f.db.lock().unwrap().version_config(&f.id).unwrap();
-        if launch_type == "EXTERNAL_PLAYER" {
-            fs::write(f.source.join("冒険.qsp"), b"new qsp game").unwrap();
-        }
-        let id = f.plan_with(true, true, |selection| {
-            selection.executable = "replacement/Game.exe".into();
-            selection.mtool = launch_type == "MTOOL";
-            selection.mtool_loader = loader.map(str::to_owned);
+fn launch_mode_transitions_drop_or_detect_loader_and_restore_configuration_on_rollback() {
+    for (old_mtool, launch_type) in [
+        (true, "DIRECT"),
+        (true, "EXTERNAL_PLAYER"),
+        (false, "MTOOL"),
+    ] {
+        for loader in [None, Some("loaders/replacement.dll"), Some("")] {
+            let mut f = manual_launch_fixture(old_mtool);
+            let before = f.db.lock().unwrap().version_config(&f.id).unwrap();
             if launch_type == "EXTERNAL_PLAYER" {
-                selection.external_player = Some(crate::domain::ExternalPlayer {
-                    player_type: "QSP".into(),
-                    scope: "GAME_LOCAL".into(),
-                    game_file: Some("冒険.qsp".into()),
-                });
+                fs::write(f.source.join("冒険.qsp"), b"new qsp game").unwrap();
             }
-        });
-        assert!(f.store.get(&id).unwrap().items[0].blockers.is_empty());
-        if launch_type == "EXTERNAL_PLAYER" {
-            let mut item = f.store.get(&id).unwrap().items.remove(0);
-            item.selection.mtool = true;
-            let config = super::updater::configuration(&item).unwrap();
-            assert_eq!(config.launch_type, "EXTERNAL_PLAYER");
-            assert!(config.mtool_loader.is_none());
-        }
-        f.apply(&id).unwrap();
-        let updated = f.db.lock().unwrap().version_config(&f.id).unwrap();
-        assert_eq!(updated.launch_type, launch_type);
-        assert_eq!(updated.working_directory, before.working_directory);
-        assert_eq!(
-            updated.mtool_loader.as_deref(),
-            if launch_type == "MTOOL" {
-                loader.filter(|value| !value.is_empty())
-            } else {
-                None
+            let id = f.plan_with(true, true, |selection| {
+                selection.executable = "replacement/Game.exe".into();
+                selection.mtool = launch_type == "MTOOL";
+                selection.mtool_loader = loader.map(str::to_owned);
+                if launch_type == "EXTERNAL_PLAYER" {
+                    selection.external_player = Some(crate::domain::ExternalPlayer {
+                        player_type: "QSP".into(),
+                        scope: "GAME_LOCAL".into(),
+                        game_file: Some("冒険.qsp".into()),
+                    });
+                }
+            });
+            assert!(f.store.get(&id).unwrap().items[0].blockers.is_empty());
+            if launch_type == "EXTERNAL_PLAYER" {
+                let mut item = f.store.get(&id).unwrap().items.remove(0);
+                item.selection.mtool = true;
+                let config = super::updater::configuration(&item).unwrap();
+                assert_eq!(config.launch_type, "EXTERNAL_PLAYER");
+                assert!(config.mtool_loader.is_none());
             }
-        );
-        if let Some(player) = &updated.external_player {
-            assert_eq!(player.game_file.as_deref(), Some("冒険.qsp"));
+            f.apply(&id).unwrap();
+            let updated = f.db.lock().unwrap().version_config(&f.id).unwrap();
+            assert_eq!(updated.launch_type, launch_type);
+            assert_eq!(updated.working_directory, before.working_directory);
+            assert_eq!(
+                updated.mtool_loader.as_deref(),
+                if launch_type == "MTOOL" {
+                    loader.filter(|value| !value.is_empty())
+                } else {
+                    None
+                }
+            );
+            if let Some(player) = &updated.external_player {
+                assert_eq!(player.game_file.as_deref(), Some("冒険.qsp"));
+            }
+            f.store = ImportStore::open(f.store.directory.clone()).unwrap();
+            f.rollback(&id).unwrap();
+            assert_eq!(f.db.lock().unwrap().version_config(&f.id).unwrap(), before);
         }
-        f.store = ImportStore::open(f.store.directory.clone()).unwrap();
-        f.rollback(&id).unwrap();
-        assert_eq!(f.db.lock().unwrap().version_config(&f.id).unwrap(), before);
     }
 }
 

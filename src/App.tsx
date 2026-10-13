@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createElement, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, RefObject } from 'react';
 import { isTauri } from '@tauri-apps/api/core';
 import { useVirtualizer } from '@tanstack/react-virtual';
@@ -49,6 +49,7 @@ import { EngineSelect } from './EngineSelect';
 import { FolderErrorDialog } from './FolderErrorDialog';
 import { SaveEditor } from './SaveEditor';
 import { WindowTitleBar } from './WindowTitleBar';
+import { WindowCloseGuards, useWindowCloseGuard, useWindowClosing } from './windowClose';
 import { useLibraryLayout, useSavedSort } from './preferences';
 import {
   PlayBadge,
@@ -127,16 +128,27 @@ export default function App() {
     setSelectedId(id);
   }
   const [launchingIds, setLaunchingIds] = useState<Set<string>>(new Set());
+  const [visibleLaunchingIds, setVisibleLaunchingIds] = useState<Set<string>>(new Set());
   const launchRequests = useRef(new Set<string>());
   async function playGame(id: string, configuration?: LaunchConfiguration) {
     if (launchRequests.current.has(id)) return;
     launchRequests.current.add(id);
     setLaunchingIds((current) => new Set(current).add(id));
+    const progressTimer = window.setTimeout(() => {
+      setVisibleLaunchingIds((current) => new Set(current).add(id));
+    }, 300);
     try {
       const launched = await (configuration ? api.play(id, configuration) : api.play(id));
       if (launched)
         setGames((current) => current.map((game) => (game.id === id ? launched : game)));
     } finally {
+      window.clearTimeout(progressTimer);
+      setVisibleLaunchingIds((current) => {
+        if (!current.has(id)) return current;
+        const next = new Set(current);
+        next.delete(id);
+        return next;
+      });
       launchRequests.current.delete(id);
       setLaunchingIds((current) => {
         const next = new Set(current);
@@ -359,6 +371,11 @@ export default function App() {
   const scanning = pending(scanId, scanJob.page);
   const processing = pending(taskId, taskJob.page);
   const taskActive = starting || scanning || processing || importBusy || duplicateBusy;
+  const windowClosing = useWindowClosing(
+    desktop,
+    taskActive || linkBusy || launchingIds.size > 0,
+    setError,
+  );
 
   useEffect(() => {
     if (!desktop) return;
@@ -695,9 +712,16 @@ export default function App() {
     </div>
   );
 
-  return (
+  return createElement(
+    WindowCloseGuards.Provider,
+    { value: windowClosing.guards },
     <div className={`app-shell${desktop ? ' app-shell-desktop' : ''}`}>
-      <WindowTitleBar desktop={desktop} icon={appIcon} onError={setError} />
+      <WindowTitleBar
+        desktop={desktop}
+        icon={appIcon}
+        onError={setError}
+        onClose={windowClosing.requestClose}
+      />
       <aside className="sidebar">
         <div className="brand">
           <img src={appIcon} alt="" />
@@ -996,6 +1020,10 @@ export default function App() {
                             <button
                               type="button"
                               className="library-play-button"
+                              data-launch-pending={
+                                launchingIds.has(g.id) && !visibleLaunchingIds.has(g.id)
+                              }
+                              aria-busy={launchingIds.has(g.id)}
                               aria-label={`启动 ${g.display_title}`}
                               title={
                                 taskActive
@@ -1017,7 +1045,7 @@ export default function App() {
                               }}
                             >
                               <Icon name="play" size={14} />
-                              {launchingIds.has(g.id) ? '启动中' : '启动'}
+                              {visibleLaunchingIds.has(g.id) ? '启动中' : '启动'}
                             </button>
                           </td>
                           <td title={g.current_version === 'Unknown' ? '版本未知' : undefined}>
@@ -1135,6 +1163,10 @@ export default function App() {
                               <button
                                 type="button"
                                 className="library-play-button card-play-button"
+                                data-launch-pending={
+                                  launchingIds.has(g.id) && !visibleLaunchingIds.has(g.id)
+                                }
+                                aria-busy={launchingIds.has(g.id)}
                                 aria-label={`启动 ${g.display_title}`}
                                 title={
                                   taskActive
@@ -1156,7 +1188,7 @@ export default function App() {
                                 }}
                               >
                                 <Icon name="play" size={14} />
-                                {launchingIds.has(g.id) ? '启动中…' : '启动'}
+                                {visibleLaunchingIds.has(g.id) ? '启动中…' : '启动'}
                               </button>
                             </article>
                           ))}
@@ -1616,6 +1648,7 @@ export default function App() {
             taskJob.markCancelling();
           }}
           launching={launchingIds.has(game.id)}
+          launchProgressVisible={visibleLaunchingIds.has(game.id)}
           onPlay={(configuration) => playGame(game.id, configuration)}
           onSaved={(saved) => {
             setGames((current) => current.map((g) => (g.id === saved.id ? saved : g)));
@@ -1638,7 +1671,16 @@ export default function App() {
           onClose={() => setSelectedId(null)}
         />
       )}
-    </div>
+      {windowClosing.confirm && (
+        <DiscardConfirmation
+          onKeep={windowClosing.cancel}
+          onDiscard={() => void windowClosing.approve(false)}
+          onSave={() => void windowClosing.approve(true)}
+          busy={windowClosing.saving}
+          error={windowClosing.error}
+        />
+      )}
+    </div>,
   );
 }
 
@@ -1873,26 +1915,44 @@ function DiscardConfirmation({
   onDiscard,
   onKeep,
   actionLabel = '放弃并关闭',
+  onSave,
+  busy = false,
+  error,
 }: {
   onDiscard: () => void;
   onKeep: () => void;
   actionLabel?: string;
+  onSave?: () => void;
+  busy?: boolean;
+  error?: string;
 }) {
   return (
     <Modal
-      title="放弃未保存修改？"
+      title={onSave ? '关闭前保存修改？' : '放弃未保存修改？'}
       variant="confirm"
       onClose={onKeep}
       footer={
         <div className="confirmation-actions">
-          <button onClick={onKeep}>继续编辑</button>
-          <button className="warning" onClick={onDiscard}>
+          <button disabled={busy} onClick={onKeep}>
+            {onSave ? '取消关闭' : '继续编辑'}
+          </button>
+          <button disabled={busy} className="warning" onClick={onDiscard}>
             {actionLabel}
           </button>
+          {onSave && (
+            <button disabled={busy} className="primary" onClick={onSave}>
+              {busy ? '保存中…' : '保存并关闭'}
+            </button>
+          )}
         </div>
       }
     >
       <p>资料尚未保存，可以继续编辑或放弃修改。</p>
+      {error && (
+        <p className="error" role="alert">
+          {error}
+        </p>
+      )}
     </Modal>
   );
 }
@@ -1956,6 +2016,23 @@ function SettingsPage({
       setConfirmClose(true);
     } else go();
   }
+  async function saveSettings() {
+    if (busy || locked) return false;
+    const form = document.getElementById(formId) as HTMLFormElement | null;
+    if (form && !form.reportValidity()) return false;
+    setBusy(true);
+    setError('');
+    try {
+      await onSave(draft);
+      return true;
+    } catch (reason) {
+      setError(String(reason));
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }
+  useWindowCloseGuard({ dirty, busy, save: saveSettings });
   useEffect(() => {
     navigationGuard.current = requestNavigation;
     return () => {
@@ -2030,11 +2107,7 @@ function SettingsPage({
           onSubmit={(event) => {
             event.preventDefault();
             if (!dirty || busy || locked || confirmClose || resetOpen) return;
-            setBusy(true);
-            setError('');
-            void onSave(draft)
-              .catch((reason) => setError(String(reason)))
-              .finally(() => setBusy(false));
+            void saveSettings();
           }}
         >
           {(error || locked) && (
@@ -2369,6 +2442,7 @@ function GameDetail({
   onAnalyze,
   onCancelAnalysis,
   launching,
+  launchProgressVisible,
   onPlay,
   onSaved,
   onClose,
@@ -2387,6 +2461,7 @@ function GameDetail({
   onAnalyze: () => Promise<void>;
   onCancelAnalysis: () => Promise<void>;
   launching: boolean;
+  launchProgressVisible: boolean;
   onPlay: (configuration: LaunchConfiguration) => Promise<void>;
   onSaved: (game: Game) => void;
   onClose: () => void;
@@ -2528,12 +2603,28 @@ function GameDetail({
     setMessage('');
     try {
       await action();
+      return true;
     } catch (reason) {
       setMessage(String(reason));
+      return false;
     } finally {
       setBusy(false);
     }
   }
+  async function saveGame() {
+    if (busy || launching) return false;
+    const form = document.getElementById(formId) as HTMLFormElement | null;
+    if (form && !form.reportValidity()) return false;
+    return run(async () => {
+      const saved = await api.saveGame(edit);
+      setDraft({ ...saved });
+      setAliases(saved.aliases.join('\n'));
+      setSaves(saved.save_paths.join('\n'));
+      onSaved(saved);
+      setMessage('游戏资料已保存。');
+    });
+  }
+  useWindowCloseGuard({ dirty, busy: busy || launching, save: saveGame });
   function useRecipe(recipe: MToolRecipe) {
     setDraft((current) => ({
       ...current,
@@ -2625,6 +2716,8 @@ function GameDetail({
               <div className="detail-actions">
                 <button
                   className="primary play-button"
+                  data-launch-pending={launching && !launchProgressVisible}
+                  aria-busy={launching}
                   disabled={
                     busy ||
                     launching ||
@@ -2639,7 +2732,7 @@ function GameDetail({
                   }}
                 >
                   <Icon name="play" />
-                  {launching ? '启动中…' : '启动'}
+                  {launchProgressVisible ? '启动中…' : '启动'}
                 </button>
                 <button
                   disabled={busy || launching}
@@ -2762,14 +2855,7 @@ function GameDetail({
         }}
         onSubmit={(event) => {
           event.preventDefault();
-          void run(async () => {
-            const saved = await api.saveGame(edit);
-            setDraft({ ...saved });
-            setAliases(saved.aliases.join('\n'));
-            setSaves(saved.save_paths.join('\n'));
-            onSaved(saved);
-            setMessage('游戏资料已保存。');
-          });
+          void saveGame();
         }}
       >
         <fieldset disabled={busy || launching || confirmClose}>

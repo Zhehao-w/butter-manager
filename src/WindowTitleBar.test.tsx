@@ -19,16 +19,18 @@ beforeEach(() => {
 });
 
 describe('WindowTitleBar', () => {
-  it('minimizes and requests normal window close through Tauri', async () => {
-    render(<WindowTitleBar desktop icon="icon.png" onError={vi.fn()} />);
+  it('minimizes and sends close through the shared guard', async () => {
+    const onClose = vi.fn();
+    render(<WindowTitleBar desktop icon="icon.png" onError={vi.fn()} onClose={onClose} />);
     fireEvent.click(screen.getByRole('button', { name: '最小化窗口' }));
     await waitFor(() => expect(native.minimize).toHaveBeenCalledTimes(1));
     fireEvent.click(screen.getByRole('button', { name: '关闭窗口' }));
-    await waitFor(() => expect(native.close).toHaveBeenCalledTimes(1));
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(native.close).not.toHaveBeenCalled();
   });
 
   it('switches maximize and restore controls and follows external window resizing', async () => {
-    render(<WindowTitleBar desktop icon="icon.png" onError={vi.fn()} />);
+    render(<WindowTitleBar desktop icon="icon.png" onError={vi.fn()} onClose={vi.fn()} />);
     await waitFor(() => expect(native.isMaximized).toHaveBeenCalled());
     native.isMaximized.mockResolvedValue(true);
     fireEvent.click(screen.getByRole('button', { name: '最大化窗口' }));
@@ -45,14 +47,14 @@ describe('WindowTitleBar', () => {
   it('reports failed window operations', async () => {
     const onError = vi.fn();
     native.minimize.mockRejectedValue(new Error('denied'));
-    render(<WindowTitleBar desktop icon="icon.png" onError={onError} />);
+    render(<WindowTitleBar desktop icon="icon.png" onError={onError} onClose={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: '最小化窗口' }));
     await waitFor(() => expect(onError).toHaveBeenCalledWith('窗口操作失败：Error: denied'));
   });
 
   it('does not show or invoke desktop controls in browser previews', () => {
     const { container } = render(
-      <WindowTitleBar desktop={false} icon="icon.png" onError={vi.fn()} />,
+      <WindowTitleBar desktop={false} icon="icon.png" onError={vi.fn()} onClose={vi.fn()} />,
     );
     expect(container.childElementCount).toBe(0);
     expect(native.isMaximized).not.toHaveBeenCalled();

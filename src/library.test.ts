@@ -15,6 +15,12 @@ describe('library sorting', () => {
     expect(sortGames(games, 'added-asc').map((g) => g.id)).toEqual(['a', 'c', 'b']);
     expect(sortGames(games, 'added-desc').map((g) => g.id)).toEqual(['b', 'c', 'a']);
     expect(games.map((g) => g.id)).toEqual(['a', 'b', 'c']);
+    const recent = [
+      { ...games[0], created_at: '2026-10-12T15:00:00.000Z' },
+      { ...games[1], created_at: '2026-10-12T14:00:00.000Z' },
+      { ...games[2], updated_at: '2026-10-12T16:00:00.000Z' },
+    ];
+    expect(sortGames(recent, 'added-desc').map((g) => g.id)).toEqual(['a', 'b', 'c']);
   });
   it('keeps never-launched games last for either launch-time direction with deterministic ties', () => {
     expect(sortGames(games, 'played-desc').map((g) => g.id)).toEqual(['c', 'b', 'a']);

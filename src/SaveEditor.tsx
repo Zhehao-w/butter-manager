@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { api } from './api';
 import { Icon, Modal, SearchField } from './ui';
+import { useWindowCloseGuard } from './windowClose';
 import type { Game } from './types';
 import type {
   SaveCatalog,
@@ -67,15 +68,17 @@ export function SaveEditor({ game, onClose }: { game: Game; onClose: () => void 
     setCategory(next.slot.format === 'Persistent' ? 'persistent' : 'variables');
   }
   async function run(action: () => Promise<void>) {
-    if (active.current) return;
+    if (active.current) return false;
     active.current = true;
     setBusy(true);
     setError('');
     setNotice('');
     try {
       await action();
+      return true;
     } catch (reason) {
       if (alive.current) setError(String(reason));
+      return false;
     } finally {
       active.current = false;
       if (alive.current) setBusy(false);
@@ -117,8 +120,8 @@ export function SaveEditor({ game, onClose }: { game: Game; onClose: () => void 
     });
   }
   async function save() {
-    if (!document) return;
-    await run(async () => {
+    if (!document) return false;
+    return run(async () => {
       const changes: SaveChange[] = [];
       for (const field of document.fields) {
         if (!(field.id in drafts)) continue;
@@ -161,6 +164,21 @@ export function SaveEditor({ game, onClose }: { game: Game; onClose: () => void 
       setPendingTrust(() => action);
     else action();
   }
+  useWindowCloseGuard({
+    dirty,
+    busy: busy || !!valueEditor || !!pendingTrust,
+    save: async () => {
+      if (
+        document &&
+        ['RenPy', 'Persistent'].includes(document.slot.format) &&
+        document.signature?.status !== 'local' &&
+        !sourceTrusted(document)
+      ) {
+        throw new Error('请先在存档编辑器中确认来源并保存，再关闭窗口。');
+      }
+      return save();
+    },
+  });
   async function chooseExternal() {
     await run(async () => {
       const next = await api.chooseExternalRenpySave(game.id);

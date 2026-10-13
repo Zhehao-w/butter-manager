@@ -66,6 +66,10 @@ button:disabled {
   opacity: 0.42;
   cursor: default;
 }
+button[data-launch-pending='true']:disabled {
+  opacity: 1;
+  cursor: wait;
+}
 button.primary {
   background-color: #1677ff;
   background-image: linear-gradient(135deg, #ffffff20, #ffffff00);

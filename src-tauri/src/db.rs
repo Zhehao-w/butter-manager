@@ -89,7 +89,6 @@ impl Database {
         operation: &str,
         old: &crate::importer::VersionConfig,
         new: &crate::importer::VersionConfig,
-        confirmed_title: &str,
     ) -> Result<()> {
         if self.version_operation(operation)?.as_deref() == Some("committed") {
             if self.version_config(id)? != *new {
@@ -102,13 +101,13 @@ impl Database {
         }
         let tx = self.connection.transaction()?;
         Self::write_version(&tx, id, new)?;
+        // Version titles belong to the current identity; keep existing aliases untouched.
         tx.execute("INSERT INTO version_history(operation,game_id,old_version,new_version,status) VALUES(?1,?2,?3,?4,'committed')", params![operation,id,old.version,new.version])?;
-        let title = confirmed_title.trim();
-        if !title.is_empty() {
-            let normalized = normalize_alias(title);
-            tx.execute("INSERT INTO aliases(id,game_id,alias,normalized_alias,source) SELECT ?1,?2,?3,?4,'confirmed_import' WHERE NOT EXISTS(SELECT 1 FROM aliases WHERE game_id=?2 AND normalized_alias=?4)",
-                params![Uuid::new_v4().to_string(),id,title,normalized])?;
-        }
+        // A successful version import counts as newly added; journal replay returns above.
+        tx.execute(
+            "UPDATE games SET created_at=(SELECT created_at FROM version_history WHERE operation=?2 AND game_id=?1) WHERE id=?1",
+            params![id, operation],
+        )?;
         tx.commit()?;
         Ok(())
     }
@@ -963,6 +962,54 @@ impl Database {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn version_import_refreshes_added_time_only_on_successful_first_commit() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("library.db");
+        let mut db = Database::open(&path).unwrap();
+        db.connection.execute("INSERT INTO games(id,canonical_title,display_title,install_path,install_path_key,created_at) VALUES('game','game','game','game','game','2020-01-01T00:00:00.000Z')", []).unwrap();
+        let original_time = db.game("game").unwrap().created_at;
+        let old = db.version_config("game").unwrap();
+        let mut new = old.clone();
+        new.version = "v2".into();
+        db.fail_version_commit(true).unwrap();
+        assert!(db.commit_version("game", "update", &old, &new).is_err());
+        assert_eq!(db.game("game").unwrap().created_at, original_time);
+        assert_eq!(db.version_config("game").unwrap(), old);
+        db.fail_version_commit(false).unwrap();
+        db.commit_version("game", "update", &old, &new).unwrap();
+        let imported_time = db.game("game").unwrap().created_at;
+        assert!(imported_time > original_time);
+        assert_eq!(
+            imported_time,
+            db.version_history("game").unwrap()[0].created_at
+        );
+        // Make accidental rewrites observable without clock delays in this temporary fixture.
+        db.connection.execute("UPDATE version_history SET created_at='2021-01-01T00:00:00.000Z' WHERE operation='update'", []).unwrap();
+        drop(db);
+        let mut db = Database::open(&path).unwrap();
+        db.commit_version("game", "update", &old, &new).unwrap();
+        assert_eq!(db.game("game").unwrap().created_at, imported_time);
+        db.record_launch("game").unwrap();
+        assert_eq!(db.game("game").unwrap().created_at, imported_time);
+        db.rollback_version("game", "update", &new, &old).unwrap();
+        db.rollback_version("game", "update", &new, &old).unwrap();
+        assert_eq!(db.game("game").unwrap().created_at, imported_time);
+        // A separate update refreshes again, even after a previous update was rolled back.
+        db.connection
+            .execute(
+                "UPDATE games SET created_at='2022-01-01T00:00:00.000Z' WHERE id='game'",
+                [],
+            )
+            .unwrap();
+        db.commit_version("game", "next-update", &old, &new)
+            .unwrap();
+        assert!(db.game("game").unwrap().created_at.as_str() > "2022-01-01T00:00:00.000Z");
+        assert_eq!(
+            db.game("game").unwrap().created_at,
+            db.version_history("game").unwrap()[0].created_at
+        );
+    }
     #[test]
     fn duplicate_reviews_upgrade_old_exclusions_and_persist_confirmations_in_one_table() {
         let temp = tempfile::tempdir().unwrap();

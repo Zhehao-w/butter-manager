@@ -1,6 +1,8 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SaveEditor } from './SaveEditor';
+import { WindowCloseGuards } from './windowClose';
+import type { ContextType } from 'react';
 import { api } from './api';
 import type { Game } from './types';
 import type { SaveDocument, SaveField } from './saveEditorTypes';
@@ -80,6 +82,33 @@ beforeEach(() => {
 });
 afterEach(() => vi.restoreAllMocks());
 describe('Save Editor Lite', () => {
+  it('registers current save drafts with window close protection and preserves them on failed save', async () => {
+    const guards = new Map() as NonNullable<ContextType<typeof WindowCloseGuards>>;
+    const { unmount } = render(
+      <WindowCloseGuards.Provider value={guards}>
+        <SaveEditor game={game} onClose={vi.fn()} />
+      </WindowCloseGuards.Provider>,
+    );
+    await screen.findByLabelText('金钱');
+    await waitFor(() => expect([...guards.values()][0].busy).toBe(false));
+    expect([...guards.values()][0].dirty).toBe(false);
+    fireEvent.change(screen.getByLabelText('金钱'), { target: { value: '25' } });
+    expect([...guards.values()][0].dirty).toBe(true);
+    vi.mocked(api.applySaveEdits).mockRejectedValueOnce(new Error('fixture write failed'));
+    await act(async () => {
+      expect(await [...guards.values()][0].save()).toBe(false);
+    });
+    expect([...guards.values()][0].dirty).toBe(true);
+    await act(async () => {
+      expect(await [...guards.values()][0].save()).toBe(true);
+    });
+    expect([...guards.values()][0].dirty).toBe(false);
+    expect(api.applySaveEdits).toHaveBeenLastCalledWith('game', 'one', 'revision-1', [
+      { id: '金钱', value: 25 },
+    ]);
+    unmount();
+    expect(guards.size).toBe(0);
+  });
   it('expands container children and searches collapsed paths without losing pending edits', async () => {
     const original = doc();
     original.fields = [

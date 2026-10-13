@@ -83,16 +83,14 @@ function ImportSettingSection({ children }: ImportSettingSectionProps) {
 }
 
 function ImportCardIssues({ issues, linked }: { issues: string[]; linked: boolean }) {
-  const [reservedLines, setReservedLines] = useState(issues.length);
-  useEffect(() => {
-    setReservedLines((current) => Math.max(current, issues.length));
-  }, [issues.length]);
-  if (!reservedLines && !issues.length) return null;
+  const hadIssues = useRef(false);
+  if (issues.length) hadIssues.current = true;
+  if (!hadIssues.current) return null;
   return (
     <div
       className="import-card-issues"
       role={issues.length ? 'alert' : 'status'}
-      style={{ minHeight: Math.max(reservedLines, issues.length) * 21 }}
+      style={{ minHeight: Math.max(1, issues.length) * 21 }}
     >
       {issues.length ? (
         issues.map((issue) => (
@@ -997,9 +995,8 @@ export function ImportPage({
                     <span className="muted">{choice.external_player ? '播放器' : '启动文件'}</span>{' '}
                     {choice.executable || '未配置'}
                   </span>
-                  <span title={item?.target || choice.target_name}>
-                    <span className="muted">目标文件夹</span>{' '}
-                    {item ? leaf(item.target) : choice.target_name}
+                  <span title={choice.target_name}>
+                    <span className="muted">目标文件夹</span> {choice.target_name}
                   </span>
                 </div>
               );

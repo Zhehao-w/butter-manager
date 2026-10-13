@@ -625,56 +625,74 @@ fn database_commit_failure_restores_files_and_configuration_then_can_resume() {
         .exists());
     f.db.lock().unwrap().fail_version_commit(false).unwrap();
     f.apply(&id).unwrap();
+    assert_eq!(f.db.lock().unwrap().game(&f.id).unwrap().aliases, aliases);
     assert_eq!(
         f.db.lock().unwrap().game(&f.id).unwrap().current_version,
         "v2"
     );
 }
 #[test]
-fn confirmed_import_alias_is_atomic_idempotent_and_survives_reopen_and_rollback() {
-    let mut f = Fixture::new();
-    let original = f.db.lock().unwrap().game(&f.id).unwrap();
-    let config = f.db.lock().unwrap().version_config(&f.id).unwrap();
-    let title = "新译名 シスターズコンパス v1.2";
-    let renamed = f.source.parent().unwrap().join(title);
-    fs::rename(&f.source, &renamed).unwrap();
-    f.source = renamed;
-    let cancelled = f.plan(true, true);
-    f.store.discard_preview(&cancelled).unwrap();
-    assert_eq!(
-        f.db.lock().unwrap().game(&f.id).unwrap().aliases,
-        original.aliases
-    );
-    let id = f.plan(true, true);
-    f.apply(&id).unwrap();
-    f.apply(&id).unwrap();
-    let mut game = f.db.lock().unwrap().game(&f.id).unwrap();
-    assert_eq!(
-        game.aliases.iter().filter(|alias| *alias == title).count(),
-        1
-    );
-    assert!(original
-        .aliases
-        .iter()
-        .all(|alias| game.aliases.contains(alias)));
-    let reopened = Database::open(&f.store.directory.parent().unwrap().join("fixture.db")).unwrap();
-    assert_eq!(reopened.game(&f.id).unwrap().aliases, game.aliases);
-    let future = scanner::pending_candidate(
-        &f.source
-            .parent()
-            .unwrap()
-            .join("新译名 シスターズコンパス v1.3"),
-    )
-    .unwrap();
-    assert!(matches(&future, std::slice::from_ref(&game))[0].auto_associate);
-    f.rollback(&id).unwrap();
-    game = f.db.lock().unwrap().game(&f.id).unwrap();
-    assert_eq!(game.display_title, original.display_title);
-    assert_eq!(f.db.lock().unwrap().version_config(&f.id).unwrap(), config);
-    assert_eq!(
-        game.aliases.iter().filter(|alias| *alias == title).count(),
-        1
-    );
+fn version_updates_preserve_existing_aliases_without_accumulating_names() {
+    for legacy in [false, true] {
+        let mut f = Fixture::new();
+        let db_path = f.store.directory.parent().unwrap().join("fixture.db");
+        // Preserve historical generated aliases as well as user-maintained aliases.
+        rusqlite::Connection::open(&db_path).unwrap().execute(
+            "INSERT INTO aliases(id,game_id,alias,normalized_alias,source) VALUES('historic',?1,'历史名称 v0.9','历史名称 v0.9','confirmed_import')",
+            [&f.id],
+        ).unwrap();
+        let original = f.db.lock().unwrap().game(&f.id).unwrap();
+        let old_config = f.db.lock().unwrap().version_config(&f.id).unwrap();
+        let cancelled = f.plan(true, true);
+        f.store.discard_preview(&cancelled).unwrap();
+        let first = f.plan_with(true, true, |selection| {
+            selection.title = "新名称 v2".into();
+            if !legacy {
+                selection.target_name = "新目录 v2".into();
+            }
+        });
+        if legacy {
+            f.use_legacy_journal(&first);
+        }
+        f.apply(&first).unwrap();
+        f.apply(&first).unwrap();
+        let updated = f.db.lock().unwrap().game(&f.id).unwrap();
+        assert_eq!(updated.aliases, original.aliases);
+        if !legacy {
+            assert_eq!(updated.display_title, "新名称 v2");
+            assert_eq!(
+                Path::new(&updated.install_path).file_name().unwrap(),
+                "新目录 v2"
+            );
+        }
+        let reopened = Database::open(&db_path).unwrap();
+        assert_eq!(reopened.game(&f.id).unwrap().aliases, original.aliases);
+        drop(reopened);
+        fs::create_dir_all(f.source.join("www/save")).unwrap();
+        fs::write(f.source.join("游戏.html"), b"third game").unwrap();
+        fs::write(f.source.join("www/save/進行.sav"), b"new bundled save").unwrap();
+        let second = f.plan_with(true, true, |selection| {
+            selection.title = "新名称 v3".into();
+            selection.target_name = "新目录 v3".into();
+            selection.version = "v3".into();
+        });
+        f.apply(&second).unwrap();
+        f.apply(&second).unwrap();
+        assert_eq!(
+            f.db.lock().unwrap().game(&f.id).unwrap().aliases,
+            original.aliases
+        );
+        f.rollback(&second).unwrap();
+        f.rollback(&first).unwrap();
+        assert_eq!(
+            f.db.lock().unwrap().game(&f.id).unwrap().aliases,
+            original.aliases
+        );
+        assert_eq!(
+            f.db.lock().unwrap().version_config(&f.id).unwrap(),
+            old_config
+        );
+    }
 }
 #[test]
 fn sequential_updates_can_only_be_rolled_back_in_reverse_order() {
@@ -707,6 +725,13 @@ fn sequential_updates_can_only_be_rolled_back_in_reverse_order() {
 #[test]
 fn update_preserves_uuid_metadata_local_and_external_saves_and_records_history_once() {
     let f = Fixture::new();
+    rusqlite::Connection::open(f.store.directory.parent().unwrap().join("fixture.db"))
+        .unwrap()
+        .execute(
+            "UPDATE games SET created_at='2020-01-01T00:00:00.000Z' WHERE id=?1",
+            [&f.id],
+        )
+        .unwrap();
     let before = f.db.lock().unwrap().game(&f.id).unwrap();
     let id = f.plan(true, true);
     let preview = f.store.get(&id).unwrap();
@@ -717,7 +742,7 @@ fn update_preserves_uuid_metadata_local_and_external_saves_and_records_history_o
         2 * b"old progress".len() as u64
     );
     assert!(!stage_path(&preview, 0).exists());
-    // Merely confirming a plan cannot change aliases. Remember the source only at commit.
+    // Neither preview nor version commit should add generated title aliases.
     assert_eq!(
         f.db.lock().unwrap().game(&f.id).unwrap().aliases,
         before.aliases
@@ -727,16 +752,13 @@ fn update_preserves_uuid_metadata_local_and_external_saves_and_records_history_o
     assert_eq!(after.id, before.id);
     assert_eq!(after.display_title, "incoming name");
     assert_eq!(after.canonical_title, "incoming name");
-    assert!(before
-        .aliases
-        .iter()
-        .all(|alias| after.aliases.contains(alias)));
-    assert!(after
-        .aliases
-        .contains(&preview.items[0].candidate.suggested_title));
-    assert_eq!(after.aliases.len(), before.aliases.len() + 1);
+    assert_eq!(after.aliases, before.aliases);
     assert_eq!(after.save_paths, before.save_paths);
-    assert_eq!(after.created_at, before.created_at);
+    assert!(after.created_at > before.created_at);
+    assert_eq!(
+        after.created_at,
+        f.db.lock().unwrap().version_history(&f.id).unwrap()[0].created_at
+    );
     assert_eq!(after.last_launched_at, before.last_launched_at);
     assert_eq!(after.play_status, before.play_status);
     assert_eq!(after.current_version, "v2");
@@ -758,6 +780,10 @@ fn update_preserves_uuid_metadata_local_and_external_saves_and_records_history_o
     assert_eq!(preview.items[0].update.as_ref().unwrap().saves.len(), 1);
     assert!(!f.source.exists());
     f.apply(&id).unwrap();
+    assert_eq!(
+        f.db.lock().unwrap().game(&f.id).unwrap().created_at,
+        after.created_at
+    );
     assert_eq!(
         f.db.lock().unwrap().version_history(&f.id).unwrap().len(),
         1

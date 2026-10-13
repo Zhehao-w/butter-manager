@@ -415,6 +415,72 @@ describe('batch import flow', () => {
     aliases: ['Game'],
     save_paths: ['<GAME>/SaveData'],
   };
+  it('shows the confirmed new target folder in update plan summaries, not the old path', async () => {
+    const updatePlan: ImportPlan = {
+      ...plan,
+      items: [
+        {
+          ...plan.items[0],
+          selection: {
+            ...plan.items[0].selection,
+            existing_id: oldGame.id,
+            target_name: '用户确认的新目录 v1.2',
+          },
+          target: oldGame.install_path,
+        },
+      ],
+    };
+    vi.mocked(api.importPlans).mockResolvedValue([updatePlan]);
+    render(<ImportPage {...props()} games={[oldGame]} />);
+    fireEvent.click(await screen.findByRole('tab', { name: /待确认/ }));
+    const target = await screen.findByText('用户确认的新目录 v1.2', {
+      selector: '.import-compact-facts > span',
+    });
+    expect(target.title).toBe('用户确认的新目录 v1.2');
+    expect(screen.queryByText('Game', { selector: '.import-compact-facts > span' })).toBeNull();
+    expect(api.importApply).not.toHaveBeenCalled();
+  });
+  it('shrinks resolved issue space without resetting edits or disclosure state', async () => {
+    vi.mocked(api.importMatches).mockResolvedValue({
+      [candidate.install_path]: [
+        {
+          id: oldGame.id,
+          title: oldGame.display_title,
+          reason: '需要确认',
+          auto_associate: false,
+          version: oldGame.current_version,
+          path: oldGame.install_path,
+        },
+      ],
+    });
+    vi.mocked(api.job).mockResolvedValue({ ...page, changes: [{ ...candidate, executables: [] }] });
+    render(<ImportPage {...props()} games={[oldGame]} />);
+    fireEvent.click(screen.getByRole('button', { name: '添加文件夹' }));
+    await screen.findByText('请手工选择启动文件。');
+    const issues = screen
+      .getByText('请手工选择启动文件。')
+      .closest('.import-card-issues') as HTMLElement;
+    expect(issues.style.minHeight).toBe('42px');
+    await expandSettings('基本信息');
+    fireEvent.change(screen.getByRole('textbox', { name: '版本' }), {
+      target: { value: '手工版本' },
+    });
+    await expandSettings('游戏关联');
+    fireEvent.click(screen.getByRole('button', { name: '关联：Game' }));
+    expect(issues.style.minHeight).toBe('21px');
+    vi.mocked(api.chooseLaunchFile).mockResolvedValue('replacement.exe');
+    await expandSettings('启动配置');
+    fireEvent.click(screen.getByRole('button', { name: '更改启动文件' }));
+    await waitFor(() => expect(screen.queryByText('请手工选择启动文件。')).toBeNull());
+    expect(issues.style.minHeight).toBe('21px');
+    expect(screen.getByRole('button', { name: '收起设置' }).getAttribute('aria-expanded')).toBe(
+      'true',
+    );
+    await expandSettings('基本信息');
+    expect((screen.getByRole('textbox', { name: '版本' }) as HTMLInputElement).value).toBe(
+      '手工版本',
+    );
+  });
   it('starts folded, synchronizes summaries after edits, and submits the same reviewed options', async () => {
     render(<ImportPage {...props()} settings={{ ...settings, mtool_root: 'E:/SharedMTool' }} />);
     fireEvent.click(screen.getByRole('button', { name: '添加文件夹' }));

@@ -5,10 +5,12 @@ export function WindowTitleBar({
   desktop,
   icon,
   onError,
+  onClose,
 }: {
   desktop: boolean;
   icon: string;
   onError: (message: string) => void;
+  onClose: () => void;
 }) {
   const [maximized, setMaximized] = useState(false);
   useEffect(() => {
@@ -31,7 +33,7 @@ export function WindowTitleBar({
   }, [desktop]);
   if (!desktop) return null;
 
-  async function act(action: 'minimize' | 'toggleMaximize' | 'close') {
+  async function act(action: 'minimize' | 'toggleMaximize') {
     try {
       const current = getCurrentWindow();
       await current[action]();
@@ -65,12 +67,7 @@ export function WindowTitleBar({
             )}
           </svg>
         </button>
-        <button
-          className="window-close"
-          aria-label="关闭窗口"
-          title="关闭"
-          onClick={() => void act('close')}
-        >
+        <button className="window-close" aria-label="关闭窗口" title="关闭" onClick={onClose}>
           <svg viewBox="0 0 12 12" aria-hidden="true">
             <path d="m1 1 10 10M11 1 1 11" />
           </svg>

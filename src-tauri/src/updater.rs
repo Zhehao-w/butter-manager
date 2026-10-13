@@ -1901,7 +1901,6 @@ impl ImportStore {
                 &operation,
                 &update.old,
                 &configuration(&item)?,
-                &item.candidate.suggested_title,
             )?;
             plan.items[index].registered_id = Some(item.game_id.clone());
             self.checkpoint(plan, index, "update_cleanup")?;

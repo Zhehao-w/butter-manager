@@ -1,11 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { api } from './api';
 import App from './App';
 import { engineQuickGroups } from './gameStatus';
 import type { Game, JobPage, ScanCandidate, Settings } from './types';
 
 vi.mock('@tauri-apps/api/core', () => ({ isTauri: () => true }));
+const nativeWindow = vi.hoisted(() => ({
+  isMaximized: vi.fn().mockResolvedValue(false),
+  destroy: vi.fn().mockResolvedValue(undefined),
+  onCloseRequested: vi.fn(),
+}));
+vi.mock('@tauri-apps/api/window', () => ({ getCurrentWindow: () => nativeWindow }));
 vi.mock('./api', () => ({
   api: {
     openDataDirectory: vi.fn().mockResolvedValue(undefined),
@@ -170,6 +176,10 @@ function mockLibraryViewport() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  nativeWindow.destroy.mockResolvedValue(undefined);
+  nativeWindow.onCloseRequested.mockResolvedValue(vi.fn());
+  vi.mocked(api.saveSettings).mockReset();
+  vi.mocked(api.saveGame).mockReset();
   vi.mocked(api.openFolder).mockResolvedValue();
   vi.mocked(api.importRecoveryIssues).mockResolvedValue([]);
   vi.mocked(api.startLibraryCheck).mockResolvedValue('');
@@ -220,6 +230,119 @@ function openConfig(section: 'MTool' | '设置') {
   fireEvent.click(screen.getByRole('button', { name: section }));
 }
 describe('iteration interactions', () => {
+  function systemClose() {
+    const event = { preventDefault: vi.fn() };
+    act(() => nativeWindow.onCloseRequested.mock.calls.at(-1)![0](event));
+    expect(event.preventDefault).toHaveBeenCalledOnce();
+  }
+  it.each(['titlebar', 'system'])(
+    'closes an unchanged window through %s and unregisters its listener',
+    async (entry) => {
+      const stop = vi.fn();
+      nativeWindow.onCloseRequested.mockResolvedValue(stop);
+      const { unmount } = render(<App />);
+      await screen.findByRole('button', { name: game.display_title });
+      if (entry === 'system') systemClose();
+      else fireEvent.click(screen.getByRole('button', { name: '关闭窗口' }));
+      await waitFor(() => expect(nativeWindow.destroy).toHaveBeenCalledOnce());
+      expect(screen.queryByRole('dialog')).toBeNull();
+      unmount();
+      expect(stop).toHaveBeenCalledOnce();
+    },
+  );
+  it.each(['settings', 'detail'])(
+    'guards both close entry points and preserves unsaved %s on cancel',
+    async (page) => {
+      render(<App />);
+      await screen.findByRole('button', { name: game.display_title });
+      if (page === 'settings') openConfig('设置');
+      else fireEvent.click(screen.getByRole('button', { name: game.display_title }));
+      const input = screen.getByRole('textbox', {
+        name: page === 'settings' ? /Game Root/ : '版本',
+      });
+      fireEvent.change(input, { target: { value: 'Unsaved' } });
+      fireEvent.click(screen.getByRole('button', { name: '关闭窗口' }));
+      const popup = screen.getByRole('dialog', { name: '关闭前保存修改？' });
+      systemClose();
+      expect(screen.getAllByRole('dialog', { name: '关闭前保存修改？' })).toHaveLength(1);
+      fireEvent.click(within(popup).getByRole('button', { name: '取消关闭' }));
+      expect((input as HTMLInputElement).value).toBe('Unsaved');
+      expect(nativeWindow.destroy).not.toHaveBeenCalled();
+      systemClose();
+      fireEvent.click(
+        within(screen.getByRole('dialog', { name: '关闭前保存修改？' })).getByRole('button', {
+          name: '放弃并关闭',
+        }),
+      );
+      await waitFor(() => expect(nativeWindow.destroy).toHaveBeenCalledOnce());
+      expect(api.saveSettings).not.toHaveBeenCalled();
+      expect(api.saveGame).not.toHaveBeenCalled();
+    },
+  );
+  it.each(['settings', 'detail'])(
+    'saves dirty %s before closing and retains the draft on save failure',
+    async (page) => {
+      vi.mocked(api.saveSettings)
+        .mockRejectedValueOnce(new Error('fixture save failed'))
+        .mockImplementation(async (value) => value);
+      vi.mocked(api.saveGame)
+        .mockRejectedValueOnce(new Error('fixture save failed'))
+        .mockImplementation(async (value) => ({ ...game, ...value }));
+      render(<App />);
+      await screen.findByRole('button', { name: game.display_title });
+      if (page === 'settings') openConfig('设置');
+      else fireEvent.click(screen.getByRole('button', { name: game.display_title }));
+      const input = screen.getByRole('textbox', {
+        name: page === 'settings' ? /Game Root/ : '版本',
+      });
+      fireEvent.change(input, {
+        target: { value: page === 'settings' ? 'D:/Edited' : 'Edited v2' },
+      });
+      systemClose();
+      const popup = screen.getByRole('dialog', { name: '关闭前保存修改？' });
+      fireEvent.click(within(popup).getByRole('button', { name: '保存并关闭' }));
+      await within(popup).findByRole('alert');
+      expect(nativeWindow.destroy).not.toHaveBeenCalled();
+      expect((input as HTMLInputElement).value).toBe(
+        page === 'settings' ? 'D:/Edited' : 'Edited v2',
+      );
+      fireEvent.click(within(popup).getByRole('button', { name: '保存并关闭' }));
+      await waitFor(() => expect(nativeWindow.destroy).toHaveBeenCalledOnce());
+      const save = page === 'settings' ? api.saveSettings : api.saveGame;
+      expect(save).toHaveBeenCalledTimes(2);
+      expect(save).toHaveBeenLastCalledWith(
+        expect.objectContaining(
+          page === 'settings' ? { game_root: 'D:/Edited' } : { current_version: 'Edited v2' },
+        ),
+      );
+    },
+  );
+  it('blocks titlebar and system close during a running task, then permits normal close', async () => {
+    let complete!: (id: string) => void;
+    vi.mocked(api.startScan).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          complete = resolve;
+        }),
+    );
+    render(<App />);
+    await screen.findByRole('button', { name: game.display_title });
+    fireEvent.click(screen.getByRole('button', { name: '扫描目录' }));
+    fireEvent.click(screen.getByRole('button', { name: '关闭窗口' }));
+    systemClose();
+    expect(nativeWindow.destroy).not.toHaveBeenCalled();
+    await screen.findByText('当前任务或保存操作尚未完成，请稍后关闭窗口。');
+    act(() => complete('scan'));
+    openScan();
+    await screen.findByText('启动文件：main-v1.2.exe');
+    await waitFor(() =>
+      expect(
+        (screen.getByRole('button', { name: '加入游戏库' }) as HTMLButtonElement).disabled,
+      ).toBe(false),
+    );
+    systemClose();
+    await waitFor(() => expect(nativeWindow.destroy).toHaveBeenCalledOnce());
+  });
   it('orders organizing after import and defaults to duplicates without starting either task', async () => {
     render(<App />);
     await screen.findByRole('button', { name: game.display_title });
@@ -1614,9 +1737,12 @@ describe('iteration interactions', () => {
       expect(screen.queryByRole('dialog')).toBeNull();
       expect(api.play).toHaveBeenCalledWith(game.id);
       expect((play as HTMLButtonElement).disabled).toBe(true);
-      expect(play.textContent).toBe('启动中');
+      expect(play.textContent).toBe('启动');
+      expect(play.getAttribute('data-launch-pending')).toBe('true');
       fireEvent.click(play);
       expect(api.play).toHaveBeenCalledTimes(1);
+      await waitFor(() => expect(play.textContent).toBe('启动中'));
+      expect(play.getAttribute('data-launch-pending')).toBe('false');
       complete();
       await waitFor(() => expect((play as HTMLButtonElement).disabled).toBe(false));
       const row = play.closest('tr')!;
@@ -1634,6 +1760,28 @@ describe('iteration interactions', () => {
     expect((play as HTMLButtonElement).disabled).toBe(false);
     expect(within(play.closest('tr')!).getByText('未启动')).toBeTruthy();
     expect(screen.queryByRole('dialog')).toBeNull();
+  });
+  it('keeps a fast launch visually stable and cancels its delayed progress indicator', async () => {
+    vi.mocked(api.play).mockResolvedValue({ ...game, play_status: 'PLAYING' });
+    render(<App />);
+    const play = await screen.findByRole('button', { name: `启动 ${game.display_title}` });
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(play);
+      expect(play.textContent).toBe('启动');
+      expect((play as HTMLButtonElement).disabled).toBe(true);
+      expect(play.getAttribute('data-launch-pending')).toBe('true');
+      await act(async () => {});
+      expect((play as HTMLButtonElement).disabled).toBe(false);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(500);
+      });
+      expect(play.textContent).toBe('启动');
+      expect(play.getAttribute('data-launch-pending')).toBe('false');
+      expect(api.play).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
   it.each([
     { launch_type: 'DIRECT' as const, main_executable: null },
@@ -1673,13 +1821,15 @@ describe('iteration interactions', () => {
     const modal = screen.getByRole('dialog');
     const list = screen.getByRole('table');
     fireEvent.click(within(modal).getByRole('button', { name: '启动' }));
-    const launching = within(modal).getByRole('button', { name: '启动中…' });
+    const launching = within(modal).getByRole('button', { name: '启动' });
+    expect(launching.getAttribute('data-launch-pending')).toBe('true');
     expect((launching as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(launching);
     expect(api.play).toHaveBeenCalledTimes(1);
     expect(screen.getByRole('dialog')).toBe(modal);
     expect(screen.getByRole('table')).toBe(list);
     expect(screen.queryByText('正在处理…')).toBeNull();
+    await waitFor(() => expect(launching.textContent).toBe('启动中…'));
     fireEvent.click(within(modal).getByRole('button', { name: '关闭弹窗' }));
     expect(screen.queryByRole('dialog')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: game.display_title }));

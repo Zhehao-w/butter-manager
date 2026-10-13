@@ -93,7 +93,7 @@ fn link(meta: &fs::Metadata) -> bool {
         meta.file_type().is_symlink()
     }
 }
-fn plain_path(path: &Path) -> Result<()> {
+pub(crate) fn plain_path(path: &Path) -> Result<()> {
     for ancestor in path.ancestors() {
         if let Ok(meta) = fs::symlink_metadata(ancestor) {
             if link(&meta) {
@@ -252,6 +252,23 @@ pub fn preview(
         plan.blockers.push(e.to_string());
     }
     plan
+}
+
+/// Reuse deletion protections without changing associated save paths or library records.
+pub(crate) fn validate_save_cleanup(
+    path: &Path,
+    game: &Game,
+    games: &[Game],
+    settings: &Settings,
+    data: &Path,
+) -> Result<()> {
+    plain_path(path)?;
+    let root = absolute_path(Path::new(&game.install_path))?;
+    if overlaps(path, &root) {
+        return Err(fail("不能清理游戏安装目录或游戏目录中的存档"));
+    }
+    protected(path, settings, data, games, &game.id)?;
+    check_tree(path, &mut 1_000_000)
 }
 
 // Recycling already reports sharing violations. Check process roots once and only

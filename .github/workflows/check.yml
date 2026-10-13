@@ -4,6 +4,8 @@ on:
   push:
     branches: [main, master]
   pull_request:
+  release:
+    types: [published]
   workflow_dispatch:
 
 permissions:
@@ -65,4 +67,13 @@ jobs:
         run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 
       - name: Build Windows app
-        run: pnpm tauri build --no-bundle -- --locked
+        # The interface was already checked/built above; avoid Tauri CLI rebuilding it.
+        run: cargo build --locked --manifest-path src-tauri/Cargo.toml --release --features tauri/custom-protocol
+
+      - name: Upload PR Windows executable
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: butter-manager-windows-pr-${{ github.event.pull_request.number }}
+          path: src-tauri/target/release/butter-manager.exe
+          if-no-files-found: error

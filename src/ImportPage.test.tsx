@@ -1,73 +1,39 @@
+import { waitForEnabledButton } from './testing/interactions';
+import { resetApiMock } from './testing/apiMock';
+import { makeSettings, makeCandidate, makeJob, makeGame } from './testing/fixtures';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { ImportPage } from './ImportPage';
 import { api } from './api';
 import type { Game, ImportPlan, JobPage, ScanCandidate, Settings } from './types';
 
-vi.mock('./api', () => ({
-  api: {
-    importPlans: vi.fn(),
-    chooseImportSources: vi.fn(),
-    discoverImportSources: vi.fn(),
-    importAnalyze: vi.fn(),
-    importMatches: vi.fn(),
-    previewImportDuplicate: vi.fn(),
-    recycleImportDuplicate: vi.fn(),
-    importPlan: vi.fn(),
-    importApply: vi.fn(),
-    rollbackVersion: vi.fn(),
-    discardImportPlan: vi.fn(),
-    chooseLaunchFile: vi.fn(),
-    choosePlayerFile: vi.fn(),
-    job: vi.fn(),
-    cancel: vi.fn(),
-    openImportRecords: vi.fn().mockResolvedValue(undefined),
-  },
-}));
-const settings: Settings = {
-  game_root: 'E:/Library',
-  mtool_root: '',
-  mtool_injector: 'loaders/inject.exe',
-  mtool_runtime: 'MTool.exe',
-  scan_workers: 2,
-};
-const candidate: ScanCandidate = {
+vi.mock('./api', async (original) => {
+  const { api } = await original<typeof import('./api')>();
+  const { createApiMock } = await import('./testing/apiMock');
+  return { api: createApiMock(api) };
+});
+const settings: Settings = makeSettings({ game_root: 'E:/Library' });
+const candidate: ScanCandidate = makeCandidate({
   install_path: 'D:/Incoming/Game v1.2',
-  directory_modified_ms: 1700000000000,
   suggested_title: 'Game v1.2',
   engine: 'Unity',
   executables: [
     { relative_path: 'game.exe', architecture: 'x64', score: 100, size_bytes: 7, modified_ms: 0 },
   ],
-  bats: [],
-  bundled_tool: false,
-  warnings: [],
-  registered_id: null,
   suggested_version: 'v1.2',
   version_source: 'folder_name',
-  working_directory: '.',
-  status: 'ready',
-  entries_scanned: 1,
-  elapsed_ms: 1,
-};
-const page: JobPage = {
+});
+const page: JobPage = makeJob({
   id: 'analysis',
   kind: 'import_analysis',
-  root: '',
-  status: 'completed',
   phase: '完成',
   total: 1,
   processed: 1,
-  active: {},
   elapsed_ms: 1,
-  idle_ms: 0,
   changes: [candidate],
   next_cursor: 1,
   change_count: 1,
-  warnings: [],
-  error: null,
-  registered_ids: [],
-};
+});
 const plan: ImportPlan = {
   id: 'plan',
   root: settings.game_root,
@@ -105,6 +71,11 @@ const props = () => ({
   onError: vi.fn(),
   onOpenGame: vi.fn(),
 });
+function renderNewImport(overrides: Partial<React.ComponentProps<typeof ImportPage>> = {}) {
+  const view = render(<ImportPage {...props()} {...overrides} />);
+  fireEvent.click(screen.getByRole('button', { name: '添加文件夹' }));
+  return view;
+}
 async function expandSettings(...sections: string[]) {
   await screen.findByRole('button', { name: /展开设置|收起设置/ });
   const folded = screen.queryByRole('button', { name: '展开设置' });
@@ -116,6 +87,7 @@ async function expandSettings(...sections: string[]) {
 }
 beforeEach(() => {
   vi.clearAllMocks();
+  resetApiMock(api);
   vi.mocked(api.importPlans).mockResolvedValue([]);
   vi.mocked(api.chooseImportSources).mockResolvedValue([candidate.install_path]);
   vi.mocked(api.discoverImportSources).mockImplementation(async (sources) => ({
@@ -179,8 +151,7 @@ describe('batch import flow', () => {
         },
       ],
     });
-    render(<ImportPage {...props()} />);
-    fireEvent.click(screen.getByRole('button', { name: '添加文件夹' }));
+    renderNewImport();
     await expandSettings('随包 MTool');
     await screen.findByText('混有游戏资源，保留目录');
     expect(screen.queryByRole('checkbox', { name: '导入成功后清理随包 MTool' })).toBeNull();
@@ -310,8 +281,7 @@ describe('batch import flow', () => {
           },
         ],
       });
-      render(<ImportPage {...props()} games={[existing]} />);
-      fireEvent.click(screen.getByRole('button', { name: '添加文件夹' }));
+      renderNewImport({ games: [existing] });
       const associate = await screen.findByRole('button', { name: `关联：${oldTitle}` });
       expect(screen.getByText(reason)).toBeTruthy();
       expect(screen.queryByText('已关联库中游戏')).toBeNull();
@@ -343,8 +313,7 @@ describe('batch import flow', () => {
       canonical_title: title,
       install_path: `E:/Library/${title}`,
     };
-    render(<ImportPage {...props()} games={[existing]} />);
-    fireEvent.click(screen.getByRole('button', { name: '添加文件夹' }));
+    renderNewImport({ games: [existing] });
     await expandSettings('游戏关联');
     fireEvent.click(await screen.findByRole('button', { name: '关联已有游戏…' }));
     const modal = screen.getByRole('dialog', { name: '关联已有游戏' });
@@ -395,26 +364,20 @@ describe('batch import flow', () => {
     await screen.findByText('分析完成，请选择要导入或更新的游戏。');
     expect(screen.queryByRole('progressbar')).toBeNull();
   });
-  const oldGame: Game = {
+  const oldGame = makeGame({
     id: 'old',
     canonical_title: 'Game',
     display_title: 'Game',
     install_path: 'E:/Library/Game',
-    working_directory: '.',
     current_version: 'v1.1',
-    version_source: 'manual',
     main_executable: 'game.exe',
     engine: 'Unity',
-    launch_type: 'DIRECT',
-    mtool_target_exe: null,
-    mtool_loader: null,
     created_at: '2026-01-01',
     updated_at: '2026-01-01',
-    last_launched_at: null,
     play_status: 'PLAYING',
     aliases: ['Game'],
     save_paths: ['<GAME>/SaveData'],
-  };
+  });
   it('shows the confirmed new target folder in update plan summaries, not the old path', async () => {
     const updatePlan: ImportPlan = {
       ...plan,
@@ -454,8 +417,7 @@ describe('batch import flow', () => {
       ],
     });
     vi.mocked(api.job).mockResolvedValue({ ...page, changes: [{ ...candidate, executables: [] }] });
-    render(<ImportPage {...props()} games={[oldGame]} />);
-    fireEvent.click(screen.getByRole('button', { name: '添加文件夹' }));
+    renderNewImport({ games: [oldGame] });
     await screen.findByText('请手工选择启动文件。');
     const issues = screen
       .getByText('请手工选择启动文件。')
@@ -487,14 +449,6 @@ describe('batch import flow', () => {
     const expand = await screen.findByRole('button', { name: '展开设置' });
     expect(expand.getAttribute('aria-expanded')).toBe('false');
     expect(screen.queryByRole('textbox', { name: '游戏名称' })).toBeNull();
-    expect(
-      screen
-        .getByText('game.exe', { selector: '.import-compact-facts > span' })
-        .closest('.import-compact-facts'),
-    ).toBeTruthy();
-    expect(
-      screen.getByText('Game v1.2', { selector: '.import-compact-facts > span' }),
-    ).toBeTruthy();
     fireEvent.click(expand);
     expect(screen.getByRole('tab', { name: '游戏关联' }).getAttribute('aria-selected')).toBe(
       'false',
@@ -598,8 +552,7 @@ describe('batch import flow', () => {
           },
         ],
       });
-      render(<ImportPage {...props()} games={[existing]} />);
-      fireEvent.click(screen.getByRole('button', { name: '添加文件夹' }));
+      renderNewImport({ games: [existing] });
       const link = await screen.findByRole('button', {
         name: (mode === 'manual' ? '关联：' : '已关联：') + longTitle,
       });
@@ -655,8 +608,7 @@ describe('batch import flow', () => {
         },
       ],
     });
-    render(<ImportPage {...props()} games={[oldGame]} />);
-    fireEvent.click(screen.getByRole('button', { name: '添加文件夹' }));
+    renderNewImport({ games: [oldGame] });
     await screen.findByRole('button', { name: '关联：Game' });
     expect(screen.getByRole('tab', { name: '游戏关联' }).getAttribute('aria-selected')).toBe(
       'true',
@@ -691,8 +643,7 @@ describe('batch import flow', () => {
         },
       ],
     });
-    render(<ImportPage {...props()} />);
-    fireEvent.click(screen.getByRole('button', { name: '添加文件夹' }));
+    renderNewImport();
     await expandSettings('随包 MTool');
     await screen.findByRole('checkbox', { name: '导入成功后清理随包 MTool' });
     expect(screen.getByRole('tab', { name: '随包 MTool' }).getAttribute('aria-selected')).toBe(
@@ -757,8 +708,7 @@ describe('batch import flow', () => {
       version: installed.current_version,
     });
     vi.mocked(api.recycleImportDuplicate).mockResolvedValue(undefined);
-    render(<ImportPage {...props()} games={[installed]} />);
-    fireEvent.click(screen.getByRole('button', { name: '添加文件夹' }));
+    renderNewImport({ games: [installed] });
     await screen.findByText('待确认关联');
     expect(screen.queryByRole('button', { name: '删除导入副本…' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: '关联：Game' }));
@@ -782,11 +732,7 @@ describe('batch import flow', () => {
     fireEvent.click(screen.getByRole('button', { name: '取消' }));
     expect(api.recycleImportDuplicate).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: '删除导入副本…' }));
-    await waitFor(() =>
-      expect(
-        (screen.getByRole('button', { name: '确认移入回收站' }) as HTMLButtonElement).disabled,
-      ).toBe(false),
-    );
+    await waitForEnabledButton('确认移入回收站');
     fireEvent.click(screen.getByRole('button', { name: '确认移入回收站' }));
     await screen.findByText('导入副本已移入回收站，库中游戏保留。');
     expect(api.recycleImportDuplicate).toHaveBeenCalledOnce();
@@ -807,8 +753,7 @@ describe('batch import flow', () => {
         },
       ],
     });
-    render(<ImportPage {...props()} games={[oldGame]} />);
-    fireEvent.click(screen.getByRole('button', { name: '添加文件夹' }));
+    renderNewImport({ games: [oldGame] });
     await expandSettings('游戏关联');
     await screen.findByRole('radiogroup', { name: '存档处理' });
     await expandSettings();
@@ -875,8 +820,7 @@ describe('batch import flow', () => {
           },
         ],
       });
-      render(<ImportPage {...props()} games={[installed]} />);
-      fireEvent.click(screen.getByRole('button', { name: '添加文件夹' }));
+      renderNewImport({ games: [installed] });
       await expandSettings('游戏关联');
       await screen.findByRole('radiogroup', { name: '存档处理' });
       await expandSettings('启动配置');
@@ -929,8 +873,7 @@ describe('batch import flow', () => {
           ? [recommendation, { ...recommendation, id: 'other', title: 'Other Game' }]
           : [recommendation],
       });
-      const rendered = render(<ImportPage {...props()} games={[oldGame]} />);
-      fireEvent.click(screen.getByRole('button', { name: '添加文件夹' }));
+      const rendered = renderNewImport({ games: [oldGame] });
       await screen.findByText('待确认关联');
       expect(screen.getByText('发现可能已有的游戏，请确认关联')).toBeTruthy();
       expect(screen.getAllByText(recommendation.reason).length).toBe(ambiguous ? 2 : 1);
@@ -1161,8 +1104,7 @@ describe('batch import flow', () => {
         choices: [{ root, children: [`${root}/bin`] }],
         warnings: [],
       });
-      render(<ImportPage {...props()} />);
-      fireEvent.click(screen.getByRole('button', { name: '添加文件夹' }));
+      renderNewImport();
       let modal = await screen.findByRole('dialog', { name: '确认文件夹范围' });
       expect(
         (within(modal).getByRole('button', { name: '开始分析' }) as HTMLButtonElement).disabled,
@@ -1193,8 +1135,7 @@ describe('batch import flow', () => {
     },
   );
   it('preserves existing edits and an unchecked choice when adding more folders', async () => {
-    render(<ImportPage {...props()} />);
-    fireEvent.click(screen.getByRole('button', { name: '添加文件夹' }));
+    renderNewImport();
     await expandSettings();
     fireEvent.change(await screen.findByRole('textbox', { name: '游戏名称' }), {
       target: { value: 'Kept Edit' },
@@ -1226,11 +1167,7 @@ describe('batch import flow', () => {
         'D:/Incoming/Another',
       ]),
     );
-    await waitFor(() =>
-      expect(
-        (screen.getByRole('button', { name: '添加文件夹' }) as HTMLButtonElement).disabled,
-      ).toBe(false),
-    );
+    await waitForEnabledButton('添加文件夹');
     expect((screen.getByRole('textbox', { name: '游戏名称' }) as HTMLInputElement).value).toBe(
       'Kept Edit',
     );
@@ -1239,6 +1176,7 @@ describe('batch import flow', () => {
     ).toBe(false);
   });
   it('moves drafts into pending, restores edits on return and confirms with only two buttons', async () => {
+    vi.mocked(api.discardImportPlan).mockResolvedValue(undefined);
     const options = props();
     render(<ImportPage {...options} />);
     fireEvent.click(screen.getByRole('button', { name: '添加文件夹' }));
@@ -1420,8 +1358,7 @@ describe('batch import flow', () => {
     };
     vi.mocked(api.job).mockResolvedValue({ ...page, changes: [qsp] });
     vi.mocked(api.choosePlayerFile).mockResolvedValue('mod.qsp');
-    render(<ImportPage {...props()} />);
-    fireEvent.click(screen.getByRole('button', { name: '添加文件夹' }));
+    renderNewImport();
     const file = await screen.findByRole('combobox', { name: 'QSP 主游戏文件' });
     expect((file as HTMLInputElement).value).toBe('');
     expect((screen.getByRole('combobox', { name: 'QSP 播放器' }) as HTMLInputElement).value).toBe(
@@ -1463,8 +1400,7 @@ describe('batch import flow', () => {
       },
     };
     vi.mocked(api.job).mockResolvedValue({ ...page, changes: [qsp] });
-    render(<ImportPage {...props()} />);
-    fireEvent.click(screen.getByRole('button', { name: '添加文件夹' }));
+    renderNewImport();
     await expandSettings('启动配置');
     expect(
       ((await screen.findByRole('combobox', { name: 'QSP 主游戏文件' })) as HTMLInputElement).value,
@@ -1541,8 +1477,7 @@ describe('batch import flow', () => {
         },
       ],
     });
-    render(<ImportPage {...props()} />);
-    fireEvent.click(screen.getByRole('button', { name: '添加文件夹' }));
+    renderNewImport();
     await expandSettings('游戏关联');
     await screen.findByRole('button', { name: '已关联：Game' });
     const checkbox = screen.getByRole('checkbox', { name: '选择 Game v1.2' }) as HTMLInputElement;

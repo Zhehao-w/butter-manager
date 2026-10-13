@@ -1432,7 +1432,7 @@ pub(crate) fn identity(path: &Path) -> Result<String> {
     let m = fs::metadata(path)?;
     Ok(format!("{}:{}", m.dev(), m.ino()))
 }
-fn require_identity(path: &Path, expected: Option<&str>) -> Result<()> {
+pub(crate) fn require_identity(path: &Path, expected: Option<&str>) -> Result<()> {
     checked_dir(path)?;
     if Some(identity(path)?.as_str()) != expected {
         return Err(invalid("目标目录已被更换，保留文件并停止操作"));
@@ -1491,7 +1491,7 @@ fn free_space(path: &Path) -> Result<Option<u64>> {
 fn free_space(_: &Path) -> Result<Option<u64>> {
     Ok(None)
 }
-fn rename_new(source: &Path, target: &Path) -> Result<()> {
+pub(crate) fn rename_new(source: &Path, target: &Path) -> Result<()> {
     if exists(target)? {
         return Err(invalid("目标已存在，拒绝覆盖"));
     }

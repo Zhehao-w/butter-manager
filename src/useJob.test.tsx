@@ -1,27 +1,11 @@
+import { makeJob } from './testing/fixtures';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
 import { api } from './api';
 import { useJob } from './useJob';
 import type { JobPage } from './types';
 vi.mock('./api', () => ({ api: { job: vi.fn() } }));
-const page: JobPage = {
-  id: 'new',
-  kind: 'scan',
-  root: '',
-  status: 'completed',
-  phase: '',
-  total: 0,
-  processed: 0,
-  active: {},
-  elapsed_ms: 0,
-  idle_ms: 0,
-  changes: [],
-  next_cursor: 0,
-  change_count: 0,
-  warnings: [],
-  error: null,
-  registered_ids: [],
-};
+const page: JobPage = makeJob({ id: 'new' });
 
 it('ignores a delayed response from the previous task ID', async () => {
   let oldResponse!: (value: JobPage) => void;

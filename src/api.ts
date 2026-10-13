@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import type { SaveCatalog, SaveDocument, SaveChange } from './saveEditorTypes';
 import type {
   Game,
+  RenpyAppdataPreview,
   DuplicatePair,
   DuplicateReview,
   DuplicateStatus,
@@ -26,6 +27,9 @@ import type {
   VersionHistory,
 } from './types';
 export const api = {
+  previewRenpyAppdata: (id: string) => invoke<RenpyAppdataPreview>('preview_renpy_appdata', { id }),
+  recycleRenpyAppdata: (id: string, token: string) =>
+    invoke<void>('recycle_renpy_appdata', { id, token }),
   listEditableSaves: (gameId: string) => invoke<SaveCatalog>('list_editable_saves', { gameId }),
   readEditableSave: (gameId: string, saveId: string) =>
     invoke<SaveDocument>('read_editable_save', { gameId, saveId }),
@@ -100,6 +104,8 @@ export const api = {
   previewRelocation: (id: string, path: string) =>
     invoke<RelocateGame>('preview_relocation', { id, path }),
   relocateGame: (change: RelocateGame) => invoke<Game>('relocate_game', { change }),
+  renameGameDirectory: (id: string, expectedInstallPath: string, name: string) =>
+    invoke<Game>('rename_game_directory', { id, expectedInstallPath, name }),
   checkMtool: () => invoke<ToolCheck[]>('check_mtool'),
   runMtool: () => invoke<void>('run_mtool'),
   settings: () => invoke<Settings>('get_settings'),

@@ -32,7 +32,6 @@ import type {
   GameEdit,
   LaunchConfiguration,
   JobPage,
-  MToolRecipe,
   ScanCandidate,
   Settings,
   LibraryPathCheck,
@@ -49,6 +48,7 @@ import { EngineSelect } from './EngineSelect';
 import { FolderErrorDialog } from './FolderErrorDialog';
 import { SaveEditor } from './SaveEditor';
 import { WindowTitleBar } from './WindowTitleBar';
+import { RenpyAppdataCleanup } from './RenpyAppdataCleanup';
 import { WindowCloseGuards, useWindowCloseGuard, useWindowClosing } from './windowClose';
 import { useLibraryLayout, useSavedSort } from './preferences';
 import {
@@ -2560,6 +2560,49 @@ function GameDetail({
     mtool_target_exe: draft.mtool_target_exe,
     mtool_loader: draft.mtool_loader,
   };
+  const analysisBaseline = useRef<{ launch: LaunchConfiguration; engine: string } | null>(null);
+  const previousAnalysis = useRef(analysis);
+  function analysisConfiguration(): LaunchConfiguration | null {
+    if (analysis && 'recommended_launch' in analysis) return analysis.recommended_launch || null;
+    if (!analysis || analysis.status !== 'ready' || analysis.qsp) return null;
+    const first = analysis.executables[0]?.relative_path;
+    if (!first) return null;
+    // Downloaded BAT paths/loaders may be stale. Use them only as an MTool indicator.
+    const exe = first;
+    const mtool =
+      analysis.mtool_detected ||
+      analysis.bats.some((bat) => !!bat.recipe) ||
+      draft.launch_type === 'MTOOL';
+    return {
+      main_executable: exe,
+      working_directory: analysis.working_directory,
+      launch_type: mtool ? 'MTOOL' : 'DIRECT',
+      external_player: null,
+      mtool_target_exe: mtool ? exe : null,
+      mtool_loader: null,
+    };
+  }
+  function useAnalysisConfiguration() {
+    const next = analysisConfiguration();
+    if (!next) return;
+    setDraft((current) => ({ ...current, ...next }));
+    setMessage('已填入分析启动配置，请检查后保存资料。');
+  }
+  useEffect(() => {
+    if (previousAnalysis.current === analysis) return;
+    previousAnalysis.current = analysis;
+    const baseline = analysisBaseline.current;
+    analysisBaseline.current = null;
+    if (!baseline || !analysisConfiguration()) return;
+    if (
+      JSON.stringify(baseline.launch) !== JSON.stringify(configuration) ||
+      baseline.engine !== draft.engine
+    ) {
+      setMessage('分析完成；当前启动配置已修改，可手动使用分析结果。');
+      return;
+    }
+    useAnalysisConfiguration();
+  }, [analysis]);
   const launchChanged = Object.keys(configuration).some(
     (key) =>
       JSON.stringify(configuration[key as keyof LaunchConfiguration] ?? null) !==
@@ -2625,24 +2668,6 @@ function GameDetail({
     });
   }
   useWindowCloseGuard({ dirty, busy: busy || launching, save: saveGame });
-  function useRecipe(recipe: MToolRecipe) {
-    setDraft((current) => ({
-      ...current,
-      launch_type: 'MTOOL',
-      external_player: null,
-      main_executable: recipe.target_exe,
-      working_directory:
-        analysis?.bats
-          .find((bat) => bat.recipe === recipe)
-          ?.path.replaceAll('\\', '/')
-          .split('/')
-          .slice(0, -1)
-          .join('/') || '.',
-      mtool_target_exe: recipe.target_exe,
-      mtool_loader: recipe.loader,
-    }));
-    setDebugText('');
-  }
   function useQsp() {
     setDraft((current) => ({
       ...current,
@@ -2762,6 +2787,7 @@ function GameDetail({
                   disabled={busy || launching || analysisLocked}
                   onClick={() => {
                     selectDetailTab('launch');
+                    analysisBaseline.current = { launch: configuration, engine: draft.engine };
                     void run(onAnalyze);
                   }}
                 >
@@ -3067,6 +3093,15 @@ function GameDetail({
               {analysis && (
                 <details className="analysis" open>
                   <summary>查看分析详情</summary>
+                  {analysisConfiguration() && (
+                    <button
+                      type="button"
+                      disabled={busy || launching || analyzing}
+                      onClick={useAnalysisConfiguration}
+                    >
+                      使用分析启动配置
+                    </button>
+                  )}
                   <p>
                     识别引擎：{analysis.engine === 'Unknown' ? '未识别' : analysis.engine}{' '}
                     {analysis.status === 'ready' &&
@@ -3089,7 +3124,7 @@ function GameDetail({
                       </li>
                     ))}
                   </ul>
-                  <BatResults candidate={analysis} onUse={useRecipe} disabled={busy || launching} />
+                  <BatResults candidate={analysis} />
                 </details>
               )}
               {game.launch_type === 'MTOOL' && (
@@ -3185,6 +3220,14 @@ function GameDetail({
                     添加存档目录…
                   </button>
                 </div>
+                {game.engine === "Ren'Py" && (
+                  <RenpyAppdataCleanup
+                    game={game}
+                    active={detailTab === 'saves'}
+                    disabled={busy || launching || analysisLocked || confirmClose}
+                    onBusy={setMaintenanceBusy}
+                  />
+                )}
               </div>
             </section>
           </div>
@@ -3256,15 +3299,7 @@ function Warnings({ warnings }: { warnings: string[] }) {
     </ul>
   ) : null;
 }
-function BatResults({
-  candidate,
-  onUse,
-  disabled,
-}: {
-  candidate: ScanCandidate;
-  onUse: (recipe: MToolRecipe) => void;
-  disabled: boolean;
-}) {
+function BatResults({ candidate }: { candidate: ScanCandidate }) {
   return (
     <>
       {candidate.bats.map((bat) => (
@@ -3285,10 +3320,10 @@ function BatResults({
                 <dt>Runtime</dt>
                 <dd>{bat.recipe.runtime}</dd>
               </dl>
-              <p className="muted">采用 target / loader；共享 root 和 runtime 另在设置确认。</p>
-              <button type="button" disabled={disabled} onClick={() => onUse(bat.recipe!)}>
-                采用此 target / loader
-              </button>
+              <p className="muted">
+                优先使用当前目录的分析结果；无法确定启动文件时才回退到经验证的 BAT
+                配置。公共工具路径使用管理器设置。
+              </p>
             </>
           )}
         </details>

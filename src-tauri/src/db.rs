@@ -144,6 +144,25 @@ impl Database {
         from: &crate::importer::GameIdentity,
         to: &crate::importer::GameIdentity,
     ) -> Result<()> {
+        self.write_identity(id, from, to, None)
+    }
+    pub(crate) fn write_renamed_identity(
+        &mut self,
+        id: &str,
+        from: &crate::importer::GameIdentity,
+        to: &crate::importer::GameIdentity,
+        version: &str,
+        source: &str,
+    ) -> Result<()> {
+        self.write_identity(id, from, to, Some((version, source)))
+    }
+    fn write_identity(
+        &mut self,
+        id: &str,
+        from: &crate::importer::GameIdentity,
+        to: &crate::importer::GameIdentity,
+        version: Option<(&str, &str)>,
+    ) -> Result<()> {
         let game = self.game(id)?;
         let actual = crate::importer::GameIdentity::from_game(&game);
         if actual == *to {
@@ -161,6 +180,12 @@ impl Database {
         let tx = self.connection.transaction()?;
         tx.execute("UPDATE games SET display_title=?2,canonical_title=?3,install_path=?4,install_path_key=?5,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?1",
             params![id,to.display_title,to.canonical_title,path_text(&root)?,path_key(&root)?])?;
+        if let Some((value, source)) = version {
+            tx.execute(
+                "UPDATE games SET current_version=?2,version_source=?3 WHERE id=?1",
+                params![id, value, source],
+            )?;
+        }
         for path in &game.save_paths {
             let rebased =
                 crate::maintenance::rebase_save(path, Path::new(&from.install_path), &root);

@@ -1,0 +1,73 @@
+import type { Game, JobPage, ScanCandidate, Settings } from '../types';
+
+// Each call owns its arrays/objects; individual tests override only the fields they exercise.
+export const makeSettings = (overrides: Partial<Settings> = {}): Settings => ({
+  game_root: 'E:/Butter',
+  mtool_root: '',
+  mtool_injector: 'loaders/inject.exe',
+  mtool_runtime: 'MTool.exe',
+  scan_workers: 2,
+  ...overrides,
+});
+
+export const makeGame = (overrides: Partial<Game> = {}): Game => ({
+  id: 'game',
+  canonical_title: 'Game',
+  display_title: 'Game',
+  install_path: 'E:/Butter/Game',
+  current_version: 'Unknown',
+  version_source: 'manual',
+  main_executable: 'Game.exe',
+  working_directory: '.',
+  engine: 'Unknown',
+  launch_type: 'DIRECT',
+  external_player: null,
+  mtool_target_exe: null,
+  mtool_loader: null,
+  created_at: '',
+  updated_at: '',
+  last_launched_at: null,
+  play_status: 'UNPLAYED',
+  aliases: [],
+  save_paths: [],
+  ...overrides,
+});
+
+export const makeCandidate = (overrides: Partial<ScanCandidate> = {}): ScanCandidate => ({
+  install_path: 'E:/Butter/Game',
+  directory_modified_ms: 1700000000000,
+  suggested_title: 'Game',
+  engine: 'Unknown',
+  executables: [],
+  bats: [],
+  bundled_tool: false,
+  warnings: [],
+  registered_id: null,
+  suggested_version: 'Unknown',
+  version_source: 'unknown',
+  working_directory: '.',
+  status: 'ready',
+  entries_scanned: 1,
+  elapsed_ms: 1,
+  ...overrides,
+});
+
+export const makeJob = (overrides: Partial<JobPage> = {}): JobPage => ({
+  id: 'job',
+  kind: 'scan',
+  root: '',
+  status: 'completed',
+  phase: '',
+  total: 0,
+  processed: 0,
+  active: {},
+  elapsed_ms: 0,
+  idle_ms: 0,
+  changes: [],
+  next_cursor: 0,
+  change_count: 0,
+  warnings: [],
+  error: null,
+  registered_ids: [],
+  ...overrides,
+});

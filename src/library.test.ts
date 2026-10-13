@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import { sortGames } from './library';
 import type { Game } from './types';

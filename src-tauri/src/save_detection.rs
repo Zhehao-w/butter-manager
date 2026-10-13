@@ -223,6 +223,33 @@ fn identity_path(name: &str) -> Option<PathBuf> {
     Some(relative)
 }
 
+/// Static Ren'Py identity only; independent of the preferred local-save selection.
+pub(crate) fn renpy_save_directory(root: &Path, work: &str) -> Option<PathBuf> {
+    let root = dunce::canonicalize(root).ok()?;
+    let base = if work == "." {
+        PathBuf::new()
+    } else {
+        relative_path(work).ok()?
+    };
+    let text = small_text(&root, &path_text(&base.join("game/options.rpy")).ok()?)?;
+    if text.contains("config.savedir") {
+        return None;
+    }
+    let value = assignment(&text, "config.save_directory")?;
+    let name = literal(value)?;
+    // In Python a semicolon starts another statement, not a comment.
+    // Do not treat a compound assignment line as an unambiguous save identity.
+    if value[1..]
+        .split_once(value.chars().next()?)?
+        .1
+        .trim()
+        .starts_with(';')
+    {
+        return None;
+    }
+    identity_path(&name)
+}
+
 /// Batch matching reads only conventional, bounded static config; it never opens saves.
 pub(crate) fn matching_identity(root: &Path, work: &str, executable: Option<&str>) -> Vec<String> {
     let Ok(root) = dunce::canonicalize(root) else {
@@ -434,15 +461,8 @@ fn detect_with_environment(
     let config_path = |name: &str| path_text(&base.join(name)).ok();
     let mut external: Option<(&str, PathBuf)> = None;
     if engine == "Ren'Py" {
-        if let Some(text) = config_path("game/options.rpy").and_then(|p| small_text(&root, &p)) {
-            if !text.contains("config.savedir") {
-                if let Some(name) = assignment(&text, "config.save_directory")
-                    .and_then(literal)
-                    .and_then(|name| identity_path(&name))
-                {
-                    external = external_rule(engine, false, &[("save_directory", &name)]);
-                }
-            }
+        if let Some(name) = renpy_save_directory(&root, work) {
+            external = external_rule(engine, false, &[("save_directory", &name)]);
         }
     } else if engine == "Godot" {
         if let Some(text) = config_path("project.godot").and_then(|p| small_text(&root, &p)) {

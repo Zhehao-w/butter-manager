@@ -22,10 +22,130 @@ struct AppState {
     deletion_plans: Arc<Mutex<std::collections::HashMap<String, crate::deletion::DeletePlan>>>,
     duplicate_plans:
         Arc<Mutex<std::collections::HashMap<String, crate::import_duplicate::DuplicatePlan>>>,
+    appdata_plans:
+        Arc<Mutex<std::collections::HashMap<String, crate::maintenance::RenpyAppdataPlan>>>,
     running: Arc<crate::runtime::RunningGames>,
     external_saves: Arc<crate::save_editor::ExternalSaves>,
 }
 type CommandResult<T> = std::result::Result<T, String>;
+
+#[derive(serde::Serialize)]
+struct RenpyAppdataPreview {
+    token: Option<String>,
+    path: Option<String>,
+    reason: Option<String>,
+}
+
+#[tauri::command]
+async fn preview_renpy_appdata(
+    state: State<'_, AppState>,
+    id: String,
+) -> CommandResult<RenpyAppdataPreview> {
+    let db = state.db.clone();
+    let data = state.data.clone();
+    let plans = state.appdata_plans.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let database = db.lock().map_err(|_| "数据库锁不可用")?;
+        let game = database.game(&id).map_err(|e| e.to_string())?;
+        let games = database.games().map_err(|e| e.to_string())?;
+        let settings = database.settings().map_err(|e| e.to_string())?;
+        let result = std::env::var_os("APPDATA")
+            .ok_or_else(|| Error::Validation("无法定位 APPDATA 目录".into()))
+            .and_then(|appdata| {
+                crate::maintenance::preview_renpy_appdata(
+                    &game,
+                    &games,
+                    &settings,
+                    &data,
+                    Path::new(&appdata),
+                )
+            });
+        let mut stored = plans.lock().map_err(|_| "存档清理预览不可用")?;
+        stored.retain(|_, plan| plan.game_id != id);
+        match result {
+            Ok(plan) => {
+                let token = uuid::Uuid::new_v4().to_string();
+                let path = plan.path.clone();
+                if stored.len() >= 32 {
+                    stored.clear();
+                }
+                stored.insert(token.clone(), plan);
+                Ok(RenpyAppdataPreview {
+                    token: Some(token),
+                    path: Some(path),
+                    reason: None,
+                })
+            }
+            Err(error) => Ok(RenpyAppdataPreview {
+                token: None,
+                path: None,
+                reason: Some(error.to_string()),
+            }),
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn recycle_renpy_appdata(
+    state: State<'_, AppState>,
+    id: String,
+    token: String,
+) -> CommandResult<()> {
+    let db = state.db.clone();
+    let data = state.data.clone();
+    let plans = state.appdata_plans.clone();
+    let activity = state.activity.clone();
+    let tasks = state.tasks.clone();
+    let imports = state.imports.clone();
+    let running = state.running.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        // Same gate as deletion/import/launch and save WritePermit; held until recycling finishes.
+        let count = activity.lock().map_err(|_| "操作锁不可用")?;
+        imports.ensure_recovery_clear().map_err(|e| e.to_string())?;
+        crate::maintenance::ensure_appdata_cleanup_idle(
+            *count,
+            tasks.active(),
+            imports.has_pending_files(),
+        )
+        .map_err(|e| e.to_string())?;
+        let plan = plans
+            .lock()
+            .map_err(|_| "存档清理预览不可用")?
+            .remove(&token)
+            .ok_or("存档清理预览已失效，请重新打开确认框")?;
+        if plan.game_id != id {
+            return Err("清理预览与游戏不一致".into());
+        }
+        let database = db.lock().map_err(|_| "数据库锁不可用")?;
+        let game = database.game(&id).map_err(|e| e.to_string())?;
+        let appdata = std::env::var_os("APPDATA").ok_or("无法定位 APPDATA 目录")?;
+        let current = crate::maintenance::preview_renpy_appdata(
+            &game,
+            &database.games().map_err(|e| e.to_string())?,
+            &database.settings().map_err(|e| e.to_string())?,
+            &data,
+            Path::new(&appdata),
+        )
+        .map_err(|e| e.to_string())?;
+        crate::maintenance::recycle_renpy_appdata(
+            &plan,
+            &current,
+            || {
+                running.ensure_tracked_idle(&game)?;
+                crate::runtime::ensure_processes_idle(&[
+                    std::path::PathBuf::from(&game.install_path),
+                    std::path::PathBuf::from(&plan.path),
+                ])
+            },
+            crate::deletion::recycle,
+        )
+        .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
 #[tauri::command]
 fn open_data_directory(state: State<'_, AppState>) -> CommandResult<()> {
     if !cfg!(windows) {
@@ -666,6 +786,45 @@ async fn relocate_game(state: State<'_, AppState>, change: RelocateGame) -> Comm
     .map_err(|e| e.to_string())?
 }
 #[tauri::command]
+async fn rename_game_directory(
+    state: State<'_, AppState>,
+    id: String,
+    expected_install_path: String,
+    name: String,
+) -> CommandResult<Game> {
+    let activity = state.activity.clone();
+    let tasks = state.tasks.clone();
+    let db = state.db.clone();
+    let imports = state.imports.clone();
+    let running = state.running.clone();
+    let data = state.data.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let count = activity.lock().map_err(|_| "操作锁不可用")?;
+        imports.ensure_recovery_clear().map_err(|e| e.to_string())?;
+        if *count > 0 || tasks.active() || imports.has_pending_files() {
+            return Err("请先结束当前任务或恢复未完成的文件操作".into());
+        }
+        let mut database = db.lock().map_err(|_| "数据库锁不可用")?;
+        let game = database.game(&id).map_err(|e| e.to_string())?;
+        running
+            .ensure_tracked_idle(&game)
+            .map_err(|e| e.to_string())?;
+        let saved = crate::maintenance::rename_game(
+            &mut database,
+            &data,
+            &id,
+            &expected_install_path,
+            &name,
+        )
+        .map_err(|e| e.to_string())?;
+        tasks.update_registration(&expected_install_path, None);
+        tasks.update_registration(&saved.install_path, Some(saved.id.clone()));
+        Ok(saved)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+#[tauri::command]
 async fn check_mtool(state: State<'_, AppState>) -> CommandResult<Vec<ToolCheck>> {
     let settings = with_db(&state, |db| db.settings())?;
     tauri::async_runtime::spawn_blocking(move || crate::maintenance::check_mtool(&settings))
@@ -854,18 +1013,9 @@ fn start_game_analysis(state: State<'_, AppState>, id: String) -> CommandResult<
     tauri::async_runtime::spawn_blocking(move || {
         job.stage("分析 EXE / BAT", 1);
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            scanner::analyze_selected_controlled(
-                Path::new(&game.install_path),
-                if game.launch_type == "MTOOL" {
-                    game.mtool_target_exe
-                        .as_deref()
-                        .or(game.main_executable.as_deref())
-                } else {
-                    game.main_executable.as_deref()
-                },
-                &|| job.stop(),
-                &|current| job.progress(&game.install_path, current),
-            )
+            scanner::analyze_game_controlled(&game, &|| job.stop(), &|current| {
+                job.progress(&game.install_path, current)
+            })
         }));
         job.finish(match result {
             Ok(Ok(mut candidate)) if !job.stop() => {
@@ -1269,18 +1419,19 @@ fn initialize(app: &tauri::AppHandle) -> std::result::Result<(), Box<dyn std::er
     let data_guard = crate::data_directory::InstanceGuard::acquire(&data)?;
     std::fs::create_dir_all(app.path().app_cache_dir()?)?;
     std::fs::create_dir_all(app.path().app_log_dir()?)?;
+    let mut database = Database::open(&data.join(crate::data_directory::DATABASE))?;
+    crate::maintenance::recover_rename(&mut database, &data)?;
     app.manage(AppState {
         #[cfg(windows)]
         _data_guard: data_guard,
-        db: Arc::new(Mutex::new(Database::open(
-            &data.join(crate::data_directory::DATABASE),
-        )?)),
+        db: Arc::new(Mutex::new(database)),
         tasks: Arc::new(TaskManager::default()),
         activity: Arc::new(Mutex::new(0)),
         imports: Arc::new(ImportStore::open(data.join("imports"))?),
         data,
         deletion_plans: Arc::new(Mutex::new(std::collections::HashMap::new())),
         duplicate_plans: Arc::new(Mutex::new(std::collections::HashMap::new())),
+        appdata_plans: Arc::new(Mutex::new(std::collections::HashMap::new())),
         running: Arc::new(crate::runtime::RunningGames::default()),
         external_saves: Arc::new(crate::save_editor::ExternalSaves::default()),
     });
@@ -1360,8 +1511,11 @@ pub fn run() {
             remove_game,
             preview_game_delete,
             delete_game_files,
+            preview_renpy_appdata,
+            recycle_renpy_appdata,
             preview_relocation,
             relocate_game,
+            rename_game_directory,
             check_mtool,
             run_mtool,
             get_settings,

@@ -1,3 +1,6 @@
+import { waitForEnabledButton } from './testing/interactions';
+import { resetApiMock } from './testing/apiMock';
+import { makeSettings, makeCandidate, makeJob, makeGame } from './testing/fixtures';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { api } from './api';
@@ -12,71 +15,16 @@ const nativeWindow = vi.hoisted(() => ({
   onCloseRequested: vi.fn(),
 }));
 vi.mock('@tauri-apps/api/window', () => ({ getCurrentWindow: () => nativeWindow }));
-vi.mock('./api', () => ({
-  api: {
-    openDataDirectory: vi.fn().mockResolvedValue(undefined),
-    listEditableSaves: vi.fn().mockResolvedValue({ slots: [], warnings: [] }),
-    releaseExternalSaves: vi.fn().mockResolvedValue(undefined),
-    importPlans: vi.fn().mockResolvedValue([]),
-    importRecoveryIssues: vi.fn().mockResolvedValue([]),
-    openImportRecords: vi.fn(),
-    games: vi.fn(),
-    settings: vi.fn(),
-    startScan: vi.fn(),
-    job: vi.fn(),
-    register: vi.fn(),
-    suggestVersion: vi.fn(),
-    chooseDirectory: vi.fn(),
-    chooseSaveDirectory: vi.fn(),
-    openSaveFolder: vi.fn().mockResolvedValue(undefined),
-    openFolder: vi.fn(),
-    saveSettings: vi.fn(),
-    chooseLaunchFile: vi.fn(),
-    choosePlayerFile: vi.fn(),
-    launchHistory: vi.fn().mockResolvedValue([]),
-    versionHistory: vi.fn().mockResolvedValue([]),
-    clearLibrary: vi.fn(),
-    startLibraryCheck: vi.fn().mockResolvedValue(''),
-    startDuplicateCheck: vi.fn(),
-    duplicateResults: vi.fn().mockResolvedValue([]),
-    duplicateGameReferences: vi.fn().mockResolvedValue([]),
-    duplicateReviews: vi.fn().mockResolvedValue([]),
-    setDuplicateReview: vi.fn(),
-    removeGame: vi.fn(),
-    previewRelocation: vi.fn(),
-    relocateGame: vi.fn(),
-    checkMtool: vi.fn(),
-    runMtool: vi.fn(),
-    play: vi.fn(),
-    cancel: vi.fn(),
-    gamesByIds: vi.fn(),
-    syncScanMtool: vi.fn().mockResolvedValue([]),
-    previewMtoolLaunch: vi.fn().mockResolvedValue({
-      shared_root: 'D:/Tools/MTool',
-      target_exe: '任意.exe',
-      architecture: 'x86',
-      loader: 'loaders/mzHook32.dll',
-      runtime: 'MTool.exe',
-      working_directory: '.',
-    }),
-    deepAnalyze: vi.fn(),
-    startGameAnalysis: vi.fn(),
-    saveGame: vi.fn(),
-  },
-}));
+vi.mock('./api', async (original) => {
+  const { api } = await original<typeof import('./api')>();
+  const { createApiMock } = await import('./testing/apiMock');
+  return { api: createApiMock(api) };
+});
 
-const config: Settings = {
-  game_root: 'E:/Butter',
-  mtool_root: '',
-  mtool_injector: 'loaders/inject.exe',
-  mtool_runtime: 'MTool.exe',
-  scan_workers: 2,
-};
-const candidate: ScanCandidate = {
+const config: Settings = makeSettings({});
+const candidate: ScanCandidate = makeCandidate({
   install_path: 'E:/Butter/游戏',
-  directory_modified_ms: 1700000000000,
   suggested_title: '游戏',
-  engine: 'Unknown',
   executables: [
     {
       relative_path: 'main-v1.2.exe',
@@ -86,56 +34,35 @@ const candidate: ScanCandidate = {
       modified_ms: 0,
     },
   ],
-  bats: [],
-  bundled_tool: false,
   warnings: ['不应显示的技术细节'],
-  registered_id: null,
   suggested_version: 'v1.2',
   version_source: 'file_name',
-  working_directory: '.',
-  status: 'ready',
-  entries_scanned: 1,
   elapsed_ms: 5,
-};
-const job: JobPage = {
+});
+const job: JobPage = makeJob({
   id: 'scan',
-  kind: 'scan',
   root: config.game_root,
-  status: 'completed',
   phase: '分析',
   total: 1,
   processed: 1,
-  active: {},
   elapsed_ms: 5,
-  idle_ms: 0,
   changes: [candidate],
   next_cursor: 1,
   change_count: 1,
-  warnings: [],
-  error: null,
-  registered_ids: [],
-};
-const game: Game = {
-  id: 'game',
+});
+const game: Game = makeGame({
   canonical_title: '已登记游戏',
   display_title: '已登记游戏',
   install_path: 'E:/Butter/已登记游戏',
-  working_directory: '.',
   current_version: 'Final',
-  version_source: 'manual',
   main_executable: '任意.exe',
-  engine: 'Unknown',
-  launch_type: 'DIRECT',
-  mtool_target_exe: null,
-  mtool_loader: null,
-  created_at: '',
-  last_launched_at: null,
-  play_status: 'UNPLAYED',
-  updated_at: '',
-  aliases: [],
-  save_paths: [],
-};
+});
 
+async function openDetail() {
+  render(<App />);
+  fireEvent.click(await screen.findByRole('button', { name: game.display_title }));
+  return screen.getByRole('dialog', { name: game.display_title });
+}
 function showDetailTab(name: string) {
   fireEvent.click(screen.getByRole('tab', { name }));
 }
@@ -176,6 +103,7 @@ function mockLibraryViewport() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  resetApiMock(api);
   nativeWindow.destroy.mockResolvedValue(undefined);
   nativeWindow.onCloseRequested.mockResolvedValue(vi.fn());
   vi.mocked(api.saveSettings).mockReset();
@@ -196,19 +124,11 @@ beforeEach(() => {
 
 async function scan() {
   render(<App />);
-  await waitFor(() =>
-    expect((screen.getByRole('button', { name: '扫描目录' }) as HTMLButtonElement).disabled).toBe(
-      false,
-    ),
-  );
+  await waitForEnabledButton('扫描目录');
   fireEvent.click(screen.getByRole('button', { name: '扫描目录' }));
   openScan();
   await screen.findByText('启动文件：main-v1.2.exe');
-  await waitFor(() =>
-    expect((screen.getByRole('button', { name: '加入游戏库' }) as HTMLButtonElement).disabled).toBe(
-      false,
-    ),
-  );
+  await waitForEnabledButton('加入游戏库');
 }
 
 function goLibrary() {
@@ -335,11 +255,7 @@ describe('iteration interactions', () => {
     act(() => complete('scan'));
     openScan();
     await screen.findByText('启动文件：main-v1.2.exe');
-    await waitFor(() =>
-      expect(
-        (screen.getByRole('button', { name: '加入游戏库' }) as HTMLButtonElement).disabled,
-      ).toBe(false),
-    );
+    await waitForEnabledButton('加入游戏库');
     systemClose();
     await waitFor(() => expect(nativeWindow.destroy).toHaveBeenCalledOnce());
   });
@@ -381,9 +297,7 @@ describe('iteration interactions', () => {
     expect(api.startDuplicateCheck).not.toHaveBeenCalled();
   });
   it('opens the same save editor from the hero action and the retained save tab entry', async () => {
-    render(<App />);
-    fireEvent.click(await screen.findByRole('button', { name: game.display_title }));
-    const detail = screen.getByRole('dialog', { name: game.display_title });
+    const detail = await openDetail();
     const actions = detail.querySelector('.detail-actions') as HTMLElement;
     expect(
       within(actions)
@@ -406,9 +320,7 @@ describe('iteration interactions', () => {
   });
   it('preserves drafts across detail tabs, submits all changes together and supports keyboard navigation', async () => {
     vi.mocked(api.saveGame).mockImplementation(async (edit) => ({ ...game, ...edit }));
-    render(<App />);
-    fireEvent.click(await screen.findByRole('button', { name: game.display_title }));
-    const detail = screen.getByRole('dialog', { name: game.display_title });
+    const detail = await openDetail();
     expect(
       within(detail)
         .getAllByRole('tabpanel')
@@ -576,9 +488,7 @@ describe('iteration interactions', () => {
     expect(all.getAttribute('aria-pressed')).toBe('true');
   });
   it('returns to a hidden invalid field without discarding edits in another tab', async () => {
-    render(<App />);
-    fireEvent.click(await screen.findByRole('button', { name: game.display_title }));
-    const detail = screen.getByRole('dialog', { name: game.display_title });
+    const detail = await openDetail();
     const title = within(detail).getByRole('textbox', { name: '显示名称' });
     fireEvent.change(title, { target: { value: '' } });
     showDetailTab('别名管理');
@@ -608,11 +518,7 @@ describe('iteration interactions', () => {
         ],
       });
       render(<App />);
-      await waitFor(() =>
-        expect(
-          (screen.getByRole('button', { name: '扫描目录' }) as HTMLButtonElement).disabled,
-        ).toBe(false),
-      );
+      await waitForEnabledButton('扫描目录');
       fireEvent.click(screen.getByRole('button', { name: '扫描目录' }));
       openScan();
       await screen.findByText('扫描未完整完成');
@@ -649,17 +555,6 @@ describe('iteration interactions', () => {
     fireEvent.click(button);
     await screen.findByText('Error: 无法打开数据目录');
     expect(screen.getByRole('region', { name: '设置页面' })).toBeTruthy();
-  });
-
-  it('uses the fixed artwork without an appearance picker', async () => {
-    const { container } = render(<App />);
-    await screen.findByRole('button', { name: '扫描目录' });
-    openConfig('设置');
-    expect(screen.queryByRole('region', { name: '外观设置' })).toBeNull();
-    expect(container.querySelector('.brand img')?.getAttribute('src')).toContain('app-icon-new');
-    expect(container.querySelector('.sidebar-art img')?.getAttribute('src')).toContain(
-      'character-new',
-    );
   });
 
   it('refreshes automatically detected saves in an untouched open detail without creating unsaved edits', async () => {
@@ -750,8 +645,7 @@ describe('iteration interactions', () => {
     vi.mocked(api.games).mockResolvedValue([qsp]);
     vi.mocked(api.choosePlayerFile).mockResolvedValue('彼女の冒険.qsp');
     vi.mocked(api.saveGame).mockImplementation(async (edit) => ({ ...qsp, ...edit }));
-    render(<App />);
-    fireEvent.click(await screen.findByRole('button', { name: game.display_title }));
+    await openDetail();
     showDetailTab('启动配置');
     expect((screen.getByRole('combobox', { name: 'QSP 播放器' }) as HTMLInputElement).value).toBe(
       'qspgui.exe',
@@ -800,8 +694,7 @@ describe('iteration interactions', () => {
       next_cursor: 1,
       change_count: 1,
     });
-    render(<App />);
-    fireEvent.click(await screen.findByRole('button', { name: game.display_title }));
+    await openDetail();
     expect(screen.queryByRole('combobox', { name: 'QSP 播放器' })).toBeNull();
     expect(screen.queryByRole('combobox', { name: 'QSP 主游戏文件' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: '分析启动配置' }));
@@ -828,11 +721,7 @@ describe('iteration interactions', () => {
     };
     vi.mocked(api.job).mockResolvedValue({ ...job, changes: [qsp] });
     render(<App />);
-    await waitFor(() =>
-      expect((screen.getByRole('button', { name: '扫描目录' }) as HTMLButtonElement).disabled).toBe(
-        false,
-      ),
-    );
+    await waitForEnabledButton('扫描目录');
     fireEvent.click(screen.getByRole('button', { name: '扫描目录' }));
     openScan();
     await screen.findByRole('combobox', { name: 'QSP 主游戏文件' });
@@ -875,6 +764,11 @@ describe('iteration interactions', () => {
       }),
     ).toBeNull();
     const sidebar = screen.getByRole('complementary');
+    expect(within(settingsPage).queryByRole('region', { name: '外观设置' })).toBeNull();
+    expect(sidebar.querySelector('.brand img')?.getAttribute('src')).toContain('app-icon-new');
+    expect(sidebar.querySelector('.sidebar-art img')?.getAttribute('src')).toContain(
+      'character-new',
+    );
     expect(within(sidebar).getByText('by Zhehao-w')).toBeTruthy();
     expect(within(sidebar).getByText('v0.3.1').className).toBe('sidebar-version');
     expect(sidebar.querySelectorAll('img')).toHaveLength(2);
@@ -1039,9 +933,7 @@ describe('iteration interactions', () => {
   });
 
   it('retains typed save locations when folder browsing is cancelled, repeated or fails', async () => {
-    render(<App />);
-    fireEvent.click(await screen.findByRole('button', { name: game.display_title }));
-    const detail = screen.getByRole('dialog');
+    const detail = await openDetail();
     showDetailTab('存档位置');
     const paths = within(detail).getByRole('textbox', { name: /存档位置/ }) as HTMLTextAreaElement;
     const browse = within(detail).getByRole('button', { name: '添加存档目录…' });
@@ -1061,9 +953,7 @@ describe('iteration interactions', () => {
     expect(api.saveGame).not.toHaveBeenCalled();
   });
   it('opens the selected configured save without changing or saving the configuration', async () => {
-    render(<App />);
-    fireEvent.click(await screen.findByRole('button', { name: game.display_title }));
-    const detail = screen.getByRole('dialog');
+    const detail = await openDetail();
     showDetailTab('存档位置');
     const paths = within(detail).getByRole('textbox', { name: /存档位置/ });
     const open = within(detail).getByRole('button', { name: '打开存档位置' });
@@ -1084,6 +974,80 @@ describe('iteration interactions', () => {
     expect(api.saveGame).not.toHaveBeenCalled();
     expect((paths as HTMLTextAreaElement).value).toBe('<GAME>/www/save\n%APPDATA%/RenPy/彼女');
   });
+  it('shows AppData cleanup only for RenPy and disables it without a valid directory', async () => {
+    const detail = await openDetail();
+    showDetailTab('存档位置');
+    expect(within(detail).queryByRole('button', { name: '清理 AppData 存档' })).toBeNull();
+    expect(api.previewRenpyAppdata).not.toHaveBeenCalled();
+    fireEvent.click(within(detail).getByRole('button', { name: '关闭弹窗' }));
+  });
+  it('disables RenPy AppData cleanup when static detection finds no valid directory', async () => {
+    vi.mocked(api.games).mockResolvedValue([{ ...game, engine: "Ren'Py" }]);
+    const detail = await openDetail();
+    showDetailTab('存档位置');
+    await within(detail).findByText('对应 AppData 存档目录不存在');
+    expect(
+      (within(detail).getByRole('button', { name: '清理 AppData 存档' }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    expect(api.recycleRenpyAppdata).not.toHaveBeenCalled();
+  });
+  it.each(['success', 'failure'] as const)(
+    'cleans only the confirmed AppData directory: %s',
+    async (outcome) => {
+      vi.mocked(api.games).mockResolvedValue([{ ...game, engine: "Ren'Py" }]);
+      vi.mocked(api.previewRenpyAppdata).mockResolvedValue({
+        token: 'appdata-token',
+        path: 'C:/Fixture/RenPy/彼女-1234',
+        reason: null,
+      });
+      const detail = await openDetail();
+      showDetailTab('存档位置');
+      const paths = within(detail).getByRole('textbox', {
+        name: /存档位置/,
+      }) as HTMLTextAreaElement;
+      fireEvent.change(paths, {
+        target: { value: '<GAME>/game/saves\n%APPDATA%/RenPy/彼女-1234' },
+      });
+      await waitForEnabledButton('清理 AppData 存档', within(detail));
+      const open = within(detail).getByRole('button', { name: '清理 AppData 存档' });
+      fireEvent.click(open);
+      const cancelDialog = await screen.findByRole('dialog', { name: '清理 AppData 存档？' });
+      expect(within(cancelDialog).getByText('C:/Fixture/RenPy/彼女-1234')).toBeTruthy();
+      expect(within(cancelDialog).getByText('游戏目录中的存档不受影响。')).toBeTruthy();
+      fireEvent.click(within(cancelDialog).getByRole('button', { name: '取消' }));
+      expect(api.recycleRenpyAppdata).not.toHaveBeenCalled();
+      await waitForEnabledButton('清理 AppData 存档', within(detail));
+      fireEvent.click(open);
+      const confirm = await screen.findByRole('dialog', { name: '清理 AppData 存档？' });
+      if (outcome === 'success') {
+        vi.mocked(api.recycleRenpyAppdata).mockResolvedValueOnce(undefined);
+        vi.mocked(api.previewRenpyAppdata).mockResolvedValueOnce({
+          token: null,
+          path: null,
+          reason: '对应 AppData 存档目录不存在',
+        });
+      } else {
+        vi.mocked(api.recycleRenpyAppdata).mockRejectedValueOnce('回收失败：目录被占用');
+      }
+      fireEvent.click(within(confirm).getByRole('button', { name: '移入回收站' }));
+      await waitFor(() =>
+        expect(api.recycleRenpyAppdata).toHaveBeenCalledExactlyOnceWith(game.id, 'appdata-token'),
+      );
+      if (outcome === 'success') {
+        await within(detail).findByText('AppData 存档已移入回收站。');
+        await waitFor(() => expect((open as HTMLButtonElement).disabled).toBe(true));
+      } else {
+        await within(detail).findByRole('alert');
+        expect(within(detail).getByText('回收失败：目录被占用')).toBeTruthy();
+        expect(within(detail).queryByText('AppData 存档已移入回收站。')).toBeNull();
+        await waitForEnabledButton('清理 AppData 存档', within(detail));
+      }
+      expect(paths.value).toBe('<GAME>/game/saves\n%APPDATA%/RenPy/彼女-1234');
+      expect(api.saveGame).not.toHaveBeenCalled();
+      expect(api.deleteFiles).not.toHaveBeenCalled();
+    },
+  );
   it('switches library layouts without losing a path search and opens the selected card', async () => {
     render(<App />);
     await screen.findByRole('button', { name: game.display_title });
@@ -1517,11 +1481,7 @@ describe('iteration interactions', () => {
       processed: 5,
     });
     render(<App />);
-    await waitFor(() =>
-      expect((screen.getByRole('button', { name: '扫描目录' }) as HTMLButtonElement).disabled).toBe(
-        false,
-      ),
-    );
+    await waitForEnabledButton('扫描目录');
     fireEvent.click(screen.getByRole('button', { name: '扫描目录' }));
     openScan();
     await screen.findByText('可入库');
@@ -1620,9 +1580,7 @@ describe('iteration interactions', () => {
     };
     vi.mocked(api.games).mockResolvedValue([initial]);
     vi.mocked(api.launchHistory).mockResolvedValue([initial.last_launched_at]);
-    render(<App />);
-    fireEvent.click(await screen.findByRole('button', { name: game.display_title }));
-    const modal = screen.getByRole('dialog');
+    const modal = await openDetail();
     expect(within(modal).getByText(/入库时间：/)).toBeTruthy();
     expect(within(modal).getByText(/上次运行：/)).toBeTruthy();
     showDetailTab('记录与管理');
@@ -1673,11 +1631,7 @@ describe('iteration interactions', () => {
 
   it('uses the native directory picker inside settings and retains unsaved edits on rejected close', async () => {
     render(<App />);
-    await waitFor(() =>
-      expect((screen.getByRole('button', { name: '设置' }) as HTMLButtonElement).disabled).toBe(
-        false,
-      ),
-    );
+    await waitForEnabledButton('设置');
     fireEvent.click(screen.getByRole('button', { name: '设置' }));
     const modal = screen.getByRole('region', { name: '设置页面' });
     vi.mocked(api.chooseDirectory).mockResolvedValue('D:/Games');
@@ -1688,11 +1642,7 @@ describe('iteration interactions', () => {
       ).toBe('D:/Games'),
     );
     // The picker publishes its path before clearing busy; navigation is guarded until it finishes.
-    await waitFor(() =>
-      expect(
-        (within(modal).getByRole('button', { name: '保存设置' }) as HTMLButtonElement).disabled,
-      ).toBe(false),
-    );
+    await waitForEnabledButton('保存设置', within(modal));
     goLibrary();
     const confirmation = await screen.findByRole('dialog', { name: '放弃未保存修改？' });
     expect(screen.getByRole('region', { name: '设置页面' })).toBe(modal);
@@ -1816,9 +1766,7 @@ describe('iteration interactions', () => {
             });
         }),
     );
-    render(<App />);
-    fireEvent.click(await screen.findByRole('button', { name: game.display_title }));
-    const modal = screen.getByRole('dialog');
+    const modal = await openDetail();
     const list = screen.getByRole('table');
     fireEvent.click(within(modal).getByRole('button', { name: '启动' }));
     const launching = within(modal).getByRole('button', { name: '启动' });
@@ -1838,11 +1786,7 @@ describe('iteration interactions', () => {
       (within(reopened).getByRole('button', { name: '启动中…' }) as HTMLButtonElement).disabled,
     ).toBe(true);
     complete();
-    await waitFor(() =>
-      expect(
-        (within(reopened).getByRole('button', { name: '启动' }) as HTMLButtonElement).disabled,
-      ).toBe(false),
-    );
+    await waitForEnabledButton('启动', within(reopened));
     await waitFor(() => {
       expect(
         (within(reopened).getByRole('radio', { name: '正在玩' }) as HTMLInputElement).checked,
@@ -1973,19 +1917,13 @@ describe('iteration interactions', () => {
     vi.mocked(api.startGameAnalysis).mockResolvedValue('detail-analysis');
     vi.mocked(api.job).mockImplementation(() => Promise.resolve(response));
     vi.mocked(api.cancel).mockResolvedValue();
-    render(<App />);
-    fireEvent.click(await screen.findByRole('button', { name: game.display_title }));
-    const modal = screen.getByRole('dialog');
+    const modal = await openDetail();
     fireEvent.click(within(modal).getByRole('button', { name: '分析启动配置' }));
     fireEvent.click(await within(modal).findByRole('button', { name: '取消任务' }));
     await waitFor(() => expect(api.cancel).toHaveBeenCalledWith('detail-analysis'));
     response = { ...response, status: 'cancelled', active: {} };
     await within(modal).findByText('分析已取消，原有结果保留。');
-    await waitFor(() =>
-      expect(
-        (within(modal).getByRole('button', { name: '分析启动配置' }) as HTMLButtonElement).disabled,
-      ).toBe(false),
-    );
+    await waitForEnabledButton('分析启动配置', within(modal));
     response = {
       ...response,
       id: 'detail-analysis-2',
@@ -2002,7 +1940,7 @@ describe('iteration interactions', () => {
     });
     response.changes = [{ ...candidate, registered_id: game.id, engine: 'WOLF RPG Editor' }];
     fireEvent.click(within(modal).getByRole('button', { name: '分析启动配置' }));
-    await within(modal).findByText('分析结束，可查看下方详情。');
+    await within(modal).findByText('已填入分析启动配置，请检查后保存资料。');
     expect(within(modal).getByText('main-v1.2.exe · Unknown')).toBeTruthy();
     showDetailTab('基础信息');
     expect((within(modal).getByRole('textbox', { name: '版本' }) as HTMLInputElement).value).toBe(
@@ -2021,7 +1959,156 @@ describe('iteration interactions', () => {
           name: /^启动文件（相对游戏目录）/,
         }) as HTMLInputElement
       ).value,
-    ).toBe(game.main_executable);
+    ).toBe('main-v1.2.exe');
+  });
+
+  it('fills the analyzed launcher and MTool mode without trusting downloaded BAT paths or saving automatically', async () => {
+    const launch = {
+      main_executable: 'Game.exe',
+      working_directory: '.',
+      launch_type: 'MTOOL' as const,
+      external_player: null,
+      mtool_target_exe: 'Game.exe',
+      mtool_loader: null,
+    };
+    vi.mocked(api.startGameAnalysis).mockResolvedValue('mtool-analysis');
+    vi.mocked(api.job).mockResolvedValue({
+      ...job,
+      id: 'mtool-analysis',
+      kind: 'analysis',
+      status: 'completed',
+      changes: [
+        {
+          ...candidate,
+          registered_id: game.id,
+          recommended_launch: launch,
+          mtool_detected: true,
+          bats: [
+            {
+              path: 'StartWithTool.bat',
+              status: 'supported',
+              messages: [],
+              recipe: {
+                target_exe: 'Wrong.exe',
+                loader: 'loaders/wrong.dll',
+                observed_root: 'F:/Downloaded/Tool',
+                injector: 'loaders/inject.exe',
+                runtime: 'nw.exe',
+              },
+            },
+          ],
+        },
+      ],
+      next_cursor: 1,
+      change_count: 1,
+    });
+    vi.mocked(api.saveGame).mockImplementation(async (edit) => ({ ...game, ...edit }));
+    await openDetail();
+    fireEvent.click(screen.getByRole('button', { name: '分析启动配置' }));
+    await screen.findByText('已填入分析启动配置，请检查后保存资料。');
+    expect((screen.getByRole('combobox', { name: '启动方式' }) as HTMLSelectElement).value).toBe(
+      'MTOOL',
+    );
+    expect(
+      (screen.getByRole('combobox', { name: /启动文件（相对游戏目录）/ }) as HTMLInputElement)
+        .value,
+    ).toBe('Game.exe');
+    expect(api.saveGame).not.toHaveBeenCalled();
+    expect(api.play).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: '保存资料' }));
+    await waitFor(() => expect(api.saveGame).toHaveBeenCalledWith(expect.objectContaining(launch)));
+  });
+
+  it('keeps edits made during analysis and permits explicitly applying the recommendation', async () => {
+    let response: JobPage = {
+      ...job,
+      id: 'draft-analysis',
+      kind: 'analysis',
+      status: 'running',
+      changes: [],
+      next_cursor: 0,
+      change_count: 0,
+    };
+    vi.mocked(api.startGameAnalysis).mockResolvedValue(response.id);
+    vi.mocked(api.job).mockImplementation(async () => response);
+    await openDetail();
+    fireEvent.click(screen.getByRole('button', { name: '分析启动配置' }));
+    await within(screen.getByRole('dialog')).findByRole('button', { name: '取消任务' });
+    fireEvent.change(screen.getByRole('combobox', { name: /启动文件（相对游戏目录）/ }), {
+      target: { value: 'Manual.exe' },
+    });
+    response = {
+      ...response,
+      status: 'completed',
+      changes: [
+        {
+          ...candidate,
+          registered_id: game.id,
+          recommended_launch: {
+            main_executable: 'New.exe',
+            working_directory: '.',
+            launch_type: 'DIRECT',
+            external_player: null,
+            mtool_target_exe: null,
+            mtool_loader: null,
+          },
+        },
+      ],
+      next_cursor: 1,
+      change_count: 1,
+    };
+    await screen.findByText('分析完成；当前启动配置已修改，可手动使用分析结果。');
+    expect(
+      (screen.getByRole('combobox', { name: /启动文件（相对游戏目录）/ }) as HTMLInputElement)
+        .value,
+    ).toBe('Manual.exe');
+    fireEvent.click(screen.getByRole('button', { name: '使用分析启动配置' }));
+    expect(
+      (screen.getByRole('combobox', { name: /启动文件（相对游戏目录）/ }) as HTMLInputElement)
+        .value,
+    ).toBe('New.exe');
+    expect(api.saveGame).not.toHaveBeenCalled();
+  });
+
+  it('renames the actual directory through maintenance, keeps errors reviewable and refreshes the existing record', async () => {
+    const saved = {
+      ...game,
+      display_title: '新游戏 v2.0',
+      canonical_title: '新游戏 v2.0',
+      current_version: 'v2.0',
+      install_path: 'E:/Butter/新游戏 v2.0',
+    };
+    vi.mocked(api.renameGameDirectory)
+      .mockRejectedValueOnce('目标目录已存在，不会覆盖')
+      .mockResolvedValue(saved);
+    await openDetail();
+    showDetailTab('记录与管理');
+    fireEvent.click(screen.getByRole('button', { name: '重命名目录' }));
+    const rename = screen.getByRole('dialog', { name: '重命名游戏目录' });
+    fireEvent.change(within(rename).getByRole('textbox', { name: '新目录名称' }), {
+      target: { value: saved.display_title },
+    });
+    expect(api.renameGameDirectory).not.toHaveBeenCalled();
+    fireEvent.click(within(rename).getByRole('button', { name: '确认重命名' }));
+    await within(rename).findByRole('alert');
+    expect(within(rename).getByRole('textbox', { name: '新目录名称' })).toHaveProperty(
+      'value',
+      saved.display_title,
+    );
+    vi.mocked(api.games).mockResolvedValue([saved]);
+    fireEvent.click(within(rename).getByRole('button', { name: '确认重命名' }));
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: '重命名游戏目录' })).toBeNull(),
+    );
+    expect(api.renameGameDirectory).toHaveBeenCalledWith(
+      game.id,
+      game.install_path,
+      saved.display_title,
+    );
+    expect(screen.getByRole('dialog', { name: saved.display_title })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '关闭弹窗' }));
+    expect(await screen.findByRole('button', { name: saved.display_title })).toBeTruthy();
+    expect(api.removeGame).not.toHaveBeenCalled();
   });
 
   it('checks paths on startup, filters problems and blocks a missing game launch without deleting it', async () => {
@@ -2127,11 +2214,7 @@ describe('iteration interactions', () => {
       );
       fireEvent.click(within(modal).getByRole('button', { name: '保存资料' }));
       await waitFor(() => expect(api.startLibraryCheck).toHaveBeenCalledTimes(2));
-      await waitFor(() =>
-        expect(
-          (within(modal).getByRole('button', { name: '启动' }) as HTMLButtonElement).disabled,
-        ).toBe(false),
-      );
+      await waitForEnabledButton('启动', within(modal));
       expect(within(modal).queryByText('启动文件缺失')).toBeNull();
       expect(api.play).not.toHaveBeenCalled();
     },
@@ -2152,9 +2235,7 @@ describe('iteration interactions', () => {
       launch_type: 'MTOOL',
       mtool_target_exe: game.main_executable,
     });
-    render(<App />);
-    fireEvent.click(await screen.findByRole('button', { name: game.display_title }));
-    const detail = screen.getByRole('dialog', { name: game.display_title });
+    const detail = await openDetail();
     showDetailTab('启动配置');
     fireEvent.change(within(detail).getByRole('combobox', { name: '启动方式' }), {
       target: { value: 'MTOOL' },
@@ -2185,9 +2266,7 @@ describe('iteration interactions', () => {
   });
 
   it('opens a separate confirmation popup for unsaved detail edits and Escape retains the draft', async () => {
-    render(<App />);
-    fireEvent.click(await screen.findByRole('button', { name: game.display_title }));
-    const detail = screen.getByRole('dialog', { name: game.display_title });
+    const detail = await openDetail();
     fireEvent.change(within(detail).getByRole('textbox', { name: '版本' }), {
       target: { value: 'Unsaved' },
     });
@@ -2208,24 +2287,6 @@ describe('iteration interactions', () => {
     );
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(api.saveGame).not.toHaveBeenCalled();
-  });
-
-  it('displays a popup for unsaved settings navigation and changes pages only after discard', async () => {
-    render(<App />);
-    await screen.findByRole('button', { name: game.display_title });
-    openConfig('设置');
-    const page = screen.getByRole('region', { name: '设置页面' });
-    fireEvent.change(within(page).getByRole('textbox', { name: /Game Root/ }), {
-      target: { value: 'D:/Unsaved' },
-    });
-    goLibrary();
-    const popup = screen.getByRole('dialog', { name: '放弃未保存修改？' });
-    expect((popup as HTMLDialogElement).open).toBe(true);
-    expect(screen.getByRole('region', { name: '设置页面' })).toBe(page);
-    fireEvent.click(within(popup).getByRole('button', { name: '放弃并切换' }));
-    expect(screen.getByRole('table')).toBeTruthy();
-    expect(screen.queryByRole('dialog')).toBeNull();
-    expect(api.saveSettings).not.toHaveBeenCalled();
   });
 
   it('syncs detected MTool defaults for existing records after a completed scan', async () => {
@@ -2261,11 +2322,7 @@ describe('iteration interactions', () => {
         ],
       });
     render(<App />);
-    await waitFor(() =>
-      expect((screen.getByRole('button', { name: '扫描目录' }) as HTMLButtonElement).disabled).toBe(
-        false,
-      ),
-    );
+    await waitForEnabledButton('扫描目录');
     fireEvent.click(screen.getByRole('button', { name: '扫描目录' }));
     openScan();
     await screen.findByText('公共 MTool');
@@ -2302,11 +2359,7 @@ describe('iteration interactions', () => {
     vi.mocked(api.job).mockImplementation(() => Promise.resolve(response));
     vi.mocked(api.cancel).mockResolvedValue();
     render(<App />);
-    await waitFor(() =>
-      expect((screen.getByRole('button', { name: '扫描目录' }) as HTMLButtonElement).disabled).toBe(
-        false,
-      ),
-    );
+    await waitForEnabledButton('扫描目录');
     expect(screen.queryByRole('button', { name: '检查目录' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: '扫描目录' }));
     fireEvent.click(await screen.findByRole('button', { name: '取消任务' }));
@@ -2341,11 +2394,7 @@ describe('iteration interactions', () => {
       ],
     });
     render(<App />);
-    await waitFor(() =>
-      expect((screen.getByRole('button', { name: '扫描目录' }) as HTMLButtonElement).disabled).toBe(
-        false,
-      ),
-    );
+    await waitForEnabledButton('扫描目录');
     expect(screen.queryByRole('button', { name: '检查目录' })).toBeNull();
     const automaticChecks = vi.mocked(api.startLibraryCheck).mock.calls.length;
     fireEvent.click(screen.getByRole('button', { name: '扫描目录' }));
@@ -2380,11 +2429,7 @@ describe('iteration interactions', () => {
     fireEvent.change(within(modal).getByRole('combobox', { name: '已有游戏记录' }), {
       target: { value: game.id },
     });
-    await waitFor(() =>
-      expect(
-        (within(modal).getByRole('button', { name: '确认关联目录' }) as HTMLButtonElement).disabled,
-      ).toBe(false),
-    );
+    await waitForEnabledButton('确认关联目录', within(modal));
     vi.mocked(api.games).mockResolvedValue([saved]);
     vi.mocked(api.job).mockResolvedValue({
       ...job,
@@ -2411,9 +2456,7 @@ describe('iteration interactions', () => {
     };
     vi.mocked(api.games).mockResolvedValueOnce([game, other]).mockResolvedValue([other]);
     vi.mocked(api.removeGame).mockResolvedValue();
-    render(<App />);
-    fireEvent.click(await screen.findByRole('button', { name: game.display_title }));
-    const modal = screen.getByRole('dialog');
+    const modal = await openDetail();
     showDetailTab('记录与管理');
     fireEvent.click(within(modal).getByRole('button', { name: '从库中移除' }));
     const confirmation = screen.getByRole('dialog', { name: `从库中移除：${game.display_title}` });
@@ -2452,17 +2495,11 @@ describe('iteration interactions', () => {
     vi.mocked(api.removeGame)
       .mockRejectedValueOnce(new Error('请先结束当前任务'))
       .mockResolvedValue();
-    render(<App />);
-    fireEvent.click(await screen.findByRole('button', { name: game.display_title }));
-    const detail = screen.getByRole('dialog', { name: game.display_title });
+    const detail = await openDetail();
     fireEvent.click(within(detail).getByRole('button', { name: '打开目录' }));
     await waitFor(() => expect(api.openFolder).toHaveBeenCalledWith(game.id));
     expect(screen.queryByRole('dialog', { name: '无法打开游戏目录' })).toBeNull();
-    await waitFor(() =>
-      expect(
-        (within(detail).getByRole('button', { name: '打开目录' }) as HTMLButtonElement).disabled,
-      ).toBe(false),
-    );
+    await waitForEnabledButton('打开目录', within(detail));
     vi.mocked(api.openFolder).mockRejectedValue(
       '文件操作失败：The system cannot find the file specified. (os error 2)',
     );
@@ -2481,12 +2518,7 @@ describe('iteration interactions', () => {
       '请先结束当前任务',
     );
     expect(screen.getByRole('dialog', { name: game.display_title })).toBeTruthy();
-    await waitFor(() =>
-      expect(
-        (within(errorDialog).getByRole('button', { name: '从库中移除' }) as HTMLButtonElement)
-          .disabled,
-      ).toBe(false),
-    );
+    await waitForEnabledButton('从库中移除', within(errorDialog));
     vi.mocked(api.games).mockResolvedValue([other]);
     fireEvent.click(within(errorDialog).getByRole('button', { name: '从库中移除' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
@@ -2497,9 +2529,7 @@ describe('iteration interactions', () => {
 
   it('preserves unsaved detail edits and disables removing from the folder error modal', async () => {
     vi.mocked(api.openFolder).mockRejectedValue('文件操作失败：Access is denied. (os error 5)');
-    render(<App />);
-    fireEvent.click(await screen.findByRole('button', { name: game.display_title }));
-    const detail = screen.getByRole('dialog', { name: game.display_title });
+    const detail = await openDetail();
     fireEvent.change(within(detail).getByLabelText('显示名称'), {
       target: { value: '未保存名称' },
     });
@@ -2533,16 +2563,10 @@ describe('iteration interactions', () => {
     vi.mocked(api.chooseDirectory).mockResolvedValue(path);
     vi.mocked(api.previewRelocation).mockResolvedValue(plan);
     vi.mocked(api.relocateGame).mockResolvedValue(saved);
-    render(<App />);
-    fireEvent.click(await screen.findByRole('button', { name: game.display_title }));
-    const modal = screen.getByRole('dialog');
+    const modal = await openDetail();
     showDetailTab('记录与管理');
     fireEvent.click(within(modal).getByRole('button', { name: '关联新目录' }));
-    await waitFor(() =>
-      expect(
-        (within(modal).getByRole('button', { name: '确认关联目录' }) as HTMLButtonElement).disabled,
-      ).toBe(false),
-    );
+    await waitForEnabledButton('确认关联目录', within(modal));
     expect(api.previewRelocation).toHaveBeenCalledWith(game.id, path);
     expect(api.relocateGame).not.toHaveBeenCalled();
     fireEvent.click(within(modal).getByRole('button', { name: '确认关联目录' }));
@@ -2618,11 +2642,7 @@ describe('iteration interactions', () => {
     });
     vi.mocked(api.cancel).mockResolvedValue();
     render(<App />);
-    await waitFor(() =>
-      expect((screen.getByRole('button', { name: '扫描目录' }) as HTMLButtonElement).disabled).toBe(
-        false,
-      ),
-    );
+    await waitForEnabledButton('扫描目录');
     fireEvent.click(screen.getByRole('button', { name: '扫描目录' }));
     openScan();
     await screen.findByText('启动文件：main-v1.2.exe');

@@ -1,43 +1,27 @@
+import { waitForEnabledButton } from './testing/interactions';
+import { resetApiMock } from './testing/apiMock';
+import { makeJob, makeGame } from './testing/fixtures';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { api } from './api';
 import { LibraryDuplicates } from './LibraryDuplicates';
 import type { DuplicatePair, Game, DuplicateReview, JobPage } from './types';
 
-vi.mock('./api', () => ({
-  api: {
-    startDuplicateCheck: vi.fn(),
-    duplicateResults: vi.fn(),
-    duplicateGameReferences: vi.fn().mockResolvedValue([]),
-    duplicateReviews: vi.fn(),
-    setDuplicateReview: vi.fn(),
-    job: vi.fn(),
-    cancel: vi.fn(),
-    previewDelete: vi.fn(),
-    deleteFiles: vi.fn(),
-    openFolder: vi.fn().mockResolvedValue(undefined),
-  },
-}));
-const games: Game[] = ['a', 'b'].map((id, index) => ({
-  id,
-  canonical_title: 'Title',
-  display_title: `Title v1.${index * 2}`,
-  install_path: index ? 'Z:/new' : 'Z:/old',
-  current_version: `v1.${index * 2}`,
-  working_directory: '.',
-  version_source: 'manual',
-  main_executable: 'Game.exe',
-  engine: 'Unity',
-  launch_type: 'DIRECT',
-  mtool_target_exe: null,
-  mtool_loader: null,
-  created_at: '',
-  updated_at: '',
-  last_launched_at: null,
-  play_status: 'UNPLAYED',
-  aliases: [],
-  save_paths: [],
-}));
+vi.mock('./api', async (original) => {
+  const { api } = await original<typeof import('./api')>();
+  const { createApiMock } = await import('./testing/apiMock');
+  return { api: createApiMock(api) };
+});
+const games: Game[] = ['a', 'b'].map((id, index) =>
+  makeGame({
+    id,
+    canonical_title: 'Title',
+    display_title: `Title v1.${index * 2}`,
+    install_path: index ? 'Z:/new' : 'Z:/old',
+    current_version: `v1.${index * 2}`,
+    engine: 'Unity',
+  }),
+);
 const pair: DuplicatePair = {
   left_id: 'a',
   right_id: 'b',
@@ -45,27 +29,18 @@ const pair: DuplicatePair = {
   confidence: 'high',
   reason: '去除明确版本后名称一致',
 };
-const finished: JobPage = {
+const finished: JobPage = makeJob({
   id: 'duplicates',
   kind: 'duplicates',
-  root: '',
-  status: 'completed',
   phase: '匹配',
   total: 2,
   processed: 2,
-  active: {},
   elapsed_ms: 5,
-  idle_ms: 0,
-  changes: [],
-  next_cursor: 0,
-  change_count: 0,
-  warnings: [],
-  error: null,
-  registered_ids: [],
-};
+});
 let exclusions: DuplicateReview[];
 beforeEach(() => {
   vi.clearAllMocks();
+  resetApiMock(api);
   exclusions = [];
   vi.mocked(api.startDuplicateCheck).mockResolvedValue('duplicates');
   vi.mocked(api.duplicateResults).mockResolvedValue([pair]);
@@ -100,6 +75,22 @@ const properties = () => ({
   onDeleted: vi.fn(),
 });
 
+async function checkDuplicates(props = properties()) {
+  const view = render(<LibraryDuplicates {...props} />);
+  fireEvent.click(screen.getByRole('button', { name: '查找重复' }));
+  await screen.findByText('Title v1.0');
+  return view;
+}
+async function openDeletion(id = 'b') {
+  fireEvent.click(screen.getByRole('button', { name: '确认重复' }));
+  fireEvent.click(
+    await screen.findByRole('radio', {
+      name: '选择删除：' + games.find((game) => game.id === id)!.display_title,
+    }),
+  );
+  fireEvent.click(screen.getByRole('button', { name: '删除选中游戏…' }));
+  return screen.getByRole('dialog');
+}
 describe('library duplicate review', () => {
   it('checks only on request, opens both details and supports ignore and undo without checking again', async () => {
     const props = properties();
@@ -129,22 +120,29 @@ describe('library duplicate review', () => {
     expect(api.duplicateReviews).toHaveBeenCalledTimes(reviewRequests);
     expect(props.onError).not.toHaveBeenCalled();
   });
-  it('loads saved ignores after reopening and can undo them before a new check', async () => {
-    exclusions = [{ left_id: 'a', right_id: 'b', created_at: 'now', status: 'excluded' }];
-    render(<LibraryDuplicates {...properties()} />);
-    fireEvent.click(await screen.findByRole('tab', { name: '已排除 1' }));
-    expect(screen.getByText('Title v1.2')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: '撤销排除' }));
-    await screen.findByText('没有已排除的组合');
-    fireEvent.click(screen.getByRole('tab', { name: '待确认 1' }));
-    expect(screen.getByText('Title v1.2')).toBeTruthy();
-    expect(api.startDuplicateCheck).not.toHaveBeenCalled();
-  });
+  it.each([
+    ['excluded', '已排除', '撤销排除', 'a', 'b'],
+    ['confirmed', '已确认', '撤销确认', 'b', 'a'],
+  ] as const)(
+    'loads persisted %s and undoes it without a new check',
+    async (status, label, undo, left_id, right_id) => {
+      exclusions = [{ left_id, right_id, created_at: 'now', status }];
+      render(<LibraryDuplicates {...properties()} />);
+      fireEvent.click(await screen.findByRole('tab', { name: label + ' 1' }));
+      expect(screen.getByText('Title v1.2')).toBeTruthy();
+      if (status === 'confirmed')
+        expect(screen.getByRole('button', { name: '删除选中游戏…' })).toBeTruthy();
+      expect(api.startDuplicateCheck).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole('button', { name: undo }));
+      await screen.findByText(`没有${label}的组合`);
+      fireEvent.click(screen.getByRole('tab', { name: '待确认 1' }));
+      expect(screen.getByRole('button', { name: '确认重复' })).toBeTruthy();
+      expect(screen.getByText('Title v1.2')).toBeTruthy();
+    },
+  );
   it('preserves filters and results across tabs and preserves the last complete results on cancellation', async () => {
     const props = properties();
-    const view = render(<LibraryDuplicates {...props} />);
-    fireEvent.click(screen.getByRole('button', { name: '查找重复' }));
-    await screen.findByText('Title v1.0');
+    const view = await checkDuplicates(props);
     fireEvent.change(screen.getByRole('textbox', { name: '搜索重复组合' }), {
       target: { value: 'Title' },
     });
@@ -173,9 +171,7 @@ describe('library duplicate review', () => {
     'keeps a suggestion when saving %s fails',
     async (action) => {
       const props = properties();
-      render(<LibraryDuplicates {...props} />);
-      fireEvent.click(screen.getByRole('button', { name: '查找重复' }));
-      await screen.findByText('Title v1.0');
+      await checkDuplicates(props);
       vi.mocked(api.setDuplicateReview).mockRejectedValue(new Error('database locked'));
       fireEvent.click(screen.getByRole('button', { name: action }));
       await waitFor(() => expect(props.onError).toHaveBeenCalledWith('Error: database locked'));
@@ -185,9 +181,7 @@ describe('library duplicate review', () => {
   );
 
   it('updates all in place, moves confirmed pairs out of pending immediately, and supports undo', async () => {
-    render(<LibraryDuplicates {...properties()} />);
-    fireEvent.click(screen.getByRole('button', { name: '查找重复' }));
-    await screen.findByText('Title v1.0');
+    await checkDuplicates();
     fireEvent.click(screen.getByRole('button', { name: '确认重复' }));
     await screen.findByRole('button', { name: '删除选中游戏…' });
     expect(api.deleteFiles).not.toHaveBeenCalled();
@@ -211,19 +205,6 @@ describe('library duplicate review', () => {
     expect(screen.getByRole('button', { name: '删除选中游戏…' })).toBeTruthy();
   });
 
-  it('loads persisted confirmation after restarting, even before checking', async () => {
-    exclusions = [{ left_id: 'b', right_id: 'a', created_at: 'now', status: 'confirmed' }];
-    render(<LibraryDuplicates {...properties()} />);
-    fireEvent.click(await screen.findByRole('tab', { name: '已确认 1' }));
-    expect(screen.getByText('Title v1.2')).toBeTruthy();
-    expect(screen.getByRole('button', { name: '删除选中游戏…' })).toBeTruthy();
-    expect(api.startDuplicateCheck).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: '撤销确认' }));
-    await screen.findByRole('tab', { name: '待确认 1' });
-    fireEvent.click(screen.getByRole('tab', { name: '待确认 1' }));
-    expect(screen.getByRole('button', { name: '确认重复' })).toBeTruthy();
-  });
-
   it.each([
     ['b', 'a'],
     ['a', 'b'],
@@ -231,18 +212,8 @@ describe('library duplicate review', () => {
     'reuses the original deletion dialog for %s and only removes the selected UUID',
     async (deletedId, keptId) => {
       const props = properties();
-      const view = render(<LibraryDuplicates {...props} />);
-      fireEvent.click(screen.getByRole('button', { name: '查找重复' }));
-      await screen.findByText('Title v1.0');
-      fireEvent.click(screen.getByRole('button', { name: '确认重复' }));
-      await screen.findByRole('radiogroup', { name: '选择要删除的游戏' });
-      fireEvent.click(
-        screen.getByRole('radio', {
-          name: '选择删除：' + games.find((game) => game.id === deletedId)!.display_title,
-        }),
-      );
-      fireEvent.click(screen.getByRole('button', { name: '删除选中游戏…' }));
-      const dialog = screen.getByRole('dialog');
+      const view = await checkDuplicates(props);
+      const dialog = await openDeletion(deletedId);
       expect(
         within(dialog).getByText(games.find((game) => game.id === deletedId)!.install_path),
       ).toBeTruthy();
@@ -251,12 +222,7 @@ describe('library duplicate review', () => {
       ).toBeTruthy();
       expect(within(dialog).getByText('保留：')).toBeTruthy();
       expect(api.deleteFiles).not.toHaveBeenCalled();
-      await waitFor(() =>
-        expect(
-          (within(dialog).getByRole('button', { name: '确认移入回收站' }) as HTMLButtonElement)
-            .disabled,
-        ).toBe(false),
-      );
+      await waitForEnabledButton('确认移入回收站', within(dialog));
       fireEvent.click(within(dialog).getByRole('button', { name: '确认移入回收站' }));
       await screen.findByRole('dialog', { name: '文件操作结果' });
       fireEvent.click(screen.getByRole('button', { name: '完成' }));
@@ -284,17 +250,9 @@ describe('library duplicate review', () => {
       recycled: ['Z:/new/save'],
       error: '文件被占用，库记录保留',
     });
-    render(<LibraryDuplicates {...props} />);
-    fireEvent.click(screen.getByRole('button', { name: '查找重复' }));
-    await screen.findByText('Title v1.0');
-    fireEvent.click(screen.getByRole('button', { name: '确认重复' }));
-    fireEvent.click(await screen.findByRole('radio', { name: '选择删除：Title v1.2' }));
-    fireEvent.click(screen.getByRole('button', { name: '删除选中游戏…' }));
-    await waitFor(() =>
-      expect(
-        (screen.getByRole('button', { name: '确认移入回收站' }) as HTMLButtonElement).disabled,
-      ).toBe(false),
-    );
+    await checkDuplicates(props);
+    await openDeletion();
+    await waitForEnabledButton('确认移入回收站');
     fireEvent.click(screen.getByRole('button', { name: '确认移入回收站' }));
     await screen.findByText('文件被占用，库记录保留');
     fireEvent.click(screen.getByRole('button', { name: '完成' }));
@@ -314,12 +272,8 @@ describe('library duplicate review', () => {
       saves: [],
       blockers: ['此路径包含共用存档'],
     });
-    render(<LibraryDuplicates {...properties()} />);
-    fireEvent.click(screen.getByRole('button', { name: '查找重复' }));
-    await screen.findByText('Title v1.0');
-    fireEvent.click(screen.getByRole('button', { name: '确认重复' }));
-    fireEvent.click(await screen.findByRole('radio', { name: '选择删除：Title v1.2' }));
-    fireEvent.click(screen.getByRole('button', { name: '删除选中游戏…' }));
+    await checkDuplicates();
+    await openDeletion();
     await screen.findByText('此路径包含共用存档');
     expect(
       (screen.getByRole('button', { name: '确认移入回收站' }) as HTMLButtonElement).disabled,

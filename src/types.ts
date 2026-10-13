@@ -34,6 +34,12 @@ export interface ResetReport {
   warning: string | null;
 }
 
+export interface RenpyAppdataPreview {
+  token: string | null;
+  path: string | null;
+  reason: string | null;
+}
+
 export interface Game {
   id: string;
   canonical_title: string;
@@ -142,6 +148,7 @@ export interface BatAnalysis {
 }
 
 export interface ScanCandidate {
+  recommended_launch?: LaunchConfiguration | null;
   bundled_mtool?: MtoolBundle[];
   save_paths?: string[];
   qsp?: QspDetection | null;

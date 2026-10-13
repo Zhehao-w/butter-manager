@@ -206,6 +206,8 @@ pub struct BatAnalysis {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScanCandidate {
+    #[serde(default)]
+    pub recommended_launch: Option<LaunchConfiguration>,
     pub install_path: String,
     #[serde(default)]
     pub directory_modified_ms: Option<u128>,

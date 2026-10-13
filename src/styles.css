@@ -4449,6 +4449,10 @@ textarea,
   border-top: 1px solid var(--line);
   background: #f6f9ff;
 }
+.modal-rename .modal-body > p {
+  margin: 12px 0 0;
+  font-size: 12px;
+}
 .modal.modal-delete-game {
   width: min(480px, calc(100vw - 44px));
   height: fit-content;

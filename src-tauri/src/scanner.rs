@@ -185,6 +185,7 @@ pub(crate) fn analyze_bat(path: &Path, relative: String) -> BatAnalysis {
 
 pub fn pending_candidate(path: &Path) -> Result<ScanCandidate> {
     Ok(ScanCandidate {
+        recommended_launch: None,
         install_path: path_text(path)?,
         directory_modified_ms: fs::symlink_metadata(path)
             .ok()
@@ -288,6 +289,108 @@ pub fn analyze_selected_controlled(
     progress: &dyn Fn(&Path),
 ) -> Result<ScanCandidate> {
     analyze_inner(path, false, true, executable, stop, progress)
+}
+
+/// Recheck an existing game's saved launcher instead of trusting a moved/misidentified path.
+pub fn analyze_game_controlled(
+    game: &crate::domain::Game,
+    stop: &dyn Fn() -> bool,
+    progress: &dyn Fn(&Path),
+) -> Result<ScanCandidate> {
+    let root = Path::new(&game.install_path);
+    let saved = if game.launch_type == "MTOOL" {
+        game.mtool_target_exe
+            .as_deref()
+            .or(game.main_executable.as_deref())
+    } else {
+        game.main_executable.as_deref()
+    };
+    let preferred = saved.filter(|value| {
+        crate::paths::launch_file(root, value).is_ok()
+            && !helper(value.replace('\\', "/").rsplit('/').next().unwrap_or(value))
+    });
+    let mut candidate = analyze_selected_controlled(root, preferred, stop, progress)?;
+    if let Some(index) = preferred.and_then(|file| {
+        candidate.executables.iter().position(|exe| {
+            exe.relative_path
+                .replace('\\', "/")
+                .eq_ignore_ascii_case(&file.replace('\\', "/"))
+        })
+    }) {
+        let selected = candidate.executables.remove(index);
+        candidate.executables.insert(0, selected);
+    }
+    if saved.is_some() && preferred.is_none() {
+        candidate
+            .warnings
+            .push("原启动文件不存在或属于配置工具，已重新寻找游戏启动文件".into());
+    }
+    if candidate.qsp.is_none() && candidate.status == "ready" {
+        let ambiguous = preferred.is_none()
+            && candidate.engine == "Unknown"
+            && candidate.executables.len() > 1
+            && candidate.executables[0].score == candidate.executables[1].score;
+        let mut executable = if ambiguous {
+            None
+        } else {
+            candidate
+                .executables
+                .first()
+                .map(|exe| exe.relative_path.clone())
+        };
+        let mut working = candidate.working_directory.clone();
+        let mut loader = None;
+        let mut fallback = false;
+        if executable.is_none() {
+            let usable: Vec<_> = candidate
+                .bats
+                .iter()
+                .filter_map(|bat| {
+                    let recipe = bat.recipe.as_ref()?;
+                    let file =
+                        crate::paths::contained_file(root, &recipe.target_exe, "exe").ok()?;
+                    if helper(file.file_name()?.to_str()?) {
+                        return None;
+                    }
+                    Some((bat, recipe, file))
+                })
+                .collect();
+            let unique: std::collections::HashSet<_> = usable
+                .iter()
+                .map(|(_, recipe, _)| {
+                    (
+                        recipe.target_exe.replace('\\', "/").to_lowercase(),
+                        recipe.loader.to_lowercase(),
+                    )
+                })
+                .collect();
+            if unique.len() == 1 {
+                let (bat, recipe, file) = &usable[0];
+                executable = Some(recipe.target_exe.clone());
+                working = executable_directory(Some(&bat.path))?;
+                if architecture(file) == "Unknown" {
+                    loader = Some(recipe.loader.clone());
+                }
+                fallback = true;
+                candidate.warnings.push("未能确定唯一游戏启动文件，已回退到 BAT 中经路径验证的 MTool 配置；请检查后保存".into());
+            }
+        }
+        if let Some(exe) = executable {
+            let mtool = fallback
+                || candidate.mtool_detected
+                || candidate.bats.iter().any(|bat| bat.recipe.is_some())
+                || game.launch_type == "MTOOL";
+            candidate.recommended_launch = Some(crate::domain::LaunchConfiguration {
+                main_executable: Some(exe.clone()),
+                working_directory: working,
+                launch_type: if mtool { "MTOOL" } else { "DIRECT" }.into(),
+                external_player: None,
+                mtool_target_exe: mtool.then_some(exe),
+                mtool_loader: loader,
+            });
+        }
+    }
+    Ok(candidate)
 }
 
 pub fn analyze_quick_controlled(
@@ -793,6 +896,87 @@ pub fn scan_root(path: &Path) -> Result<ScanReport> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn game_analysis_replaces_missing_or_helper_launchers_and_uses_bat_as_indicator_first() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(temp.path().join("www/js")).unwrap();
+        fs::write(temp.path().join("www/js/rpg_core.js"), b"").unwrap();
+        fs::write(temp.path().join("Game.exe"), b"fixture").unwrap();
+        fs::write(temp.path().join("Config.exe"), b"fixture").unwrap();
+        fs::write(temp.path().join("StartWithTool.bat"), "@cd /d \"%~dp0\"\r\n\"F:\\OldTool\\loaders\\inject.exe\" \"%~dp0\\wrong.exe\" \"F:\\OldTool\\loaders\\mzHook.dll\"\r\nstart \"\" \"F:\\OldTool\\nw.exe\" \"F:\\OldTool\"").unwrap();
+        let mut game = crate::maintenance::tests::fixture_game(temp.path());
+        for old in ["Game Data\\Game.exe", "Config.exe"] {
+            game.main_executable = Some(old.into());
+            let candidate = analyze_game_controlled(&game, &|| false, &|_| {}).unwrap();
+            assert_eq!(candidate.engine, "RPG Maker MV");
+            assert_eq!(candidate.executables.len(), 1);
+            let launch = candidate.recommended_launch.unwrap();
+            assert_eq!(launch.main_executable.as_deref(), Some("Game.exe"));
+            assert_eq!(launch.mtool_target_exe.as_deref(), Some("Game.exe"));
+            assert_eq!(launch.launch_type, "MTOOL");
+            assert_eq!(launch.working_directory, ".");
+            assert!(launch.mtool_loader.is_none());
+        }
+        let other = temp.path().join("legacy");
+        fs::create_dir(&other).unwrap();
+        fs::write(other.join("Config.exe"), b"fixture").unwrap();
+        fs::write(other.join("魔女の遺産.exe"), b"fixture").unwrap();
+        game.install_path = path_text(&other).unwrap();
+        let result = analyze_game_controlled(&game, &|| false, &|_| {}).unwrap();
+        assert_eq!(
+            result
+                .recommended_launch
+                .unwrap()
+                .main_executable
+                .as_deref(),
+            Some("魔女の遺産.exe")
+        );
+    }
+
+    #[test]
+    fn game_analysis_bat_fallback_requires_ambiguous_analysis_and_valid_unique_game_target() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::write(temp.path().join("A.exe"), b"fixture").unwrap();
+        fs::write(temp.path().join("B.exe"), b"fixture").unwrap();
+        fs::write(temp.path().join("Config.exe"), b"fixture").unwrap();
+        let game = crate::maintenance::tests::fixture_game(temp.path());
+        let text = |target: &str| {
+            format!("@cd /d \"%~dp0\"\r\n\"F:\\Tool\\loaders\\inject.exe\" \"%~dp0\\{target}\" \"F:\\Tool\\loaders\\mzHook32.dll\"\r\nstart \"\" \"F:\\Tool\\MTool.exe\" \"F:\\Tool\"")
+        };
+        assert!(analyze_game_controlled(&game, &|| false, &|_| {})
+            .unwrap()
+            .recommended_launch
+            .is_none());
+        for target in ["missing.exe", "Config.exe"] {
+            fs::write(temp.path().join("StartWithTool.bat"), text(target)).unwrap();
+            assert!(analyze_game_controlled(&game, &|| false, &|_| {})
+                .unwrap()
+                .recommended_launch
+                .is_none());
+        }
+        fs::write(temp.path().join("StartWithTool.bat"), text("B.exe")).unwrap();
+        let result = analyze_game_controlled(&game, &|| false, &|_| {}).unwrap();
+        assert!(result.warnings.iter().any(|s| s.contains("回退到 BAT")));
+        let launch = result.recommended_launch.unwrap();
+        assert_eq!(launch.main_executable.as_deref(), Some("B.exe"));
+        assert_eq!(launch.mtool_loader.as_deref(), Some("loaders/mzHook32.dll"));
+        fs::write(temp.path().join("与工具一同启动.bat"), text("A.exe")).unwrap();
+        assert!(analyze_game_controlled(&game, &|| false, &|_| {})
+            .unwrap()
+            .recommended_launch
+            .is_none());
+        let mut explicit = game;
+        explicit.main_executable = Some("B.exe".into());
+        assert_eq!(
+            analyze_game_controlled(&explicit, &|| false, &|_| {})
+                .unwrap()
+                .recommended_launch
+                .unwrap()
+                .main_executable
+                .as_deref(),
+            Some("B.exe")
+        );
+    }
     use super::*;
     #[test]
     fn qsp_detection_recommends_single_file_and_local_player_without_reading_or_running_it() {

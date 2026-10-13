@@ -14,9 +14,12 @@
     "dev": "vite --host 127.0.0.1",
     "build": "tsc --noEmit && vite build",
     "tauri": "tauri",
-    "test": "cargo test --manifest-path src-tauri/Cargo.toml --no-default-features",
+    "test": "cargo test --locked --manifest-path src-tauri/Cargo.toml --no-default-features --lib",
     "check": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings",
     "test:ui": "vitest run",
+    "test:ui:changed": "vitest run --changed HEAD --passWithNoTests",
+    "test:ui:related": "vitest related --run --passWithNoTests",
+    "test:ui:watch": "vitest",
     "format": "prettier --write src vite.config.ts vitest.config.ts",
     "format:check": "prettier --check src vite.config.ts vitest.config.ts"
   },

@@ -211,6 +211,7 @@ export function GameMaintenance({
   const [path, setPath] = useState<string | null>(null);
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [renameName, setRenameName] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   async function run(action: () => Promise<void>) {
@@ -229,14 +230,28 @@ export function GameMaintenance({
   return (
     <section className="panel game-maintenance" aria-label="游戏记录维护">
       <h3>目录与库记录</h3>
-      <p className="muted">游戏目录改名或移动后可以关联新目录，也可以仅移除这条库记录。</p>
-      {message && !confirmRemove && <p role="status">{message}</p>}
+      <p className="muted">
+        可以重命名游戏目录并同步名称；目录已移动时，可以关联新目录保留原记录。
+      </p>
+      {message && !confirmRemove && renameName === null && <p role="status">{message}</p>}
       {locked && <p className="muted">请先保存或放弃资料编辑，并结束当前任务后再维护记录。</p>}
       {!path && (
         <div className="header-actions">
+          <button
+            type="button"
+            disabled={locked || busy || confirmRemove || confirmDelete || renameName !== null}
+            onClick={() => {
+              setMessage('');
+              setRenameName(
+                game.install_path.replaceAll('\\', '/').split('/').pop() || game.display_title,
+              );
+            }}
+          >
+            重命名目录
+          </button>
           <BrowseButton
             type="button"
-            disabled={locked || busy || confirmRemove || confirmDelete}
+            disabled={locked || busy || confirmRemove || confirmDelete || renameName !== null}
             onClick={() =>
               void run(async () => {
                 const selected = await api.chooseDirectory();
@@ -249,7 +264,7 @@ export function GameMaintenance({
           <button
             type="button"
             className="danger"
-            disabled={locked || busy || confirmRemove || confirmDelete}
+            disabled={locked || busy || confirmRemove || confirmDelete || renameName !== null}
             onClick={() => {
               setMessage('');
               setConfirmRemove(true);
@@ -260,7 +275,7 @@ export function GameMaintenance({
           <button
             type="button"
             className="danger danger-solid"
-            disabled={locked || busy || confirmRemove || confirmDelete}
+            disabled={locked || busy || confirmRemove || confirmDelete || renameName !== null}
             onClick={() => setConfirmDelete(true)}
           >
             删除游戏文件（回收站）
@@ -277,6 +292,67 @@ export function GameMaintenance({
             onDeleted(report);
           }}
         />
+      )}
+      {renameName !== null && (
+        <Modal
+          title="重命名游戏目录"
+          variant="confirm"
+          className="modal-rename"
+          onClose={() => {
+            if (!busy) setRenameName(null);
+          }}
+          footer={
+            <div className="confirmation-actions">
+              <button type="button" disabled={busy} onClick={() => setRenameName(null)}>
+                取消
+              </button>
+              <button
+                type="button"
+                className="primary"
+                disabled={busy || locked || !renameName.trim()}
+                onClick={() =>
+                  void run(async () => {
+                    const saved = await api.renameGameDirectory(
+                      game.id,
+                      game.install_path,
+                      renameName,
+                    );
+                    onRelocated(saved);
+                    setRenameName(null);
+                    setMessage('目录和游戏名称已更新，原有资料与记录保留。');
+                  })
+                }
+              >
+                {busy ? '正在重命名…' : '确认重命名'}
+              </button>
+            </div>
+          }
+        >
+          <label className="relocation-field">
+            新目录名称
+            <input
+              value={renameName}
+              disabled={busy}
+              onChange={(event) => setRenameName(event.target.value)}
+            />
+          </label>
+          <p className="path">原目录：{game.install_path}</p>
+          <p className="path">
+            新目录：{game.install_path.replace(/[\\/][^\\/]+$/, '')}
+            {game.install_path.includes('\\') ? '\\' : '/'}
+            {renameName}
+          </p>
+          <p className="muted">
+            同时修改显示名称和标准名称；新名称包含明确版本号时更新版本。游戏
+            ID、别名、存档和游玩记录保留，内部绝对路径随目录调整。
+            旧导入记录的回退可能因改名被阻止。
+          </p>
+          {message && (
+            <p className="error" role="alert">
+              {message}
+            </p>
+          )}
+        </Modal>
       )}
       {path && (
         <RelocationEditor

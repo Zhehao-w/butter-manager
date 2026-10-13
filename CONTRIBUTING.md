@@ -16,17 +16,28 @@ cargo test --locked --manifest-path src-tauri/Cargo.toml --no-default-features -
 cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 ```
 
-Windows 自动检查还会执行 `pnpm tauri build --no-bundle -- --locked`，不生成 Release 或上传产物。
+PR 执行完整前端 / Rust 回归、Prettier / Rustfmt、TypeScript / Vite 和所有目标 Clippy，构建 Windows Release EXE，并上传可下载的 PR artifact。Push 到 main（兼容原 master）、手动工作流及正式 Release 的 published 事件执行相同完整检查和 EXE 构建。工作流不自动创建 Release 或上传 Release 附件。
+
+EXE 构建复用前面已经生成的前端资源，使用 `cargo build --locked --manifest-path src-tauri/Cargo.toml --release --features tauri/custom-protocol`，避免再次运行 Tauri 的前端构建步骤。
 
 局部修改优先运行相关测试；发布或整合较大功能时再执行上面的完整检查。例如：
 
 ```powershell
-pnpm test:ui -- src/ImportPage.test.tsx src/LibraryDuplicates.test.tsx src/App.test.tsx
+pnpm test:ui src/ImportPage.test.tsx src/LibraryDuplicates.test.tsx
+pnpm test:ui:changed
+pnpm test:ui:related src/library.ts
+pnpm test:ui:watch src/ImportPage.test.tsx
+pnpm test db::tests
+pnpm test importer::updater_test
 cargo test --locked --manifest-path src-tauri/Cargo.toml --no-default-features --lib mtool_cleanup::tests
 cargo test --locked --manifest-path src-tauri/Cargo.toml --no-default-features --lib duplicate
 ```
 
-测试应覆盖用户可观察行为和失败边界，避免只镜像实现或为相同交互重复建立夹具。查重状态和 UUID 组合、删除对象保护、导入部分成功及返回调整、清理失败与中断恢复不可因合并测试而丢失覆盖。当前数量与历史整理记录见 [验证记录](docs/validation.md) 和 [测试审查](docs/test-audit-2026-10-08.md)。
+`test:ui:changed` 通过 Vitest 依赖图选择相对 HEAD 的改动涉及的测试；`related` 按给定源码查找关联测试。两者在没有匹配项时正常结束，仅用于本地增量检查，CI 始终使用完整 `test:ui`。Rust 的 `pnpm test <过滤词>` 仍编译测试目标，只筛选执行指定模块 / 用例；Cargo 没有跨模块的受影响测试分析，公共路径、数据库、Import 或 Codec 改动应执行完整回归。不要把过滤成功当作全量验证。
+
+共用 Fixture 和 API Mock 位于 `src/testing/`。Mock 每项测试独立重置，未配置的方法默认报错，文件操作须明确设置成功或失败响应；不要依赖未配置的空返回。纯排序 / 扫描数据测试使用 Node 环境，其余 React 测试保留 DOM 环境。
+
+测试应覆盖用户可观察行为和失败边界，避免只镜像实现或为相同交互重复建立夹具。查重状态和 UUID 组合、删除对象保护、导入部分成功及返回调整、清理失败与中断恢复不可因合并测试而丢失覆盖。当前数量与整理明细见 [本次测试精简记录](docs/test-suite-cleanup-2026-10-13.md)；历史记录见 [验证记录](docs/validation.md) 和 [测试审查](docs/test-audit-2026-10-08.md)。
 
 ## 修改约定
 

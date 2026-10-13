@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import { directoryTime, scanResults } from './scan';
 import type { ScanCandidate } from './types';

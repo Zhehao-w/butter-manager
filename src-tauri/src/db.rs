@@ -180,7 +180,7 @@ impl Database {
         connection.busy_timeout(std::time::Duration::from_secs(5))?;
         connection.execute_batch("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;")?;
         let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-        if version > 9 {
+        if version > 11 {
             return Err(Error::Validation("数据库版本较新，当前程序无法打开".into()));
         }
         if version == 0 {
@@ -245,7 +245,42 @@ impl Database {
             transaction.execute_batch(include_str!("../migrations/009_version_history.sql"))?;
             transaction.commit()?;
         }
+        if version < 10 {
+            let transaction = connection.unchecked_transaction()?;
+            transaction.execute_batch(include_str!("../migrations/010_duplicate_ignores.sql"))?;
+            transaction.commit()?;
+        }
+        if version < 11 {
+            let transaction = connection.unchecked_transaction()?;
+            transaction.execute_batch(include_str!("../migrations/011_duplicate_reviews.sql"))?;
+            transaction.commit()?;
+        }
         Ok(Self { connection })
+    }
+
+    pub fn duplicate_reviews(&self) -> Result<Vec<crate::library_duplicates::DuplicateReview>> {
+        Ok(self.connection.prepare("SELECT left_id,right_id,created_at,status FROM duplicate_reviews ORDER BY created_at DESC,left_id,right_id")?
+            .query_map([], |r| Ok(crate::library_duplicates::DuplicateReview { left_id:r.get(0)?, right_id:r.get(1)?, created_at:r.get(2)?, status:r.get(3)? }))?
+            .collect::<std::result::Result<Vec<_>,_>>()?)
+    }
+
+    pub fn set_duplicate_review(&self, left: &str, right: &str, status: &str) -> Result<()> {
+        let (left, right) = crate::library_duplicates::ordered_pair(left, right)?;
+        if matches!(status, "confirmed" | "excluded") {
+            // The FK constraints validate both UUIDs without touching their files or metadata.
+            self.connection.execute(
+                "INSERT INTO duplicate_reviews(left_id,right_id,status) VALUES(?1,?2,?3) ON CONFLICT(left_id,right_id) DO UPDATE SET status=excluded.status",
+                params![left, right, status],
+            )?;
+        } else if status == "pending" {
+            self.connection.execute(
+                "DELETE FROM duplicate_reviews WHERE left_id=?1 AND right_id=?2",
+                params![left, right],
+            )?;
+        } else {
+            return Err(Error::Validation("无效的重复确认状态".into()));
+        }
+        Ok(())
     }
 
     pub fn settings(&self) -> Result<Settings> {
@@ -744,7 +779,7 @@ impl Database {
     pub fn clear_library(&mut self) -> Result<ResetReport> {
         self.connection.execute_batch("PRAGMA secure_delete=ON;")?;
         let transaction = self.connection.transaction()?;
-        transaction.execute_batch("DROP TABLE version_history; DROP TABLE launch_history; DROP TABLE aliases; DROP TABLE save_paths; DROP TABLE games; DROP TABLE settings;")?;
+        transaction.execute_batch("DROP TABLE duplicate_reviews; DROP TABLE version_history; DROP TABLE launch_history; DROP TABLE aliases; DROP TABLE save_paths; DROP TABLE games; DROP TABLE settings;")?;
         transaction.execute_batch(include_str!("../migrations/001_initial.sql"))?;
         transaction.execute_batch(include_str!("../migrations/002_working_directory.sql"))?;
         transaction.execute_batch(include_str!("../migrations/003_launch_history.sql"))?;
@@ -754,6 +789,8 @@ impl Database {
         transaction.execute_batch(include_str!("../migrations/007_external_player.sql"))?;
         transaction.execute_batch(include_str!("../migrations/008_play_status.sql"))?;
         transaction.execute_batch(include_str!("../migrations/009_version_history.sql"))?;
+        transaction.execute_batch(include_str!("../migrations/010_duplicate_ignores.sql"))?;
+        transaction.execute_batch(include_str!("../migrations/011_duplicate_reviews.sql"))?;
         transaction.commit()?;
         // Logical reset has committed. A compaction failure must not leave stale records in the UI.
         let warning = self.compact_reset_file().err().map(|error| {
@@ -927,6 +964,99 @@ impl Database {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn duplicate_reviews_upgrade_old_exclusions_and_persist_confirmations_in_one_table() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("reviews.db");
+        let db = Database::open(&path).unwrap();
+        for id in ["a", "b", "c"] {
+            db.connection.execute("INSERT INTO games(id,canonical_title,display_title,install_path,install_path_key) VALUES(?1,?1,?1,?1,?1)", [id]).unwrap();
+        }
+        let before = serde_json::to_string(&db.games().unwrap()).unwrap();
+        db.connection
+            .execute_batch("DROP TABLE duplicate_reviews;")
+            .unwrap();
+        db.connection
+            .execute_batch(include_str!("../migrations/010_duplicate_ignores.sql"))
+            .unwrap();
+        db.connection
+            .execute(
+                "INSERT INTO duplicate_ignores(left_id,right_id) VALUES('a','b')",
+                [],
+            )
+            .unwrap();
+        drop(db);
+        let db = Database::open(&path).unwrap();
+        assert_eq!(db.duplicate_reviews().unwrap()[0].status, "excluded");
+        assert!(!db
+            .connection
+            .prepare("SELECT name FROM sqlite_master WHERE name='duplicate_ignores'")
+            .unwrap()
+            .exists([])
+            .unwrap());
+        db.set_duplicate_review("b", "a", "confirmed").unwrap();
+        db.set_duplicate_review("a", "b", "confirmed").unwrap();
+        assert_eq!(db.duplicate_reviews().unwrap().len(), 1);
+        assert!(db.set_duplicate_review("a", "b", "delete").is_err());
+        assert_eq!(db.duplicate_reviews().unwrap()[0].status, "confirmed");
+        assert_eq!(serde_json::to_string(&db.games().unwrap()).unwrap(), before);
+        drop(db);
+        let db = Database::open(&path).unwrap();
+        assert_eq!(db.duplicate_reviews().unwrap()[0].status, "confirmed");
+        db.set_duplicate_review("a", "b", "excluded").unwrap();
+        assert_eq!(db.duplicate_reviews().unwrap()[0].status, "excluded");
+        db.set_duplicate_review("a", "b", "pending").unwrap();
+        assert!(db.duplicate_reviews().unwrap().is_empty());
+    }
+    #[test]
+    fn duplicate_ignores_migrate_persist_undo_and_cascade_without_changing_game_metadata() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("library.db");
+        let db = Database::open(&path).unwrap();
+        for id in ["a", "b", "c"] {
+            db.connection.execute("INSERT INTO games(id,canonical_title,display_title,install_path,install_path_key) VALUES(?1,?1,?1,?1,?1)", [id]).unwrap();
+        }
+        let before = serde_json::to_string(&db.games().unwrap()).unwrap();
+        db.connection
+            .execute_batch("DROP TABLE duplicate_reviews;PRAGMA user_version=9;")
+            .unwrap();
+        drop(db);
+        let mut db = Database::open(&path).unwrap();
+        db.set_duplicate_review("b", "a", "excluded").unwrap();
+        db.set_duplicate_review("a", "b", "excluded").unwrap();
+        assert_eq!(db.duplicate_reviews().unwrap().len(), 1);
+        assert!(db.set_duplicate_review("a", "a", "confirmed").is_err());
+        assert!(db
+            .set_duplicate_review("missing", "a", "confirmed")
+            .is_err());
+        assert_eq!(serde_json::to_string(&db.games().unwrap()).unwrap(), before);
+        drop(db);
+        db = Database::open(&path).unwrap();
+        assert_eq!(db.duplicate_reviews().unwrap()[0].left_id, "a");
+        db.set_duplicate_review("b", "a", "pending").unwrap();
+        assert!(db.duplicate_reviews().unwrap().is_empty());
+        for (a, b) in [("a", "b"), ("b", "c"), ("c", "a")] {
+            db.set_duplicate_review(a, b, "confirmed").unwrap();
+        }
+        db.remove_game("a").unwrap();
+        assert_eq!(db.duplicate_reviews().unwrap().len(), 1);
+        assert_eq!(db.duplicate_reviews().unwrap()[0].left_id, "b");
+        db.clear_library().unwrap();
+        assert!(db.duplicate_reviews().unwrap().is_empty());
+        assert!(db.games().unwrap().is_empty());
+        assert_eq!(
+            db.connection
+                .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            11
+        );
+        assert!(!db
+            .connection
+            .prepare("PRAGMA foreign_key_check")
+            .unwrap()
+            .exists([])
+            .unwrap());
+    }
+    #[test]
     fn schema_nine_adds_empty_history_without_changing_old_library_values() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("fixture.db");
@@ -942,7 +1072,9 @@ mod tests {
         let before = serde_json::to_string(&db.game(&id).unwrap()).unwrap();
         let history = db.launch_history(&id).unwrap();
         db.connection
-            .execute_batch("DROP TABLE version_history;PRAGMA user_version=8;")
+            .execute_batch(
+                "DROP TABLE duplicate_reviews;DROP TABLE version_history;PRAGMA user_version=8;",
+            )
             .unwrap();
         drop(db);
         let db = Database::open(&path).unwrap();
@@ -956,7 +1088,7 @@ mod tests {
             db.connection
                 .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
                 .unwrap(),
-            9
+            11
         );
         assert!(!db
             .connection
@@ -1373,7 +1505,7 @@ mod tests {
             db.connection
                 .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
                 .unwrap(),
-            9
+            11
         );
     }
     #[test]

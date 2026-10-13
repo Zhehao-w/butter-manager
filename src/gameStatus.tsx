@@ -1,4 +1,4 @@
-import { useId, useMemo, useState } from 'react';
+import { useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { launchLabel } from './qsp';
 import { engineTone, Icon, Modal } from './ui';
 import type { IconName } from './ui';
@@ -129,17 +129,50 @@ export function EngineQuickFilters({
   engines,
   other,
   onChange,
+  onVisibleCountChange,
 }: {
   games: Game[];
   engines: string[];
   other: boolean;
   onChange: (engines: string[], other: boolean) => void;
+  onVisibleCountChange?: (count: number) => void;
 }) {
-  const { popular, otherCount } = useMemo(() => engineQuickGroups(games), [games]);
+  const { popular } = useMemo(() => engineQuickGroups(games), [games]);
+  const container = useRef<HTMLDivElement>(null);
+  const [visibleCount, setVisibleCount] = useState(5);
+  useLayoutEffect(() => {
+    const element = container.current;
+    if (!element) return;
+    const fit = () => {
+      const available = element.clientWidth;
+      if (!available) return;
+      const buttons = Array.from(element.querySelectorAll('button'));
+      const gap = parseFloat(getComputedStyle(element).columnGap) || 0;
+      let used = buttons.at(-1)?.getBoundingClientRect().width ?? 0;
+      let count = 0;
+      for (const button of buttons.slice(0, -1)) {
+        used += button.getBoundingClientRect().width + gap;
+        if (used > available) break;
+        count++;
+      }
+      setVisibleCount(count);
+      onVisibleCountChange?.(count);
+    };
+    fit();
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(fit);
+    observer?.observe(element);
+    window.addEventListener('resize', fit);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', fit);
+    };
+  }, [popular, onVisibleCountChange]);
+  const otherCount =
+    games.length - popular.slice(0, visibleCount).reduce((sum, group) => sum + group.count, 0);
   const options = [
     ...popular.map(({ engine, count }) => ({
       key: `engine:${engine}`,
-      label: engine,
+      label: engine === 'RPG Maker (legacy)' ? 'RPG Maker' : engine,
       count,
       icon: filterAppearance('engines', engine).icon,
       active: !other && engines.length === 1 && engines[0] === engine,
@@ -157,11 +190,11 @@ export function EngineQuickFilters({
     },
   ];
   return (
-    <div className="engine-quick-filters" role="group" aria-label="引擎快捷筛选">
-      {options.map((option) => (
+    <div ref={container} className="engine-quick-filters" role="group" aria-label="引擎快捷筛选">
+      {options.map((option, index) => (
         <button
           key={option.key}
-          className={`tone-${engineTone(option.engines[0] ?? 'Unknown')}`}
+          className={`tone-${engineTone(option.engines[0] ?? 'Unknown')}${index >= visibleCount && !option.other ? ' quick-engine-overflow' : ''}`}
           type="button"
           aria-pressed={option.active}
           disabled={!option.count && !option.active}
@@ -237,7 +270,8 @@ export function LibraryFilters({
     <>
       <button
         type="button"
-        className={`library-filter-button ${count ? 'active' : ''}`}
+        className={`library-filter-button library-filter-trigger ${count ? 'active' : ''}`}
+        aria-label={count ? `筛选 (${count})` : '筛选'}
         aria-pressed={count > 0}
         aria-haspopup="dialog"
         onClick={() => {
@@ -246,7 +280,12 @@ export function LibraryFilters({
         }}
       >
         <Icon name="filter" size={16} />
-        筛选{count ? ` (${count})` : ''}
+        筛选
+        {count > 0 && (
+          <span className="library-filter-count" aria-hidden="true">
+            {count}
+          </span>
+        )}
       </button>
       {open && (
         <Modal

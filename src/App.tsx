@@ -43,6 +43,7 @@ import type {
 import { GameMaintenance, PathBadge, RelocationEditor } from './maintenance';
 import { MToolConfiguration } from './MToolConfiguration';
 import { ImportPage } from './ImportPage';
+import { LibraryDuplicates } from './LibraryDuplicates';
 import { QspConfiguration } from './QspConfiguration';
 import { EngineSelect } from './EngineSelect';
 import { FolderErrorDialog } from './FolderErrorDialog';
@@ -112,6 +113,7 @@ export default function App() {
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('library');
   const [importOpen, setImportOpen] = useState(false);
   const [importBusy, setImportBusy] = useState(false);
+  const [duplicateBusy, setDuplicateBusy] = useState(false);
   const [importRecoveryIssues, setImportRecoveryIssues] = useState<ImportRecoveryIssue[]>([]);
   const [layout, setLayout] = useLibraryLayout();
   function openSettings(section: SettingsSection) {
@@ -154,9 +156,15 @@ export default function App() {
   ]);
   const [filters, setFilters] = useState(emptyFilters);
   const [otherEnginesOnly, setOtherEnginesOnly] = useState(false);
+  const [quickEngineCount, setQuickEngineCount] = useState(5);
   const popularEngines = useMemo(
-    () => new Set(engineQuickGroups(games).popular.map((group) => group.engine)),
-    [games],
+    () =>
+      new Set(
+        engineQuickGroups(games)
+          .popular.slice(0, quickEngineCount)
+          .map((group) => group.engine),
+      ),
+    [games, quickEngineCount],
   );
   const libraryEpoch = useRef(0);
   const currentScanId = useRef<string | null>(null);
@@ -172,6 +180,7 @@ export default function App() {
   ]);
   const [expandedCandidates, setExpandedCandidates] = useState<Set<string>>(new Set());
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [organizerTab, setOrganizerTab] = useState<'duplicates' | 'scan' | null>(null);
   const scanScroll = useRef<HTMLDivElement>(null);
   const settingsGuard = useRef<((go: () => void) => void) | null>(null);
   function navigate(go: () => void) {
@@ -189,13 +198,14 @@ export default function App() {
     setSettingsOpen(false);
     setImportOpen(false);
     if (reset) viewScroll.current[open ? 'scan' : 'library'] = 0;
+    if (open) setOrganizerTab((current) => current ?? (games.length ? 'duplicates' : 'scan'));
     setPreviewOpen(open);
   }
   useLayoutEffect(() => {
     if (scanScroll.current) scanScroll.current.scrollTop = viewScroll.current.scan;
     if (!settingsOpen && !previewOpen && !importOpen && libraryScroll.current)
       libraryScroll.current.scrollTop = viewScroll.current.library;
-  }, [previewOpen, importOpen, layout, settingsOpen]);
+  }, [previewOpen, organizerTab, importOpen, layout, settingsOpen]);
   useLayoutEffect(() => {
     viewScroll.current.library = 0;
     if (libraryScroll.current) libraryScroll.current.scrollTop = 0;
@@ -348,7 +358,7 @@ export default function App() {
     !!id && (!page || page.id !== id || activeJob(page));
   const scanning = pending(scanId, scanJob.page);
   const processing = pending(taskId, taskJob.page);
-  const taskActive = starting || scanning || processing || importBusy;
+  const taskActive = starting || scanning || processing || importBusy || duplicateBusy;
 
   useEffect(() => {
     if (!desktop) return;
@@ -480,6 +490,7 @@ export default function App() {
       );
   }
   async function startScan() {
+    setOrganizerTab('scan');
     setStarting(true);
     await action(async () => {
       const id = await api.startScan();
@@ -614,7 +625,7 @@ export default function App() {
       gap: 10,
       overscan: 5,
       initialOffset: () => viewScroll.current.scan,
-      enabled: virtualScan && previewOpen && !settingsOpen,
+      enabled: virtualScan && previewOpen && organizerTab === 'scan' && !settingsOpen,
     },
     'scan',
   );
@@ -659,6 +670,31 @@ export default function App() {
     <div className="empty">没有匹配的游戏。</div>
   ) : null;
 
+  const organizerTabs = (
+    <div className="import-tabs organizer-tabs" role="tablist" aria-label="游戏整理功能">
+      <button
+        type="button"
+        role="tab"
+        aria-selected={organizerTab === 'duplicates'}
+        className={organizerTab === 'duplicates' ? 'active' : ''}
+        onClick={() => setOrganizerTab('duplicates')}
+      >
+        <Icon name="search" />
+        重复检查
+      </button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={organizerTab === 'scan'}
+        className={organizerTab === 'scan' ? 'active' : ''}
+        onClick={() => setOrganizerTab('scan')}
+      >
+        <Icon name="scan" />
+        目录扫描
+      </button>
+    </div>
+  );
+
   return (
     <div className={`app-shell${desktop ? ' app-shell-desktop' : ''}`}>
       <WindowTitleBar desktop={desktop} icon={appIcon} onError={setError} />
@@ -680,14 +716,6 @@ export default function App() {
             游戏库<span className="nav-count">{games.length}</span>
           </button>
           <button
-            className={!settingsOpen && previewOpen ? 'active' : ''}
-            aria-current={!settingsOpen && previewOpen ? 'page' : undefined}
-            onClick={() => navigate(() => showPreview(true))}
-          >
-            <Icon name="scan" />
-            扫描入库
-          </button>
-          <button
             className={!settingsOpen && importOpen ? 'active' : ''}
             aria-current={!settingsOpen && importOpen ? 'page' : undefined}
             onClick={() =>
@@ -702,6 +730,14 @@ export default function App() {
             {!!importRecoveryIssues.length && (
               <span className="nav-count recovery-count">需处理</span>
             )}
+          </button>
+          <button
+            className={!settingsOpen && previewOpen ? 'active' : ''}
+            aria-current={!settingsOpen && previewOpen ? 'page' : undefined}
+            onClick={() => navigate(() => showPreview(true))}
+          >
+            <Icon name="scan" />
+            游戏整理
           </button>
           <button
             disabled={!settings}
@@ -867,6 +903,7 @@ export default function App() {
                     games={games}
                     engines={filters.engines}
                     other={otherEnginesOnly}
+                    onVisibleCountChange={setQuickEngineCount}
                     onChange={(engines, other) => {
                       setFilters((current) => ({ ...current, engines }));
                       setOtherEnginesOnly(other);
@@ -1150,14 +1187,31 @@ export default function App() {
               </div>
             </section>
           )}
-          {!settingsOpen && previewOpen && (
+          <LibraryDuplicates
+            games={games}
+            visible={!settingsOpen && previewOpen && organizerTab === 'duplicates'}
+            locked={starting || scanning || processing || importBusy || launchingIds.size > 0}
+            tabs={organizerTabs}
+            onActive={setDuplicateBusy}
+            onOpen={openGame}
+            onError={setError}
+            onDeleted={(id, report) => {
+              if (report.removed) {
+                forgetGame(
+                  id,
+                  games.find((game) => game.id === id),
+                );
+                setToast('重复游戏已送入回收站，保留的一份未改动。');
+              } else void startLibraryCheck(true);
+            }}
+          />
+          {!settingsOpen && previewOpen && organizerTab === 'scan' && (
             <section className="panel scan-page" aria-label="扫描结果页面">
               <PageHeader
                 icon="scan"
                 title={
                   <>
-                    {scanId ? '扫描结果' : '扫描入库'}{' '}
-                    <span className="count">{preview.length}</span>
+                    游戏整理 <span className="count">{preview.length}</span>
                   </>
                 }
                 description="确认启动文件和版本。切换页面后保留结果与选择。"
@@ -1185,6 +1239,7 @@ export default function App() {
                   </button>
                 </div>
               </PageHeader>
+              {organizerTabs}
               <div className="scan-filters">
                 <SearchField
                   label="搜索扫描结果"
@@ -1391,7 +1446,7 @@ export default function App() {
               settings={settings}
               games={games}
               visible={!settingsOpen && importOpen}
-              locked={starting || scanning || processing || launchingIds.size > 0}
+              locked={starting || scanning || processing || duplicateBusy || launchingIds.size > 0}
               onActive={setImportBusy}
               onUpdated={() => {
                 void api
@@ -1452,7 +1507,12 @@ export default function App() {
             <TaskBanner
               key={scanJob.page.id}
               page={scanJob.page}
-              onViewResults={() => navigate(() => showPreview(true))}
+              onViewResults={() =>
+                navigate(() => {
+                  setOrganizerTab('scan');
+                  showPreview(true);
+                })
+              }
               onSkip={(path) => void action(() => api.skip(scanJob.page!.id, path))}
               onCancel={() =>
                 void action(async () => {

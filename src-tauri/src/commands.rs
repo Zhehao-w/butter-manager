@@ -458,6 +458,69 @@ fn start_library_check(state: State<'_, AppState>) -> CommandResult<String> {
     Ok(id)
 }
 #[tauri::command]
+fn start_duplicate_check(state: State<'_, AppState>) -> CommandResult<String> {
+    let _gate = state.activity.lock().map_err(|_| "操作锁不可用")?;
+    let games = with_db(&state, |db| db.games())?;
+    let job = state
+        .tasks
+        .begin("duplicates", String::new())
+        .map_err(|e| e.to_string())?;
+    let id = job.id.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            crate::library_duplicates::run(&job, &games)
+        }));
+        job.finish(match result {
+            Ok(result) => result.map(|_| vec![]).map_err(|e| e.to_string()),
+            Err(_) => Err("重复检查异常退出，请重新检查".into()),
+        });
+    });
+    Ok(id)
+}
+#[tauri::command]
+fn duplicate_results(
+    state: State<'_, AppState>,
+    job_id: String,
+) -> CommandResult<Vec<crate::library_duplicates::DuplicatePair>> {
+    state
+        .tasks
+        .get(&job_id)
+        .and_then(|job| job.duplicate_pairs())
+        .map_err(|e| e.to_string())
+}
+#[tauri::command]
+async fn duplicate_game_references(
+    state: State<'_, AppState>,
+    ids: Vec<String>,
+) -> CommandResult<Vec<crate::library_duplicates::GameReference>> {
+    if ids.len() > 200 {
+        return Err("一次最多读取 200 个游戏目录的参考信息".into());
+    }
+    let games = with_db(&state, |db| db.games_by_ids(&ids))?;
+    tauri::async_runtime::spawn_blocking(move || {
+        Ok(crate::library_duplicates::game_references(&games))
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+#[tauri::command]
+fn duplicate_reviews(
+    state: State<'_, AppState>,
+) -> CommandResult<Vec<crate::library_duplicates::DuplicateReview>> {
+    with_db(&state, |db| db.duplicate_reviews())
+}
+#[tauri::command]
+fn set_duplicate_review(
+    state: State<'_, AppState>,
+    left_id: String,
+    right_id: String,
+    status: String,
+) -> CommandResult<()> {
+    with_db(&state, |db| {
+        db.set_duplicate_review(&left_id, &right_id, &status)
+    })
+}
+#[tauri::command]
 fn remove_game(state: State<'_, AppState>, id: String, confirmation: String) -> CommandResult<()> {
     if confirmation != id {
         return Err("请先确认移除这条游戏记录".into());
@@ -1289,6 +1352,11 @@ pub fn run() {
             sync_scan_mtool,
             preview_mtool_launch,
             start_library_check,
+            start_duplicate_check,
+            duplicate_results,
+            duplicate_game_references,
+            duplicate_reviews,
+            set_duplicate_review,
             remove_game,
             preview_game_delete,
             delete_game_files,

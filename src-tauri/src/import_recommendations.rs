@@ -99,6 +99,40 @@ fn external_saves(paths: &[String]) -> HashSet<String> {
         .collect()
 }
 
+fn auxiliary_score(
+    score: &mut u8,
+    reason: &mut String,
+    exe: Option<&str>,
+    saves: &[String],
+    old: &Game,
+) {
+    let (same_exe, same_saves) = auxiliary_evidence(exe, saves, old);
+    if same_exe {
+        *score += 10;
+        reason.push_str(" · 特色启动文件一致");
+    }
+    if same_saves {
+        *score += 12;
+        reason.push_str(" · 游戏外部存档路径一致");
+    }
+    *score = (*score).min(94);
+}
+
+fn auxiliary_evidence(exe: Option<&str>, saves: &[String], old: &Game) -> (bool, bool) {
+    let old_exe = old
+        .mtool_target_exe
+        .as_deref()
+        .or(old.main_executable.as_deref());
+    let same_exe = exe
+        .and_then(distinctive_exe)
+        .zip(old_exe.and_then(distinctive_exe))
+        .is_some_and(|(a, b)| a == b);
+    (
+        same_exe,
+        !external_saves(saves).is_disjoint(&external_saves(&old.save_paths)),
+    )
+}
+
 impl<'a> MatchIndex<'a> {
     pub fn new(games: &'a [Game]) -> Self {
         let mut index = Self {
@@ -142,6 +176,136 @@ impl<'a> MatchIndex<'a> {
             .clone()
     }
 
+    fn distinctive_word(&self, incoming: &Name) -> bool {
+        incoming.words().iter().any(|word| {
+            word.len() >= 6
+                && !["princess", "school", "sister", "adventure"].contains(&word.as_str())
+                && self
+                    .word_frequency
+                    .get(word)
+                    .is_some_and(|count| *count <= 2)
+        })
+    }
+
+    /// Uses the same prepared names, postings and auxiliary metadata as Import, without
+    /// local identity enrichment, the five-result limit, or automatic association.
+    pub fn library_pairs(
+        &self,
+        cancelled: &impl Fn() -> bool,
+        progress: &impl Fn(&str),
+    ) -> crate::domain::Result<Vec<crate::library_duplicates::DuplicatePair>> {
+        let mut pairs = Vec::new();
+        for (left, incoming) in self.games.iter().enumerate() {
+            let positions: HashSet<_> = incoming
+                .names
+                .iter()
+                .flat_map(Name::keys)
+                .filter_map(|key| self.postings.get(&key))
+                .flatten()
+                .copied()
+                .filter(|position| *position > left)
+                .collect();
+            for position in positions {
+                if cancelled() {
+                    return Err(crate::domain::Error::Validation("重复检查已取消".into()));
+                }
+                let old = &self.games[position];
+                let exe = incoming
+                    .game
+                    .mtool_target_exe
+                    .as_deref()
+                    .or(incoming.game.main_executable.as_deref());
+                let (same_exe, same_saves) =
+                    auxiliary_evidence(exe, &incoming.game.save_paths, old.game);
+                let supported = same_exe || same_saves;
+                if incoming.game.id == old.game.id
+                    || incoming
+                        .names
+                        .iter()
+                        .take(2)
+                        .zip(old.names.iter().take(2))
+                        .any(|(a, b)| {
+                            a.library_conflict(b)
+                                && !(supported && a.metadata_proposal(b).is_some())
+                        })
+                {
+                    continue;
+                }
+                let Some((mut score, mut reason)) = incoming
+                    .names
+                    .iter()
+                    .filter(|name| name.useful_library_name())
+                    .flat_map(|name| {
+                        old.names
+                            .iter()
+                            .filter(|other| other.useful_library_name())
+                            .filter_map(move |other| {
+                                name.proposal(other).or_else(|| {
+                                    supported.then(|| name.metadata_proposal(other)).flatten()
+                                })
+                            })
+                    })
+                    .max_by_key(|(score, _)| *score)
+                else {
+                    continue;
+                };
+                if score < 95 {
+                    if incoming
+                        .names
+                        .iter()
+                        .any(|name| self.distinctive_word(name))
+                    {
+                        score += 3;
+                    }
+                    auxiliary_score(
+                        &mut score,
+                        &mut reason,
+                        incoming
+                            .game
+                            .mtool_target_exe
+                            .as_deref()
+                            .or(incoming.game.main_executable.as_deref()),
+                        &incoming.game.save_paths,
+                        old.game,
+                    );
+                }
+                if score < 68 {
+                    continue;
+                }
+                if incoming.game.engine != old.game.engine
+                    && incoming.game.engine != "Unknown"
+                    && old.game.engine != "Unknown"
+                {
+                    score = score.min(94);
+                    reason.push_str(" · 引擎不同，请确认是否为不同作品或移植版本");
+                }
+                if incoming.game.current_version != old.game.current_version {
+                    reason.push_str(" · 记录版本不同");
+                }
+                let (a, b) =
+                    crate::library_duplicates::ordered_pair(&incoming.game.id, &old.game.id)?;
+                pairs.push(crate::library_duplicates::DuplicatePair {
+                    left_id: a.into(),
+                    right_id: b.into(),
+                    score,
+                    confidence: if score >= 95 { "high" } else { "review" }.into(),
+                    reason,
+                });
+            }
+            if cancelled() {
+                return Err(crate::domain::Error::Validation("重复检查已取消".into()));
+            }
+            progress(&incoming.game.id);
+        }
+        pairs.sort_by(|a, b| {
+            b.score
+                .cmp(&a.score)
+                .then_with(|| a.left_id.cmp(&b.left_id))
+                .then_with(|| a.right_id.cmp(&b.right_id))
+        });
+        Ok(pairs)
+    }
+
     pub fn matches(
         &mut self,
         candidate: &ScanCandidate,
@@ -161,46 +325,38 @@ impl<'a> MatchIndex<'a> {
                 return vec![];
             }
             let prepared = &self.games[position];
+            let (same_exe, same_saves) = auxiliary_evidence(
+                candidate_exe(candidate),
+                &candidate.save_paths,
+                prepared.game,
+            );
+            let supported = same_exe || same_saves;
             let Some((mut score, mut reason)) = prepared
                 .names
                 .iter()
-                .filter_map(|name| incoming.proposal(name))
+                .filter_map(|name| {
+                    incoming.proposal(name).or_else(|| {
+                        supported
+                            .then(|| incoming.metadata_proposal(name))
+                            .flatten()
+                    })
+                })
                 .max_by_key(|(score, _)| *score)
             else {
                 continue;
             };
             if score < 95 {
                 // Distinctive words help ranking, but can't establish a match by themselves.
-                if incoming.words().iter().any(|word| {
-                    word.len() >= 6
-                        && !["princess", "school", "sister", "adventure"].contains(&word.as_str())
-                        && self
-                            .word_frequency
-                            .get(word)
-                            .is_some_and(|count| *count <= 2)
-                }) {
+                if self.distinctive_word(&incoming) {
                     score += 3;
                 }
-                let old_exe = prepared
-                    .game
-                    .mtool_target_exe
-                    .as_deref()
-                    .or(prepared.game.main_executable.as_deref());
-                if candidate_exe(candidate)
-                    .and_then(distinctive_exe)
-                    .zip(old_exe.and_then(distinctive_exe))
-                    .is_some_and(|(a, b)| a == b)
-                {
-                    score += 10;
-                    reason.push_str(" · 特色启动文件一致");
-                }
-                if !external_saves(&candidate.save_paths)
-                    .is_disjoint(&external_saves(&prepared.game.save_paths))
-                {
-                    score += 12;
-                    reason.push_str(" · 游戏外部存档路径一致");
-                }
-                score = score.min(94);
+                auxiliary_score(
+                    &mut score,
+                    &mut reason,
+                    candidate_exe(candidate),
+                    &candidate.save_paths,
+                    prepared.game,
+                );
             }
             scores.push((position, score, reason));
         }
@@ -319,6 +475,287 @@ mod tests {
     fn options(root: &Path, contents: &str) {
         fs::create_dir_all(root.join("game")).unwrap();
         fs::write(root.join("game/options.rpy"), contents).unwrap();
+    }
+
+    #[test]
+    fn screenshot_titles_match_in_import_and_library_without_auto_associating() {
+        for (old_title, new_title, executable, save) in [
+            (
+                "爱欲之都 第一季 再启S1 v1.1.4.3 City Light sand Love Bites Season1",
+                "爱欲之都 中场季 - 再启 City Lights Love Bites v1.1.7",
+                "CityLightsandLoveBitesSeason1.exe",
+                "<GAME>/game/saves",
+            ),
+            (
+                "NTR足球 NTRサッカー NTR_Soccer ver1.1.1",
+                "NTR足球 NTRサッカー v1.1.2官中正式版",
+                "NTR_Soccer.exe",
+                "%USERPROFILE%/AppData/LocalLow/Hizure/NTR_Soccer",
+            ),
+        ] {
+            let mut old = game("old", old_title, Path::new("Z:/missing/old"));
+            old.main_executable = Some(executable.into());
+            old.save_paths = vec![save.into()];
+            let mut incoming = game("new", new_title, Path::new("Z:/missing/new"));
+            incoming.main_executable = old.main_executable.clone();
+            incoming.save_paths = old.save_paths.clone();
+            let mut candidate = scanner::pending_candidate(Path::new("Z:/missing/source")).unwrap();
+            candidate.suggested_title = new_title.into();
+            candidate.executables = vec![exe(executable)];
+            candidate.save_paths = old.save_paths.clone();
+            let matches =
+                MatchIndex::new(std::slice::from_ref(&old)).matches(&candidate, &|| false);
+            assert_eq!(matches.len(), 1, "Import: {new_title}");
+            assert!(!matches[0].auto_associate);
+            assert!(matches[0].reason.contains("特色启动文件一致"));
+            let library = [old, incoming];
+            let index = MatchIndex::new(&library);
+            let pairs = index.library_pairs(&|| false, &|_| {}).unwrap();
+            assert_eq!(pairs.len(), 1, "library: {new_title}");
+            assert_eq!(pairs[0].confidence, "review");
+            assert!(index.identities.is_empty());
+        }
+    }
+
+    #[test]
+    fn metadata_fallback_never_overrides_sequels_seasons_dlc_or_unrelated_titles() {
+        for (old_title, new_title) in [
+            (
+                "爱欲之都 第一季 再启 City Lights Love Bites Season1",
+                "爱欲之都 第二季 再启 City Lights Love Bites Season2",
+            ),
+            ("Moonlight Garden Season1", "Moonlight Garden Season 2"),
+            ("Moonlight Garden S1", "Moonlight Garden S2"),
+            ("Moonlight Garden", "Moonlight Garden II"),
+            ("Moonlight Garden", "Moonlight Garden DLC"),
+            ("Moonlight Garden", "Moonlight Garden 外传"),
+            ("NTR足球 NTRサッカー", "NTR篮球 NTRバスケット"),
+            (
+                "爱欲之都 中场季 - 再启 City Lights Love Bites",
+                "无关作品 Moonlight School",
+            ),
+        ] {
+            let mut old = game("old", old_title, Path::new("Z:/missing/old"));
+            old.main_executable = Some("SharedProjectLauncher.exe".into());
+            old.save_paths = vec!["%APPDATA%/SharedProjectSave-123456".into()];
+            let mut incoming = game("new", new_title, Path::new("Z:/missing/new"));
+            incoming.main_executable = old.main_executable.clone();
+            incoming.save_paths = old.save_paths.clone();
+            let mut candidate = scanner::pending_candidate(Path::new("Z:/missing/source")).unwrap();
+            candidate.suggested_title = new_title.into();
+            candidate.executables = vec![exe("SharedProjectLauncher.exe")];
+            candidate.save_paths = old.save_paths.clone();
+            let matches =
+                MatchIndex::new(std::slice::from_ref(&old)).matches(&candidate, &|| false);
+            // Import may still recommend a DLC package as an explicit full update.
+            if !new_title.contains("DLC") {
+                assert!(matches.is_empty(), "Import: {old_title} / {new_title}");
+            } else {
+                assert!(matches.iter().all(|matched| !matched.auto_associate));
+            }
+            assert!(
+                MatchIndex::new(&[old, incoming])
+                    .library_pairs(&|| false, &|_| {})
+                    .unwrap()
+                    .is_empty(),
+                "library: {old_title} / {new_title}"
+            );
+        }
+        let mut old = game(
+            "old",
+            "爱欲之都 第一季 再启S1 v1.1.4.3 City Light sand Love Bites Season1",
+            Path::new("Z:/missing/old"),
+        );
+        old.main_executable = Some("Game.exe".into());
+        let mut candidate = scanner::pending_candidate(Path::new("Z:/missing/source")).unwrap();
+        candidate.suggested_title = "爱欲之都 中场季 - 再启 City Lights Love Bites v1.1.7".into();
+        candidate.executables = vec![exe("Game.exe")];
+        candidate.save_paths = vec!["<GAME>/save".into()];
+        assert!(MatchIndex::new(&[old])
+            .matches(&candidate, &|| false)
+            .is_empty());
+    }
+
+    #[test]
+    fn library_pairs_are_unique_unbounded_and_use_aliases_and_directories_without_file_reads() {
+        let mut games: Vec<_> = (0..7)
+            .map(|n| {
+                game(
+                    &format!("id-{n}"),
+                    "Moonlight Garden v1.0",
+                    Path::new(&format!("Z:/not-present/{n}")),
+                )
+            })
+            .collect();
+        games[1].display_title = "月光庭院".into();
+        games[1].canonical_title = "月光庭院".into();
+        games[1].aliases = vec!["Moonlight Garden v1.2".into()];
+        games[1].current_version = "v1.2".into();
+        let index = MatchIndex::new(&games);
+        let pairs = index.library_pairs(&|| false, &|_| {}).unwrap();
+        assert_eq!(pairs.len(), 21);
+        let unique: HashSet<_> = pairs.iter().map(|p| (&p.left_id, &p.right_id)).collect();
+        assert_eq!(unique.len(), pairs.len());
+        assert!(pairs
+            .iter()
+            .all(|p| p.left_id < p.right_id && p.confidence == "high"));
+        assert!(pairs.iter().any(|p| p.reason.contains("记录版本不同")));
+        assert!(index.identities.is_empty());
+        games.reverse();
+        assert_eq!(
+            MatchIndex::new(&games)
+                .library_pairs(&|| false, &|_| {})
+                .unwrap()
+                .len(),
+            21
+        );
+        let folder_games = [
+            game(
+                "folder-a",
+                "自定义甲",
+                Path::new("Z:/one/Special Garden v1.0"),
+            ),
+            game(
+                "folder-b",
+                "自定义乙",
+                Path::new("Z:/two/Special Garden v1.2"),
+            ),
+        ];
+        assert_eq!(
+            MatchIndex::new(&folder_games)
+                .library_pairs(&|| false, &|_| {})
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn library_multilingual_and_metadata_evidence_remain_recommendations() {
+        for (a, b) in [
+            (
+                "忍者归来 A Ninja's Return v1.08",
+                "A Ninja's Return v1.09 忍者归来 汉化版",
+            ),
+            (
+                "译名甲 佐谷霞已はあなたがいないと生きられない v1.0",
+                "译名乙 佐谷霞已はあなたがいないと生きられない v1.2",
+            ),
+        ] {
+            let games = [
+                game("a", a, Path::new("Z:/unavailable/a")),
+                game("b", b, Path::new("Z:/unavailable/b")),
+            ];
+            let pairs = MatchIndex::new(&games)
+                .library_pairs(&|| false, &|_| {})
+                .unwrap();
+            assert_eq!(pairs.len(), 1, "{a} / {b}");
+            assert_eq!(pairs[0].confidence, "review");
+        }
+        let mut a = game(
+            "a",
+            "DistinctiveTitle 旧译名",
+            Path::new("Z:/unavailable/a"),
+        );
+        let mut b = game(
+            "b",
+            "DistinctiveTitle 新译名",
+            Path::new("Z:/unavailable/b"),
+        );
+        a.main_executable = Some("DistinctiveTitle-32.exe".into());
+        b.mtool_target_exe = Some("DistinctiveTitle-64.exe".into());
+        a.save_paths = vec!["%APPDATA%/RenPy/DistinctiveTitle-123456".into()];
+        b.save_paths = a.save_paths.clone();
+        let games = [a, b];
+        let pairs = MatchIndex::new(&games)
+            .library_pairs(&|| false, &|_| {})
+            .unwrap();
+        assert_eq!(pairs.len(), 1);
+        assert_eq!(pairs[0].confidence, "review");
+        assert!(pairs[0].reason.contains("特色启动文件一致"));
+        assert!(pairs[0].reason.contains("外部存档路径一致"));
+    }
+
+    #[test]
+    fn library_sequels_spinoffs_and_dlc_cannot_bypass_protection_with_shared_aliases() {
+        for title in [
+            "Moonlight Garden 2",
+            "Moonlight Garden II",
+            "Moonlight Garden DLC",
+            "Moonlight Garden 外传",
+            "Moonlight Garden 外伝",
+            "Moonlight Garden 第一章",
+            "Moonlight Garden Side Story",
+            "Moonlight Garden Expansion",
+        ] {
+            let a = game("a", "Moonlight Garden", Path::new("Z:/absent/a"));
+            let mut b = game("b", title, Path::new("Z:/absent/b"));
+            b.aliases.push("Moonlight Garden".into());
+            assert!(
+                MatchIndex::new(&[a, b])
+                    .library_pairs(&|| false, &|_| {})
+                    .unwrap()
+                    .is_empty(),
+                "{title}"
+            );
+        }
+        let mut games = [
+            game("a", "Different Story", Path::new("Z:/absent/a")),
+            game("b", "Another Adventure", Path::new("Z:/absent/b")),
+        ];
+        for game in &mut games {
+            game.aliases.extend(["Game".into(), "汉化版".into()]);
+        }
+        assert!(MatchIndex::new(&games)
+            .library_pairs(&|| false, &|_| {})
+            .unwrap()
+            .is_empty());
+        let mut different_engines = [
+            game("a", "Same Garden", Path::new("Z:/absent/a")),
+            game("b", "Same Garden", Path::new("Z:/absent/b")),
+        ];
+        different_engines[0].engine = "Unity".into();
+        different_engines[1].engine = "Ren'Py".into();
+        let pairs = MatchIndex::new(&different_engines)
+            .library_pairs(&|| false, &|_| {})
+            .unwrap();
+        assert_eq!(pairs[0].confidence, "review");
+        assert!(pairs[0].reason.contains("引擎不同"));
+    }
+
+    #[test]
+    fn library_matching_is_cancellable_and_500_to_2000_game_libraries_are_bounded() {
+        for size in [500, 1000, 2000] {
+            let games: Vec<_> = (0..size)
+                .map(|n| {
+                    game(
+                        &format!("game-{n:04}"),
+                        &format!("Library Story {:04} v1.{}", n / 2, n % 2),
+                        Path::new(&format!("Z:/never-read/game-{n}")),
+                    )
+                })
+                .collect();
+            let start = Instant::now();
+            let index = MatchIndex::new(&games);
+            let pairs = index.library_pairs(&|| false, &|_| {}).unwrap();
+            assert_eq!(pairs.len(), size / 2);
+            assert!(index.identities.is_empty());
+            eprintln!("library {size}: {} ms", start.elapsed().as_millis());
+            assert!(
+                start.elapsed().as_secs() < 10,
+                "metadata-only duplicate check exceeded budget"
+            );
+            let calls = std::cell::Cell::new(0);
+            assert!(index
+                .library_pairs(
+                    &|| {
+                        calls.set(calls.get() + 1);
+                        calls.get() > 8
+                    },
+                    &|_| {}
+                )
+                .is_err());
+        }
     }
 
     #[test]

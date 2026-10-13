@@ -1,4 +1,14 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import {
+  Children,
+  isValidElement,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
+import type { ReactNode } from 'react';
 import { useStableVirtualizer } from './useStableVirtualizer';
 import { api } from './api';
 import { activeJob, useJob } from './useJob';
@@ -25,6 +35,157 @@ import type {
 } from './types';
 
 const leaf = (path: string) => path.replaceAll('\\', '/').split('/').filter(Boolean).at(-1) || '';
+const capsuleTitle = (title: string) => {
+  const characters = Array.from(title);
+  return characters.length > 32 ? characters.slice(0, 32).join('') + '…' : title;
+};
+
+// Keep form controls mounted so folding a card never discards edits.
+function ImportDisclosure({
+  title,
+  attention = false,
+  preview,
+  children,
+}: {
+  title: string;
+  attention?: boolean;
+  preview?: ReactNode;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(attention);
+  const contentId = useId();
+  useEffect(() => {
+    if (attention) setOpen(true);
+  }, [attention]);
+  return (
+    <div className="import-disclosure">
+      {preview}
+      <button
+        className="import-disclosure-toggle"
+        aria-expanded={open}
+        aria-controls={contentId}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <Icon name="next" size={14} />
+        {title === '展开设置' && open ? '收起设置' : title}
+        {attention && <span className="import-attention-dot" aria-hidden="true" />}
+      </button>
+      <div id={contentId} hidden={!open} className="import-disclosure-content">
+        {children}
+      </div>
+    </div>
+  );
+}
+
+type ImportSettingSectionProps = { title: string; attention?: boolean; children: ReactNode };
+function ImportSettingSection({ children }: ImportSettingSectionProps) {
+  return <>{children}</>;
+}
+
+function ImportCardIssues({ issues, linked }: { issues: string[]; linked: boolean }) {
+  const [reservedLines, setReservedLines] = useState(issues.length);
+  useEffect(() => {
+    setReservedLines((current) => Math.max(current, issues.length));
+  }, [issues.length]);
+  if (!reservedLines && !issues.length) return null;
+  return (
+    <div
+      className="import-card-issues"
+      role={issues.length ? 'alert' : 'status'}
+      style={{ minHeight: Math.max(reservedLines, issues.length) * 21 }}
+    >
+      {issues.length ? (
+        issues.map((issue) => (
+          <p key={issue}>
+            <Icon name="info" size={14} />
+            {issue}
+          </p>
+        ))
+      ) : (
+        <p className="muted">
+          <Icon name="check" size={14} />
+          {linked ? '已关联所选游戏。' : '已更新当前选择。'}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function ImportSettings({
+  preview,
+  attention,
+  children,
+}: {
+  preview: ReactNode;
+  attention: boolean;
+  children: ReactNode;
+}) {
+  const sections = Children.toArray(children).filter(isValidElement<ImportSettingSectionProps>);
+  const [active, setActive] = useState(
+    sections.find((section) => section.props.attention)?.props.title || sections[0]?.props.title,
+  );
+  const attentionKey = sections
+    .filter((section) => section.props.attention)
+    .map((section) => section.props.title)
+    .join('|');
+  const id = useId();
+  useEffect(() => {
+    if (attentionKey) setActive(attentionKey.split('|')[0]);
+  }, [attentionKey]);
+  const selected = sections.some((section) => section.props.title === active)
+    ? active
+    : sections[0]?.props.title;
+  return (
+    <ImportDisclosure title="展开设置" preview={preview} attention={attention}>
+      <div className="import-settings-tabs" role="tablist" aria-label="游戏导入设置">
+        {sections.map((section, index) => (
+          <button
+            key={section.props.title}
+            id={`${id}-tab-${index}`}
+            role="tab"
+            aria-selected={section.props.title === selected}
+            aria-controls={`${id}-panel-${index}`}
+            tabIndex={section.props.title === selected ? 0 : -1}
+            onClick={() => setActive(section.props.title)}
+            onKeyDown={(event) => {
+              const next =
+                event.key === 'ArrowRight'
+                  ? (index + 1) % sections.length
+                  : event.key === 'ArrowLeft'
+                    ? (index + sections.length - 1) % sections.length
+                    : event.key === 'Home'
+                      ? 0
+                      : event.key === 'End'
+                        ? sections.length - 1
+                        : null;
+              if (next == null) return;
+              event.preventDefault();
+              setActive(sections[next].props.title);
+              document.getElementById(`${id}-tab-${next}`)?.focus();
+            }}
+          >
+            {section.props.title}
+            {section.props.attention && (
+              <span className="import-attention-dot" aria-hidden="true" />
+            )}
+          </button>
+        ))}
+      </div>
+      {sections.map((section, index) => (
+        <div
+          key={section.props.title}
+          id={`${id}-panel-${index}`}
+          role="tabpanel"
+          aria-labelledby={`${id}-tab-${index}`}
+          hidden={section.props.title !== selected}
+          className="import-settings-panel"
+        >
+          {section.props.children}
+        </div>
+      ))}
+    </ImportDisclosure>
+  );
+}
 
 function ImportProgress({ page }: { page: JobPage | null }) {
   const total = page?.overall_total || 0;
@@ -150,6 +311,19 @@ export function ImportPage({
   const [duplicateSource, setDuplicateSource] = useState<string | null>(null);
   const [matching, setMatching] = useState(false);
   const [plans, setPlans] = useState<ImportPlan[]>([]);
+  const plannedSources = useMemo(
+    () =>
+      new Set(
+        plans
+          .filter((p) => !['completed', 'withdrawn'].includes(p.status))
+          .flatMap((p) => p.items.map((item) => item.selection.source)),
+      ),
+    [plans],
+  );
+  const newCandidates = useMemo(
+    () => candidates.filter((candidate) => !plannedSources.has(candidate.install_path)),
+    [candidates, plannedSources],
+  );
   const [planId, setPlanId] = useState<string | null>(null);
   const [view, setView] = useState<'new' | 'pending' | 'completed'>('new');
   const [notice, setNotice] = useState('');
@@ -220,14 +394,7 @@ export function ImportPage({
         (current) =>
           new Set([
             ...current,
-            ...changes
-              .filter(
-                (c) =>
-                  !choices[c.install_path] &&
-                  c.status === 'ready' &&
-                  (c.qsp ? !!qspConfig(c)?.game_file : c.executables.length),
-              )
-              .map((c) => c.install_path),
+            ...changes.filter((c) => !choices[c.install_path]).map((c) => c.install_path),
           ]),
       );
     },
@@ -251,14 +418,6 @@ export function ImportPage({
                   next[source] = { ...next[source], existing_id: suggestions[0].id };
               return next;
             });
-            setSelected(
-              (current) =>
-                new Set(
-                  [...current].filter(
-                    (source) => !values[source]?.length || choices[source]?.new_override,
-                  ),
-                ),
-            );
           })
           .catch((e) => callbacks.current.onError(String(e)))
           .finally(() => setMatching(false));
@@ -268,10 +427,44 @@ export function ImportPage({
           .then((values) => {
             setPlans(values);
             if (result.kind === 'import_plan' && result.status === 'completed') {
+              const generated = values.find((p) => p.id === result.id);
+              if (generated) {
+                const sources = new Set(generated.items.map((item) => item.selection.source));
+                setSelected(
+                  (current) => new Set([...current].filter((source) => !sources.has(source))),
+                );
+              }
+              setSearch('');
               setPlanId(result.id);
               setView('pending');
             } else if (result.kind === 'import_apply' || result.kind === 'import_rollback') {
               const applied = values.find((p) => p.id === planId);
+              if (result.kind === 'import_apply' && applied) {
+                const completedSources = new Set(
+                  applied.items
+                    .filter((item) => item.state === 'completed')
+                    .map((item) => item.selection.source),
+                );
+                if (completedSources.size) {
+                  setCandidates((current) =>
+                    current.filter((c) => !completedSources.has(c.install_path)),
+                  );
+                  setChoices((current) =>
+                    Object.fromEntries(
+                      Object.entries(current).filter(([source]) => !completedSources.has(source)),
+                    ),
+                  );
+                  setMatches((current) =>
+                    Object.fromEntries(
+                      Object.entries(current).filter(([source]) => !completedSources.has(source)),
+                    ),
+                  );
+                  setSelected(
+                    (current) =>
+                      new Set([...current].filter((source) => !completedSources.has(source))),
+                  );
+                }
+              }
               if (applied?.status === 'completed') setView('completed');
               else if (applied) setView('pending');
               if (
@@ -371,7 +564,7 @@ export function ImportPage({
   }
   async function analyzeSources(sources: string[]) {
     if (!sources.length) return;
-    const all = [...new Set([...candidates.map((c) => c.install_path), ...sources])];
+    const all = [...new Set([...newCandidates.map((c) => c.install_path), ...sources])];
     const id = await api.importAnalyze(all);
     setPlanId(null);
     setView('new');
@@ -417,7 +610,7 @@ export function ImportPage({
   }
   const rows = useMemo(() => {
     const key = search.trim().toLocaleLowerCase();
-    return candidates
+    return newCandidates
       .filter((c) =>
         [
           c.suggested_title,
@@ -435,7 +628,7 @@ export function ImportPage({
           : a.suggested_title.localeCompare(b.suggested_title, 'zh-CN') *
             (sort.endsWith('desc') ? -1 : 1),
       );
-  }, [candidates, choices, search, sort]);
+  }, [newCandidates, choices, search, sort]);
   const visiblePlanItems = useMemo(
     () =>
       plan?.items.filter((item) =>
@@ -457,7 +650,7 @@ export function ImportPage({
     {
       count,
       getScrollElement: () => scroll.current,
-      estimateSize: () => (plan ? 160 : 290),
+      estimateSize: () => 190,
       overscan: 5,
       enabled: virtual && visible,
       getItemKey: itemKey,
@@ -495,9 +688,14 @@ export function ImportPage({
     (selection) =>
       !selection.existing_id && !selection.new_override && !!matches[selection.source]?.length,
   ).length;
+  const missingLaunchFiles = validSelections.filter((selection) =>
+    selection.external_player ? !selection.external_player.game_file : !selection.executable,
+  ).length;
   const planBlockReason = unresolvedMatches
     ? `还有 ${unresolvedMatches} 项需要确认关联，请选择已有游戏或“改为新游戏”。`
-    : '';
+    : missingLaunchFiles
+      ? `还有 ${missingLaunchFiles} 项需要选择启动文件。`
+      : '';
   const canApply =
     !!plan &&
     !['completed', 'withdrawn'].includes(plan.status) &&
@@ -556,48 +754,6 @@ export function ImportPage({
           </BrowseButton>
         </section>
       )}
-      <div className="import-tabs" role="tablist" aria-label="导入分类">
-        {(
-          [
-            ['new', '新的导入', candidates.length],
-            ['pending', '待确认', pendingCount],
-            ['completed', '导入记录', recordCount],
-          ] as const
-        ).map(([key, label, total]) => (
-          <button
-            key={key}
-            id={`import-tab-${key}`}
-            role="tab"
-            tabIndex={view === key ? 0 : -1}
-            aria-selected={view === key}
-            disabled={disabled}
-            aria-controls="import-content"
-            onClick={() => switchView(key)}
-            onKeyDown={(event) => {
-              const keys = ['new', 'pending', 'completed'] as const;
-              const index = keys.indexOf(key);
-              const next =
-                event.key === 'ArrowRight'
-                  ? keys[(index + 1) % 3]
-                  : event.key === 'ArrowLeft'
-                    ? keys[(index + 2) % 3]
-                    : event.key === 'Home'
-                      ? keys[0]
-                      : event.key === 'End'
-                        ? keys[2]
-                        : null;
-              if (next) {
-                event.preventDefault();
-                switchView(next);
-                document.getElementById(`import-tab-${next}`)?.focus();
-              }
-            }}
-          >
-            {label}
-            {total > 0 ? ` (${total})` : ''}
-          </button>
-        ))}
-      </div>
       <div className="library-toolbar import-toolbar">
         <SearchField
           label="导入搜索"
@@ -605,6 +761,48 @@ export function ImportPage({
           value={search}
           onChange={setSearch}
         />
+        <div className="import-tabs" role="tablist" aria-label="导入分类">
+          {(
+            [
+              ['new', '新的导入', newCandidates.length],
+              ['pending', '待确认', pendingCount],
+              ['completed', '导入记录', recordCount],
+            ] as const
+          ).map(([key, label, total]) => (
+            <button
+              key={key}
+              id={`import-tab-${key}`}
+              role="tab"
+              tabIndex={view === key ? 0 : -1}
+              aria-selected={view === key}
+              disabled={disabled}
+              aria-controls="import-content"
+              onClick={() => switchView(key)}
+              onKeyDown={(event) => {
+                const keys = ['new', 'pending', 'completed'] as const;
+                const index = keys.indexOf(key);
+                const next =
+                  event.key === 'ArrowRight'
+                    ? keys[(index + 1) % 3]
+                    : event.key === 'ArrowLeft'
+                      ? keys[(index + 2) % 3]
+                      : event.key === 'Home'
+                        ? keys[0]
+                        : event.key === 'End'
+                          ? keys[2]
+                          : null;
+                if (next) {
+                  event.preventDefault();
+                  switchView(next);
+                  document.getElementById(`import-tab-${next}`)?.focus();
+                }
+              }}
+            >
+              {label}
+              {total > 0 ? ` (${total})` : ''}
+            </button>
+          ))}
+        </div>
         <div
           className={`import-sort-slot${view === 'new' ? '' : ' inactive'}`}
           aria-hidden={view !== 'new'}
@@ -657,7 +855,7 @@ export function ImportPage({
             选择当前搜索结果
           </label>
           <span>
-            已选 {selected.size} / {candidates.length} 项
+            已选 {selected.size} / {newCandidates.length} 项
           </span>
         </div>
       )}
@@ -739,6 +937,72 @@ export function ImportPage({
                       ...recommendations,
                     ]
                   : recommendations;
+              const associationIssue =
+                !item && !!recommendations.length && !choice.existing_id && !choice.new_override;
+              const saveIssue =
+                !item &&
+                !!existing &&
+                !existing.save_paths.length &&
+                choice.preserve_saves !== false;
+              const toolLaunch = !!choice.mtool || !!choice.cleanup_mtool;
+              const bundledLaunch =
+                !!choice.cleanup_mtool &&
+                !!candidate?.bundled_mtool?.some((bundle) => {
+                  const executable = choice.executable.replaceAll('\\', '/').toLocaleLowerCase();
+                  return (
+                    executable.startsWith(bundle.folder.toLocaleLowerCase() + '/') ||
+                    bundle.bats.some((bat) => executable === bat.toLocaleLowerCase())
+                  );
+                });
+              const mtoolIssue =
+                !item &&
+                toolLaunch &&
+                (!settings.mtool_root || !/\.exe$/i.test(choice.executable) || bundledLaunch);
+              const issues = item
+                ? item.blockers
+                : [
+                    ...(associationIssue
+                      ? ['发现可能已有的游戏，请选择关联或明确按新游戏导入。']
+                      : []),
+                    ...(saveIssue
+                      ? ['旧游戏未配置存档位置：请先在游戏详情添加位置，或选择使用新包存档。']
+                      : []),
+                    ...(toolLaunch && !settings.mtool_root
+                      ? ['请先配置公共 MTool，或取消公共 MTool 和随包清理。']
+                      : []),
+                    ...(toolLaunch && !/\.exe$/i.test(choice.executable)
+                      ? ['MTool 需要有效的游戏 EXE，请调整启动文件。']
+                      : []),
+                    ...(bundledLaunch ? ['启动文件位于待清理的工具目录中，请改为游戏 EXE。'] : []),
+                    ...(choice.external_player
+                      ? !choice.external_player.game_file
+                        ? ['请选择 QSP 主游戏文件。']
+                        : []
+                      : !choice.executable
+                        ? ['请手工选择启动文件。']
+                        : []),
+                    ...(!choice.title.trim() ? ['游戏名称不能为空。'] : []),
+                    ...(!choice.target_name.trim() ? ['目标文件夹不能为空。'] : []),
+                  ];
+              const summary = (
+                <div className="import-compact-facts">
+                  <span>
+                    <span className="muted">版本</span> {displayVersion(choice.version)}
+                  </span>
+                  <span>
+                    <span className="muted">引擎</span>{' '}
+                    {choice.engine === 'Unknown' ? '待确认' : choice.engine}
+                  </span>
+                  <span title={choice.executable}>
+                    <span className="muted">{choice.external_player ? '播放器' : '启动文件'}</span>{' '}
+                    {choice.executable || '未配置'}
+                  </span>
+                  <span title={item?.target || choice.target_name}>
+                    <span className="muted">目标文件夹</span>{' '}
+                    {item ? leaf(item.target) : choice.target_name}
+                  </span>
+                </div>
+              );
               return (
                 <div
                   key={source}
@@ -773,7 +1037,7 @@ export function ImportPage({
                           }
                         />
                       )}
-                      <strong>{choice.title}</strong>
+                      <strong title={choice.title}>{choice.title}</strong>
                       <span
                         className={`mode${!item && recommendations.length && !choice.existing_id && !choice.new_override ? ' association-pending' : ''}`}
                       >
@@ -789,476 +1053,556 @@ export function ImportPage({
                               : '新游戏'}
                       </span>
                     </div>
-                    <p className="path">来源：{source}</p>
+                    <p className="path import-source-path" title={source}>
+                      来源：{source}
+                    </p>
+                    <div className="import-choice-summary" aria-label="当前导入配置">
+                      <span
+                        className={
+                          'mode' +
+                          (choice.existing_id ? ' import-linked-game' : '') +
+                          (associationIssue ? ' association-pending' : '')
+                        }
+                        title={existing?.display_title}
+                      >
+                        {choice.existing_id && <Icon name="check" size={14} />}
+                        <span className="import-choice-text">
+                          {choice.existing_id
+                            ? `关联已有游戏：${capsuleTitle(existing?.display_title || choice.existing_id)}`
+                            : associationIssue
+                              ? '关联待确认'
+                              : '按新游戏导入'}
+                        </span>
+                      </span>
+                      <span className="mode">
+                        {existing || item?.update
+                          ? choice.preserve_saves !== false
+                            ? '保留旧存档'
+                            : '使用新包存档'
+                          : '使用随包存档'}
+                      </span>
+                      {!!(candidate?.bundled_mtool?.length || item?.mtool_cleanup) && (
+                        <span className={'mode' + (mtoolIssue ? ' association-pending' : '')}>
+                          {choice.cleanup_mtool ? '随包 MTool：回收清理' : '随包 MTool：保留'}
+                        </span>
+                      )}
+                      {toolLaunch && <span className="mode">公共 MTool 启动</span>}
+                    </div>
+                    <ImportCardIssues issues={issues} linked={!!choice.existing_id} />
+                    {item?.error && (
+                      <p
+                        className={item.state === 'completed' ? 'muted' : 'error'}
+                        role={item.state === 'completed' ? 'status' : 'alert'}
+                      >
+                        {item.error}
+                      </p>
+                    )}
                     {item ? (
-                      <>
-                        <p className="path">目标：{item.target}</p>
-                        <div className="import-selection-bar">
-                          <span>
-                            {item.update
-                              ? `${displayVersion(item.update.old_version)} → ${displayVersion(choice.version)}`
-                              : displayVersion(choice.version)}{' '}
-                            · {item.files} 个文件 · {bytesText(item.bytes)}
-                          </span>
-                          <span>
-                            {item.update
-                              ? '替换已有游戏'
-                              : item.cross_volume
-                                ? '跨盘：复制完成后移除来源'
-                                : '同盘：移动目录'}{' '}
-                            ·{' '}
-                            <LaunchBadge
-                              label={
-                                choice.external_player
-                                  ? 'QSP 播放器'
-                                  : choice.mtool
-                                    ? 'MTool'
-                                    : '直接启动'
-                              }
-                            />
-                          </span>
-                        </div>
-                        <p className="path">
-                          {choice.external_player ? 'QSP 播放器' : '启动文件'}：
-                          {choice.executable || '未配置'}
-                        </p>
-                        {choice.external_player && (
-                          <p className="path">
-                            QSP 主游戏文件：{choice.external_player.game_file || '未选择'} ·
-                            工作目录：游戏根目录
-                          </p>
-                        )}
-                        {choice.existing_id && !item.update && (
-                          <p className="muted">
-                            关联已有游戏：{existing?.display_title || choice.existing_id}
-                          </p>
-                        )}
-                        {item.update && (
-                          <div className="update-save-review">
-                            <strong>
-                              {choice.preserve_saves !== false ? '保留内部旧存档' : '使用新包存档'}
-                            </strong>
-                            <p>
-                              {choice.preserve_saves !== false
-                                ? '覆盖到同一相对位置，外部存档不操作。'
-                                : '不迁移内部旧存档，外部存档不操作。'}
-                            </p>
-                            {item.update.saves.length ? (
-                              item.update.saves.map((save) => (
-                                <p className="path" key={save.source}>
-                                  {save.configured}
-                                  {!save.present ? ' · 不存在，跳过' : ''}
-                                </p>
-                              ))
-                            ) : (
-                              <p className="muted">未配置内部存档。</p>
-                            )}
-                            <p className="muted">
-                              旧版移入回收站，清空后无法回退。额外空间约{' '}
-                              {bytesText(item.update.required_bytes)}。
-                            </p>
-                            {item.state === 'completed' && item.update.rollback_available && (
-                              <button
-                                className="warning"
-                                disabled={
-                                  disabled ||
-                                  !!recoveryIssues.length ||
-                                  !existing ||
-                                  existing.current_version !== choice.version
-                                }
-                                onClick={() => {
-                                  setRollbackIndex(plan!.items.indexOf(item));
-                                  setConfirmation('rollback');
-                                }}
-                              >
-                                回退旧版本
-                              </button>
-                            )}
-                            {item.state === 'completed' && !item.update.rollback_available && (
-                              <p className="muted">旧版本不在回收站，无法回退。</p>
-                            )}
-                          </div>
-                        )}
-                        {item.blockers.map((b) => (
-                          <p className="notice" key={b}>
-                            {b}
-                          </p>
-                        ))}
-                        {item.error && (
-                          <p
-                            className={item.state === 'completed' ? 'muted' : 'error'}
-                            role={item.state === 'completed' ? 'status' : 'alert'}
-                          >
-                            {item.error}
-                          </p>
-                        )}
-                        <MtoolCleanupStatus item={item} />
-                      </>
-                    ) : (
-                      <>
-                        <div className="form-grid import-edit-grid">
-                          <label>
-                            游戏名称
-                            <input
-                              value={choice.title}
-                              disabled={disabled}
-                              onChange={(e) => update(source, { title: e.target.value })}
-                            />
-                          </label>
-                          <label>
-                            目标文件夹
-                            <input
-                              value={choice.target_name}
-                              disabled={disabled}
-                              onChange={(e) => update(source, { target_name: e.target.value })}
-                            />
-                          </label>
-                          <label>
-                            版本
-                            <input
-                              value={choice.version === 'Unknown' ? '' : choice.version}
-                              placeholder="-"
-                              disabled={disabled}
-                              onChange={(e) => update(source, { version: e.target.value })}
-                            />
-                          </label>
-                          <label>
-                            引擎
-                            <EngineSelect
-                              label="引擎"
-                              value={choice.engine}
-                              disabled={disabled}
-                              onChange={(engine) =>
-                                update(
-                                  source,
-                                  engine === 'QSP'
-                                    ? {
-                                        engine: 'QSP',
-                                        mtool: false,
-                                        external_player:
-                                          choice.external_player ??
-                                          (candidate ? qspConfig(candidate) : null) ??
-                                          localQsp(),
-                                        executable: choice.external_player
-                                          ? choice.executable
-                                          : (candidate ? suggestedPlayer(candidate) : null) || '',
-                                      }
-                                    : { engine, external_player: null },
-                                )
-                              }
-                            />
-                          </label>
-                        </div>
-                        {choice.external_player ? (
-                          <QspConfiguration
-                            root={source}
-                            player={choice.executable || null}
-                            config={choice.external_player}
-                            detection={candidate?.qsp}
-                            disabled={disabled}
-                            onChange={(player, config) =>
-                              update(source, {
-                                executable: player || '',
-                                external_player: config,
-                                mtool: false,
-                              })
-                            }
-                            onError={onError}
-                          />
-                        ) : (
-                          <div className="import-launch-row">
-                            <span className="path">
-                              启动文件：{choice.executable || '请手工选择'}
+                      <ImportSettings attention={!!issues.length || !!item.error} preview={summary}>
+                        <ImportSettingSection title="基本信息">
+                          <p className="path">目标：{item.target}</p>
+                          <div className="import-selection-bar">
+                            <span>
+                              {item.update
+                                ? `${displayVersion(item.update.old_version)} → ${displayVersion(choice.version)}`
+                                : displayVersion(choice.version)}{' '}
+                              · {item.files} 个文件 · {bytesText(item.bytes)}
                             </span>
-                            <BrowseButton
-                              disabled={disabled}
-                              onClick={() =>
-                                void action(async () => {
-                                  const file = await api.chooseLaunchFile(source);
-                                  if (file)
-                                    update(
-                                      source,
-                                      isQspFile(file)
-                                        ? {
-                                            engine: 'QSP',
-                                            executable: candidate?.qsp?.recommended_player || '',
-                                            external_player: localQsp(file),
-                                            mtool: false,
-                                          }
-                                        : { executable: file },
-                                    );
-                                })
-                              }
-                            >
-                              更改启动文件
-                            </BrowseButton>
-                            <label>
-                              <input
-                                type="checkbox"
-                                checked={!!choice.cleanup_mtool || choice.mtool}
-                                disabled={disabled || !!choice.cleanup_mtool}
-                                onChange={(e) => update(source, { mtool: e.target.checked })}
+                            <span>
+                              {item.update
+                                ? '替换已有游戏'
+                                : item.cross_volume
+                                  ? '跨盘：复制完成后移除来源'
+                                  : '同盘：移动目录'}{' '}
+                              ·{' '}
+                              <LaunchBadge
+                                label={
+                                  choice.external_player
+                                    ? 'QSP 播放器'
+                                    : choice.mtool
+                                      ? 'MTool'
+                                      : '直接启动'
+                                }
                               />
-                              公共 MTool
+                            </span>
+                          </div>
+                          <p className="path">
+                            {choice.external_player ? 'QSP 播放器' : '启动文件'}：
+                            {choice.executable || '未配置'}
+                          </p>
+                          {choice.external_player && (
+                            <p className="path">
+                              QSP 主游戏文件：{choice.external_player.game_file || '未选择'} ·
+                              工作目录：游戏根目录
+                            </p>
+                          )}
+                          {choice.existing_id && !item.update && (
+                            <p className="muted">
+                              关联已有游戏：{existing?.display_title || choice.existing_id}
+                            </p>
+                          )}
+                        </ImportSettingSection>
+                        {item.update && (
+                          <ImportSettingSection title="存档处理">
+                            <div className="update-save-review">
+                              <p>
+                                {choice.preserve_saves !== false
+                                  ? '覆盖到同一相对位置，外部存档不操作。'
+                                  : '不迁移内部旧存档，外部存档不操作。'}
+                              </p>
+                              {item.update.saves.length ? (
+                                item.update.saves.map((save) => (
+                                  <p className="path" key={save.source}>
+                                    {save.configured}
+                                    {!save.present ? ' · 不存在，跳过' : ''}
+                                  </p>
+                                ))
+                              ) : (
+                                <p className="muted">未配置内部存档。</p>
+                              )}
+                              <p className="muted">
+                                旧版移入回收站，清空后无法回退。额外空间约{' '}
+                                {bytesText(item.update.required_bytes)}。
+                              </p>
+                              {item.state === 'completed' && item.update.rollback_available && (
+                                <button
+                                  className="warning"
+                                  disabled={
+                                    disabled ||
+                                    !!recoveryIssues.length ||
+                                    !existing ||
+                                    existing.current_version !== choice.version
+                                  }
+                                  onClick={() => {
+                                    setRollbackIndex(plan!.items.indexOf(item));
+                                    setConfirmation('rollback');
+                                  }}
+                                >
+                                  回退旧版本
+                                </button>
+                              )}
+                              {item.state === 'completed' && !item.update.rollback_available && (
+                                <p className="muted">旧版本不在回收站，无法回退。</p>
+                              )}
+                            </div>
+                          </ImportSettingSection>
+                        )}
+                        {item.mtool_cleanup && (
+                          <ImportSettingSection
+                            title="随包 MTool"
+                            attention={item.mtool_cleanup.targets.some(
+                              (target) => target.state === 'failed',
+                            )}
+                          >
+                            <MtoolCleanupStatus item={item} />
+                          </ImportSettingSection>
+                        )}
+                      </ImportSettings>
+                    ) : (
+                      <ImportSettings attention={!!issues.length} preview={summary}>
+                        <ImportSettingSection
+                          title="基本信息"
+                          attention={!choice.title.trim() || !choice.target_name.trim()}
+                        >
+                          <div className="form-grid import-edit-grid">
+                            <label>
+                              游戏名称
+                              <input
+                                value={choice.title}
+                                disabled={disabled}
+                                onChange={(e) => update(source, { title: e.target.value })}
+                              />
+                            </label>
+                            <label>
+                              目标文件夹
+                              <input
+                                value={choice.target_name}
+                                disabled={disabled}
+                                onChange={(e) => update(source, { target_name: e.target.value })}
+                              />
+                            </label>
+                            <label>
+                              版本
+                              <input
+                                value={choice.version === 'Unknown' ? '' : choice.version}
+                                placeholder="-"
+                                disabled={disabled}
+                                onChange={(e) => update(source, { version: e.target.value })}
+                              />
+                            </label>
+                            <label>
+                              引擎
+                              <EngineSelect
+                                label="引擎"
+                                value={choice.engine}
+                                disabled={disabled}
+                                onChange={(engine) =>
+                                  update(
+                                    source,
+                                    engine === 'QSP'
+                                      ? {
+                                          engine: 'QSP',
+                                          mtool: false,
+                                          external_player:
+                                            choice.external_player ??
+                                            (candidate ? qspConfig(candidate) : null) ??
+                                            localQsp(),
+                                          executable: choice.external_player
+                                            ? choice.executable
+                                            : (candidate ? suggestedPlayer(candidate) : null) || '',
+                                        }
+                                      : { engine, external_player: null },
+                                  )
+                                }
+                              />
                             </label>
                           </div>
-                        )}
-                        {existing && (
-                          <details className="full">
-                            <summary>更新启动配置</summary>
-                            <p className="muted">
-                              默认继承旧配置；新版目录或游戏位数改变时，可在此调整。
-                            </p>
-                            <div className="form-grid">
+                          <div className="import-row-meta">
+                            <span className="muted">
+                              修改时间：
+                              {formatTime(
+                                candidate?.directory_modified_ms
+                                  ? new Date(candidate.directory_modified_ms).toISOString()
+                                  : null,
+                              )}
+                            </span>
+                          </div>
+                          {!!candidate?.warnings.length && (
+                            <details className="analysis">
+                              <summary>分析说明</summary>
+                              {candidate.warnings.map((warning) => (
+                                <p key={warning}>{warning}</p>
+                              ))}
+                            </details>
+                          )}
+                        </ImportSettingSection>
+                        <ImportSettingSection
+                          title="启动配置"
+                          attention={
+                            mtoolIssue ||
+                            (choice.external_player
+                              ? !choice.external_player.game_file
+                              : !choice.executable)
+                          }
+                        >
+                          {choice.external_player ? (
+                            <QspConfiguration
+                              root={source}
+                              player={choice.executable || null}
+                              config={choice.external_player}
+                              detection={candidate?.qsp}
+                              disabled={disabled}
+                              onChange={(player, config) =>
+                                update(source, {
+                                  executable: player || '',
+                                  external_player: config,
+                                  mtool: false,
+                                })
+                              }
+                              onError={onError}
+                            />
+                          ) : (
+                            <div className="import-launch-row">
+                              <div className="import-launch-file">
+                                <strong>启动文件</strong>
+                                <span className="path" title={choice.executable}>
+                                  {choice.executable || '请手工选择'}
+                                </span>
+                              </div>
+                              <BrowseButton
+                                disabled={disabled}
+                                onClick={() =>
+                                  void action(async () => {
+                                    const file = await api.chooseLaunchFile(source);
+                                    if (file)
+                                      update(
+                                        source,
+                                        isQspFile(file)
+                                          ? {
+                                              engine: 'QSP',
+                                              executable: candidate?.qsp?.recommended_player || '',
+                                              external_player: localQsp(file),
+                                              mtool: false,
+                                            }
+                                          : { executable: file },
+                                      );
+                                  })
+                                }
+                              >
+                                更改启动文件
+                              </BrowseButton>
                               <label>
-                                工作目录（相对新版游戏目录）
                                 <input
-                                  value={choice.working_directory ?? existing.working_directory}
-                                  disabled={disabled}
-                                  onChange={(e) =>
-                                    update(source, { working_directory: e.target.value })
-                                  }
+                                  type="checkbox"
+                                  checked={!!choice.cleanup_mtool || choice.mtool}
+                                  disabled={disabled || !!choice.cleanup_mtool}
+                                  onChange={(e) => update(source, { mtool: e.target.checked })}
                                 />
+                                公共 MTool
                               </label>
-                              {choice.mtool && (
+                            </div>
+                          )}
+                          {existing && (
+                            <details className="import-launch-update" open>
+                              <summary>更新启动配置</summary>
+                              <p className="muted">
+                                默认继承旧配置；新版目录或游戏位数改变时，可在此调整。
+                              </p>
+                              <div className="form-grid">
                                 <label>
-                                  MTool loader（相对公共 MTool 目录）
+                                  工作目录（相对新版游戏目录）
                                   <input
-                                    value={choice.mtool_loader ?? existing.mtool_loader ?? ''}
-                                    placeholder="自动识别；留空可改为自动"
+                                    value={choice.working_directory ?? existing.working_directory}
                                     disabled={disabled}
                                     onChange={(e) =>
-                                      update(source, { mtool_loader: e.target.value })
+                                      update(source, { working_directory: e.target.value })
                                     }
                                   />
                                 </label>
-                              )}
-                            </div>
-                            <button
-                              disabled={disabled}
-                              onClick={() =>
-                                update(source, {
-                                  working_directory: undefined,
-                                  mtool_loader: undefined,
-                                })
-                              }
-                            >
-                              恢复继承旧配置
-                            </button>
-                          </details>
-                        )}
-                        {!!candidate?.save_paths?.length && (
-                          <p className="detected-saves">
-                            识别存档：
-                            {candidate.save_paths
-                              .map((path) => path.replace('<GAME>/', ''))
-                              .join('、')}
-                          </p>
-                        )}
-                        <div
-                          className={
-                            associations.length
-                              ? `import-match-recommendations${choice.existing_id ? ' associated' : choice.new_override ? ' overridden' : ' needs-confirmation'}`
-                              : undefined
-                          }
-                        >
-                          {!!associations.length && (
-                            <>
-                              <div className="import-match-heading">
-                                <Icon name={choice.existing_id ? 'check' : 'info'} size={16} />
-                                <strong>
-                                  {choice.existing_id
-                                    ? '已关联库中游戏'
-                                    : choice.new_override
-                                      ? '已有游戏推荐 · 当前按新游戏导入'
-                                      : '发现可能已有的游戏，请确认关联'}
-                                </strong>
+                                {choice.mtool && (
+                                  <label>
+                                    MTool loader（相对公共 MTool 目录）
+                                    <input
+                                      value={choice.mtool_loader ?? existing.mtool_loader ?? ''}
+                                      placeholder="自动识别；留空可改为自动"
+                                      disabled={disabled}
+                                      onChange={(e) =>
+                                        update(source, { mtool_loader: e.target.value })
+                                      }
+                                    />
+                                  </label>
+                                )}
                               </div>
-                              {associations.map((match) => (
-                                <div className="import-match-option" key={match.id}>
-                                  <button
-                                    className={
-                                      choice.existing_id === match.id
-                                        ? 'import-match-selected'
-                                        : 'primary'
-                                    }
-                                    disabled={disabled || choice.existing_id === match.id}
-                                    onClick={() =>
-                                      update(source, {
-                                        existing_id: match.id,
-                                        new_override: false,
-                                        saves_confirmed: false,
-                                        preserve_saves: true,
-                                      })
-                                    }
-                                  >
-                                    {choice.existing_id === match.id ? '已关联：' : '关联：'}
-                                    {match.title}
-                                  </button>
-                                  <div className="import-match-explanation">
-                                    <span className="import-match-kind">
-                                      {choice.existing_id === match.id
-                                        ? '关联理由'
-                                        : match.auto_associate === false
-                                          ? '弱关联'
-                                          : '名称匹配'}
-                                    </span>
-                                    <span>{match.reason}</span>
-                                  </div>
-                                </div>
-                              ))}
-                            </>
-                          )}
-                          <div className="import-association-actions">
-                            {(choice.existing_id ||
-                              (!!recommendations.length && !choice.new_override)) && (
                               <button
                                 disabled={disabled}
                                 onClick={() =>
                                   update(source, {
-                                    existing_id: null,
-                                    new_override: true,
-                                    saves_confirmed: false,
+                                    working_directory: undefined,
+                                    mtool_loader: undefined,
                                   })
                                 }
                               >
-                                改为新游戏
+                                恢复继承旧配置
                               </button>
+                            </details>
+                          )}
+                          {!!candidate?.save_paths?.length && (
+                            <p className="detected-saves">
+                              识别存档：
+                              {candidate.save_paths
+                                .map((path) => path.replace('<GAME>/', ''))
+                                .join('、')}
+                            </p>
+                          )}
+                        </ImportSettingSection>
+                        <ImportSettingSection
+                          title="游戏关联"
+                          attention={associationIssue || saveIssue}
+                        >
+                          <div
+                            className={
+                              associations.length
+                                ? `import-match-recommendations${choice.existing_id ? ' associated' : choice.new_override ? ' overridden' : ' needs-confirmation'}`
+                                : undefined
+                            }
+                          >
+                            {!!associations.length && (
+                              <>
+                                <div className="import-match-heading">
+                                  <Icon name={choice.existing_id ? 'check' : 'info'} size={16} />
+                                  <strong>
+                                    {choice.existing_id
+                                      ? '已关联库中游戏'
+                                      : choice.new_override
+                                        ? '已有游戏推荐 · 当前按新游戏导入'
+                                        : '发现可能已有的游戏，请确认关联'}
+                                  </strong>
+                                </div>
+                                {associations.map((match) => (
+                                  <div className="import-match-option" key={match.id}>
+                                    <button
+                                      aria-label={
+                                        (choice.existing_id === match.id ? '已关联：' : '关联：') +
+                                        match.title
+                                      }
+                                      className={
+                                        choice.existing_id === match.id
+                                          ? 'import-match-selected'
+                                          : 'import-match-candidate'
+                                      }
+                                      disabled={disabled || choice.existing_id === match.id}
+                                      onClick={() =>
+                                        update(source, {
+                                          existing_id: match.id,
+                                          new_override: false,
+                                          saves_confirmed: false,
+                                          preserve_saves: true,
+                                        })
+                                      }
+                                    >
+                                      <span
+                                        className="import-association-title"
+                                        title={match.title}
+                                      >
+                                        {choice.existing_id === match.id ? '已关联：' : '关联：'}
+                                        {match.title}
+                                      </span>
+                                    </button>
+                                    <div className="import-match-explanation">
+                                      <span className="import-match-kind">
+                                        {choice.existing_id === match.id
+                                          ? '关联理由'
+                                          : match.auto_associate === false
+                                            ? '弱关联'
+                                            : '名称匹配'}
+                                      </span>
+                                      <span>{match.reason}</span>
+                                    </div>
+                                  </div>
+                                ))}
+                              </>
                             )}
-                            <button
-                              disabled={disabled || !games.length}
-                              onClick={() => {
-                                setLinkSource(source);
-                                setLinkSearch('');
-                              }}
-                            >
-                              关联已有游戏…
-                            </button>
-                            {existing &&
-                              sameImportVersion(choice.version, existing.current_version) && (
+                            <div className="import-association-actions">
+                              {(choice.existing_id ||
+                                (!!recommendations.length && !choice.new_override)) && (
                                 <button
-                                  className="danger"
-                                  disabled={disabled || !scanId || !!recoveryIssues.length}
-                                  onClick={() => setDuplicateSource(source)}
-                                >
-                                  删除导入副本…
-                                </button>
-                              )}
-                          </div>
-                        </div>
-                        {existing && (
-                          <div className="update-save-review">
-                            <strong>存档处理</strong>
-                            <p>
-                              {displayVersion(existing.current_version)} →{' '}
-                              {displayVersion(choice.version)} · {existing.install_path}
-                            </p>
-                            {existing.save_paths.length ? (
-                              existing.save_paths.map((path) => (
-                                <p className="path" key={path}>
-                                  {path}
-                                </p>
-                              ))
-                            ) : (
-                              <p>未配置存档位置。需要保留存档时，请先在游戏详情中添加位置。</p>
-                            )}
-                            <div
-                              className="import-save-options"
-                              role="radiogroup"
-                              aria-label="存档处理"
-                            >
-                              <label className={choice.preserve_saves !== false ? 'selected' : ''}>
-                                <input
-                                  type="radio"
-                                  name={`save-treatment-${source}`}
-                                  checked={choice.preserve_saves !== false}
                                   disabled={disabled}
-                                  onChange={() => update(source, { preserve_saves: true })}
-                                />
-                                保留旧存档
-                                <span className="muted">推荐</span>
-                              </label>
-                              <label className={choice.preserve_saves === false ? 'selected' : ''}>
-                                <input
-                                  type="radio"
-                                  name={`save-treatment-${source}`}
-                                  checked={choice.preserve_saves === false}
-                                  disabled={disabled}
-                                  onChange={() => update(source, { preserve_saves: false })}
-                                />
-                                使用新包存档
-                              </label>
-                            </div>
-                            <p>
-                              {choice.preserve_saves !== false
-                                ? '内部旧存档覆盖到新版相同位置；外部存档不操作。'
-                                : '不迁移内部旧存档，使用新包存档；外部存档不操作。'}
-                            </p>
-                            <p className="muted">旧版移入回收站，清空后无法回退。</p>
-                          </div>
-                        )}
-                        {!!candidate?.bundled_mtool?.length && (
-                          <div className="import-mtool-review">
-                            <strong>
-                              <Icon name="tool" size={16} /> 随包 MTool
-                            </strong>
-                            {candidate.bundled_mtool.map((bundle) => (
-                              <div key={bundle.folder}>
-                                <span className="path">
-                                  {bundle.folder}/
-                                  {bundle.bats.length ? ` · ${bundle.bats.join('、')}` : ''}
-                                </span>
-                                {!bundle.safe && <p className="muted">{bundle.reason}</p>}
-                              </div>
-                            ))}
-                            {candidate.bundled_mtool.some((bundle) => bundle.safe) && (
-                              <label>
-                                <input
-                                  type="checkbox"
-                                  checked={!!choice.cleanup_mtool}
-                                  disabled={disabled}
-                                  onChange={(event) =>
+                                  onClick={() =>
                                     update(source, {
-                                      cleanup_mtool: event.target.checked,
-                                      ...(event.target.checked
-                                        ? { mtool: true, external_player: null }
-                                        : {}),
+                                      existing_id: null,
+                                      new_override: true,
+                                      saves_confirmed: false,
                                     })
                                   }
-                                />
-                                导入成功后清理随包 MTool
-                              </label>
-                            )}
-                            <p className="muted">
-                              回收整个已确认的一级工具目录（包含工具自己的记录和备份）及关联
-                              BAT。勾选后使用公共 MTool 启动，请确认游戏 EXE 与公共工具配置。
-                            </p>
-                            {!!choice.cleanup_mtool && !settings.mtool_root && (
-                              <p className="notice">
-                                请先在 MTool 设置中配置公共工具，或取消清理。
-                              </p>
-                            )}
+                                >
+                                  改为新游戏
+                                </button>
+                              )}
+                              <button
+                                disabled={disabled || !games.length}
+                                onClick={() => {
+                                  setLinkSource(source);
+                                  setLinkSearch('');
+                                }}
+                              >
+                                关联已有游戏…
+                              </button>
+                              {existing &&
+                                sameImportVersion(choice.version, existing.current_version) && (
+                                  <button
+                                    className="danger"
+                                    disabled={disabled || !scanId || !!recoveryIssues.length}
+                                    onClick={() => setDuplicateSource(source)}
+                                  >
+                                    删除导入副本…
+                                  </button>
+                                )}
+                            </div>
                           </div>
+                          {existing && (
+                            <section
+                              className="import-associated-saves"
+                              aria-label="关联游戏存档处理"
+                            >
+                              <strong>存档处理</strong>
+                              <div className="update-save-review">
+                                <p>
+                                  {displayVersion(existing.current_version)} →{' '}
+                                  {displayVersion(choice.version)} · {existing.install_path}
+                                </p>
+                                {existing.save_paths.length ? (
+                                  existing.save_paths.map((path) => (
+                                    <p className="path" key={path}>
+                                      {path}
+                                    </p>
+                                  ))
+                                ) : (
+                                  <p>未配置存档位置。需要保留存档时，请先在游戏详情中添加位置。</p>
+                                )}
+                                <div
+                                  className="import-save-options"
+                                  role="radiogroup"
+                                  aria-label="存档处理"
+                                >
+                                  <label
+                                    className={choice.preserve_saves !== false ? 'selected' : ''}
+                                  >
+                                    <input
+                                      type="radio"
+                                      name={`save-treatment-${source}`}
+                                      checked={choice.preserve_saves !== false}
+                                      disabled={disabled}
+                                      onChange={() => update(source, { preserve_saves: true })}
+                                    />
+                                    保留旧存档
+                                    <span className="muted">推荐</span>
+                                  </label>
+                                  <label
+                                    className={choice.preserve_saves === false ? 'selected' : ''}
+                                  >
+                                    <input
+                                      type="radio"
+                                      name={`save-treatment-${source}`}
+                                      checked={choice.preserve_saves === false}
+                                      disabled={disabled}
+                                      onChange={() => update(source, { preserve_saves: false })}
+                                    />
+                                    使用新包存档
+                                  </label>
+                                </div>
+                                <p>
+                                  {choice.preserve_saves !== false
+                                    ? '内部旧存档覆盖到新版相同位置；外部存档不操作。'
+                                    : '不迁移内部旧存档，使用新包存档；外部存档不操作。'}
+                                </p>
+                                <p className="muted">旧版移入回收站，清空后无法回退。</p>
+                              </div>
+                            </section>
+                          )}
+                        </ImportSettingSection>
+                        {!!candidate?.bundled_mtool?.length && (
+                          <ImportSettingSection title="随包 MTool" attention={mtoolIssue}>
+                            <div className="import-mtool-review">
+                              {candidate.bundled_mtool.map((bundle) => (
+                                <div key={bundle.folder}>
+                                  <span className="path">
+                                    {bundle.folder}/
+                                    {bundle.bats.length ? ` · ${bundle.bats.join('、')}` : ''}
+                                  </span>
+                                  {!bundle.safe && <p className="muted">{bundle.reason}</p>}
+                                </div>
+                              ))}
+                              {candidate.bundled_mtool.some((bundle) => bundle.safe) && (
+                                <label>
+                                  <input
+                                    type="checkbox"
+                                    checked={!!choice.cleanup_mtool}
+                                    disabled={disabled}
+                                    onChange={(event) =>
+                                      update(source, {
+                                        cleanup_mtool: event.target.checked,
+                                        ...(event.target.checked
+                                          ? { mtool: true, external_player: null }
+                                          : {}),
+                                      })
+                                    }
+                                  />
+                                  导入成功后清理随包 MTool
+                                </label>
+                              )}
+                              <p className="muted">
+                                回收整个已确认的一级工具目录（包含工具自己的记录和备份）及关联
+                                BAT。勾选后使用公共 MTool 启动，请确认游戏 EXE 与公共工具配置。
+                              </p>
+                              {!!choice.cleanup_mtool && !settings.mtool_root && (
+                                <p className="notice">
+                                  请先在 MTool 设置中配置公共工具，或取消清理。
+                                </p>
+                              )}
+                            </div>
+                          </ImportSettingSection>
                         )}
-                        <div className="import-row-meta">
-                          <span className="muted">
-                            修改时间：
-                            {formatTime(
-                              candidate?.directory_modified_ms
-                                ? new Date(candidate.directory_modified_ms).toISOString()
-                                : null,
-                            )}
-                          </span>
-                        </div>
-                        {!!candidate?.warnings.length && (
-                          <details className="analysis">
-                            <summary>分析说明</summary>
-                            {candidate.warnings.map((warning) => (
-                              <p key={warning}>{warning}</p>
-                            ))}
-                          </details>
-                        )}
-                      </>
+                      </ImportSettings>
                     )}
                   </article>
                 </div>
@@ -1318,9 +1662,23 @@ export function ImportPage({
                   onClick={() =>
                     void action(async () => {
                       await api.discardImportPlan(plan.id);
+                      const sources = new Set(plan.items.map((item) => item.selection.source));
+                      const missing = plan.items.filter(
+                        (item) => !candidates.some((c) => c.install_path === item.selection.source),
+                      );
+                      setChoices((current) => ({
+                        ...Object.fromEntries(
+                          plan.items.map((item) => [item.selection.source, item.selection]),
+                        ),
+                        ...current,
+                      }));
+                      setSelected((current) => new Set([...current, ...sources]));
                       setPlans((current) => current.filter((p) => p.id !== plan.id));
                       setPlanId(null);
+                      setSearch('');
                       setView('new');
+                      if (missing.length)
+                        await analyzeSources(missing.map((item) => item.selection.source));
                     })
                   }
                 >
@@ -1362,7 +1720,7 @@ export function ImportPage({
           ) : view === 'new' ? (
             <>
               <button
-                disabled={disabled || !candidates.length}
+                disabled={disabled || !newCandidates.length}
                 onClick={() => setConfirmation('clear')}
               >
                 清空分析结果

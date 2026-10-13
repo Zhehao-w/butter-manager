@@ -52,6 +52,7 @@ struct Data {
     error: Option<String>,
     registered_ids: Vec<String>,
     path_checks: Vec<LibraryPathCheck>,
+    duplicate_pairs: Vec<crate::library_duplicates::DuplicatePair>,
     finished_ms: Option<u64>,
     last_progress: Instant,
     bytes_done: u64,
@@ -104,6 +105,7 @@ impl Job {
                 error: None,
                 registered_ids: vec![],
                 path_checks: vec![],
+                duplicate_pairs: vec![],
                 finished_ms: None,
                 last_progress: Instant::now(),
                 bytes_done: 0,
@@ -128,6 +130,19 @@ impl Job {
             self.data.lock().unwrap().status.as_str(),
             "running" | "cancel_requested"
         )
+    }
+    pub fn publish_duplicates(&self, pairs: Vec<crate::library_duplicates::DuplicatePair>) {
+        self.data.lock().unwrap().duplicate_pairs = pairs;
+    }
+    pub fn duplicate_pairs(&self) -> Result<Vec<crate::library_duplicates::DuplicatePair>> {
+        if self.kind != "duplicates" || self.is_active() {
+            return Err(Error::Validation("重复检查尚未完成或任务类型不符".into()));
+        }
+        let data = self.data.lock().unwrap();
+        if data.status != "completed" {
+            return Err(Error::Validation("重复检查未完成，请重新检查".into()));
+        }
+        Ok(data.duplicate_pairs.clone())
     }
     pub fn stop(&self) -> bool {
         self.cancelled.load(Ordering::Acquire)

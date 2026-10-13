@@ -158,6 +158,11 @@ fn translation_package_label(token: &str) -> bool {
         "无码补丁",
         "解码版",
         "解码补丁",
+        "官中",
+        "官中版",
+        "官中正式版",
+        "官方中文版",
+        "官方中文正式版",
     ]
     .contains(&token)
 }
@@ -202,10 +207,45 @@ fn edition_markers(title: &str) -> Vec<String> {
                 .get(end)
                 .is_some_and(|c| "部章作季集篇巻卷".contains(*c))
         {
-            markers.push(characters[start..=end].iter().collect());
+            let number: String = characters[start + 1..end].iter().collect();
+            if characters[end] == '季' {
+                let number = match number.as_str() {
+                    "一" => "1",
+                    "二" => "2",
+                    "三" => "3",
+                    "四" => "4",
+                    "五" => "5",
+                    "六" => "6",
+                    "七" => "7",
+                    "八" => "8",
+                    "九" => "9",
+                    "十" => "10",
+                    other => other,
+                };
+                markers.push(format!("season:{number}"));
+            } else {
+                markers.push(characters[start..=end].iter().collect());
+            }
+        }
+    }
+    let tokens = tokenize(title);
+    for (index, token) in tokens.iter().enumerate() {
+        let number = token
+            .strip_prefix("season")
+            .or_else(|| token.strip_prefix('s'));
+        let number = if token == "season" {
+            tokens.get(index + 1).map(String::as_str)
+        } else {
+            number
+        };
+        if let Some(number) =
+            number.filter(|number| !number.is_empty() && number.chars().all(|c| c.is_ascii_digit()))
+        {
+            markers.push(format!("season:{number}"));
         }
     }
     markers.sort();
+    markers.dedup();
     markers
 }
 
@@ -241,6 +281,68 @@ fn release_date(token: &str) -> bool {
 }
 
 impl Name {
+    // This fallback is gated by matching distinctive executable / external save metadata.
+    // Only a missing first-season annotation is relaxed, never conflicting sequels or DLC.
+    pub(super) fn metadata_proposal(&self, old: &Self) -> Option<(u8, String)> {
+        let base = |name: &Self| {
+            let raw = name
+                .versionless
+                .replace("第一季", " ")
+                .replace("第1季", " ");
+            let tokens = tokenize(&raw);
+            let mut kept = Vec::new();
+            let mut index = 0;
+            while index < tokens.len() {
+                if tokens[index] == "season"
+                    && tokens.get(index + 1).is_some_and(|next| next == "1")
+                {
+                    index += 2;
+                    continue;
+                }
+                if !["s1", "season1"].contains(&tokens[index].as_str()) {
+                    kept.push(tokens[index].as_str());
+                }
+                index += 1;
+            }
+            Name::new(&kept.join(" "))
+        };
+        let a = base(self);
+        let b = base(old);
+        if a.library_conflict(&b) {
+            return None;
+        }
+        let japanese = a.title.japanese.concat();
+        let old_japanese = b.title.japanese.concat();
+        if !japanese.is_empty() && !old_japanese.is_empty() && japanese != old_japanese {
+            return None;
+        }
+        let common_words = a
+            .title
+            .words
+            .iter()
+            .filter(|word| b.title.words.contains(word))
+            .collect::<HashSet<_>>();
+        let chinese = &a.title.chinese;
+        let old_chinese = &b.title.chinese;
+        let chinese_support = chinese.chars().count() >= 5
+            && old_chinese.chars().count() >= 5
+            && chinese.chars().all(han)
+            && old_chinese.chars().all(han)
+            && (chinese == old_chinese
+                || (common_words.len() >= 3
+                    && similarity(chinese, old_chinese) >= 0.6
+                    && similarity(&a.title.words.concat(), &b.title.words.concat()) >= 0.75));
+        let latin_support = common_words.len() >= 3
+            && a.title.words.iter().map(String::len).sum::<usize>() >= 12
+            && similarity(&a.title.words.concat(), &b.title.words.concat()) >= 0.85;
+        (chinese_support || latin_support).then(|| {
+            (
+                60,
+                "主要标题相近，季标记或英文别称不同；结合项目资料确认".into(),
+            )
+        })
+    }
+
     pub(super) fn new(title: &str) -> Self {
         let raw = paths::normalize_alias(title);
         let simple = version::simple_version(title);
@@ -387,6 +489,73 @@ impl Name {
         &self.title.words
     }
 
+    pub(super) fn useful_library_name(&self) -> bool {
+        self.raw.chars().count() >= 3
+            && ![
+                "game",
+                "games",
+                "data",
+                "www",
+                "tool",
+                "tools",
+                "mtool",
+                "patch",
+                "update",
+                "windows",
+                "汉化",
+                "汉化版",
+                "汉化包",
+                "游戏",
+                "游戏资源",
+            ]
+            .contains(&self.raw.as_str())
+            && (!self.title.words.is_empty()
+                || !self.title.chinese.is_empty()
+                || !self.title.japanese.is_empty())
+    }
+
+    // Library recommendations are stricter than Import: a DLC bundle may update a game
+    // during Import, but it must not make two existing works appear interchangeable.
+    pub(super) fn library_conflict(&self, old: &Self) -> bool {
+        let markers = |name: &Self| {
+            let mut markers = name.title.editions.clone();
+            for word in [
+                "ii",
+                "iii",
+                "iv",
+                "v",
+                "vi",
+                "vii",
+                "viii",
+                "ix",
+                "expansion",
+                "spinoff",
+                "gaiden",
+            ] {
+                if name.title.words.iter().any(|token| token == word) {
+                    markers.push(word.into());
+                }
+            }
+            for marker in [
+                "外伝",
+                "続編",
+                "後日談",
+                "スピンオフ",
+                "side story",
+                "spin-off",
+            ] {
+                if name.versionless.contains(marker) {
+                    markers.push(marker.into());
+                }
+            }
+            markers.sort();
+            markers
+        };
+        self.numbers != old.numbers
+            || self.title.dlc != old.title.dlc
+            || markers(self) != markers(old)
+    }
+
     /// All relaxed comparisons are recommendations. A subset score never grants auto-association.
     pub(super) fn proposal(&self, old: &Self) -> Option<(u8, String)> {
         if self.raw != old.raw
@@ -418,6 +587,29 @@ impl Name {
             return None;
         }
         let mut evidence = Vec::new();
+        let words_subset = !self.title.words.is_empty()
+            && !old.title.words.is_empty()
+            && (self
+                .title
+                .words
+                .iter()
+                .all(|word| old.title.words.contains(word))
+                || old
+                    .title
+                    .words
+                    .iter()
+                    .all(|word| self.title.words.contains(word)));
+        if same_japanese
+            && japanese.chars().count() >= 4
+            && words_subset
+            && self
+                .title
+                .words
+                .iter()
+                .any(|word| word.len() >= 3 && old.title.words.contains(word))
+        {
+            evidence.push((60, "日文短标题与英文标记一致，一方附有英文别称"));
+        }
         if compatible_words {
             if japanese.chars().count() >= 8 && same_japanese {
                 evidence.push((78, "日文原名一致"));

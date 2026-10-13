@@ -26,6 +26,65 @@ fn fake_recycle(trash: &Path) -> impl FnMut(&Path) -> Result<()> + '_ {
         Ok(())
     }
 }
+#[test]
+fn deleting_one_confirmed_duplicate_preserves_the_kept_files_and_metadata() {
+    let temp = tempfile::tempdir().unwrap();
+    let library = temp.path().join("library");
+    let data = temp.path().join("data");
+    fs::create_dir_all(&data).unwrap();
+    let mut db = crate::db::Database::open(&data.join("test.db")).unwrap();
+    let mut ids = Vec::new();
+    for name in ["同一游戏 v1.0", "同一游戏 v2.0"] {
+        let root = library.join(name);
+        fs::create_dir_all(root.join("save")).unwrap();
+        fs::write(root.join("Game.exe"), name).unwrap();
+        fs::write(root.join("save/slot.dat"), name).unwrap();
+        ids.push(
+            db.register(&[crate::scanner::analyze_directory(&root).unwrap()])
+                .unwrap()
+                .remove(0),
+        );
+    }
+    db.set_duplicate_review(&ids[0], &ids[1], "confirmed")
+        .unwrap();
+    let kept = db.game(&ids[0]).unwrap();
+    let deleted = db.game(&ids[1]).unwrap();
+    let kept_json = serde_json::to_string(&kept).unwrap();
+    let settings = Settings {
+        game_root: library.display().to_string(),
+        ..Settings::default()
+    };
+    let plan = preview(
+        &deleted,
+        &db.games().unwrap(),
+        &settings,
+        &data,
+        "duplicate-test",
+    );
+    assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+    let failed = apply_files(&plan, |_| Err(fail("回收失败")));
+    assert!(failed.error.is_some());
+    assert!(db.game(&ids[1]).is_ok());
+    assert_eq!(db.duplicate_reviews().unwrap()[0].status, "confirmed");
+    let report = apply_files(&plan, fake_recycle(&temp.path().join("trash")));
+    assert!(report.error.is_none(), "{:?}", report.error);
+    db.remove_game(&ids[1]).unwrap();
+    assert_eq!(
+        serde_json::to_string(&db.game(&ids[0]).unwrap()).unwrap(),
+        kept_json
+    );
+    assert_eq!(
+        fs::read_to_string(Path::new(&kept.install_path).join("Game.exe")).unwrap(),
+        "同一游戏 v1.0"
+    );
+    assert_eq!(
+        fs::read_to_string(Path::new(&kept.install_path).join("save/slot.dat")).unwrap(),
+        "同一游戏 v1.0"
+    );
+    assert_eq!(db.games().unwrap().len(), 1);
+    assert!(db.duplicate_reviews().unwrap().is_empty());
+    assert!(!Path::new(&deleted.install_path).exists());
+}
 #[cfg(windows)]
 #[test]
 fn locked_save_prevents_any_recycling_and_preserves_game_directory() {

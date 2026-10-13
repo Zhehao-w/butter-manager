@@ -12,11 +12,13 @@ export function DeleteGameDialog({
   onClose,
   onDeleted,
   onBusy,
+  keptGame,
 }: {
   game: Game;
   onClose: () => void;
   onDeleted: (report: DeleteReport) => void;
   onBusy: (busy: boolean) => void;
+  keptGame?: Game;
 }) {
   const [plan, setPlan] = useState<DeletePlan | null>(null);
   const [report, setReport] = useState<DeleteReport | null>(null);
@@ -75,7 +77,7 @@ export function DeleteGameDialog({
     <Modal
       title={report ? '文件操作结果' : `移入回收站：${game.display_title}`}
       variant="confirm"
-      className="modal-maintenance modal-delete-game"
+      className={`modal-maintenance modal-delete-game${keptGame ? ' modal-delete-duplicate' : ''}`}
       showClose={false}
       onClose={close}
       footer={
@@ -106,9 +108,24 @@ export function DeleteGameDialog({
       {!report ? (
         <>
           <p>游戏与关联存档移入回收站后，将移除库记录。</p>
+          {keptGame && (
+            <p>
+              <strong>删除：</strong>
+              {game.display_title}
+            </p>
+          )}
           <p className="path delete-path" title={plan?.game_path ?? game.install_path}>
             {plan?.game_path ?? game.install_path}
           </p>
+          {keptGame && (
+            <div className="duplicate-kept-game">
+              <p>
+                <strong>保留：</strong>
+                {keptGame.display_title}
+              </p>
+              <p className="path">{keptGame.install_path}</p>
+            </div>
+          )}
           {plan && plan.saves.length > 0 && (
             <ul className="delete-save-list">
               {plan.saves.map((save) => (

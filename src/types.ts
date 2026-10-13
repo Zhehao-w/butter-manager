@@ -56,6 +56,25 @@ export interface Game {
   save_paths: string[];
 }
 
+export interface DuplicatePair {
+  left_id: string;
+  right_id: string;
+  score: number;
+  confidence: 'high' | 'review';
+  reason: string;
+}
+export type DuplicateStatus = 'pending' | 'confirmed' | 'excluded';
+export interface DuplicateGameReference {
+  id: string;
+  directory_modified_ms: number | null;
+}
+export interface DuplicateReview {
+  left_id: string;
+  right_id: string;
+  created_at: string;
+  status: Exclude<DuplicateStatus, 'pending'>;
+}
+
 export type LaunchConfiguration = Pick<
   Game,
   | 'main_executable'
@@ -172,6 +191,7 @@ export interface JobPage {
     | 'analysis'
     | 'metadata'
     | 'paths'
+    | 'duplicates'
     | 'import_analysis'
     | 'import_plan'
     | 'import_apply'

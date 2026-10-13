@@ -31,6 +31,11 @@ vi.mock('./api', () => ({
     versionHistory: vi.fn().mockResolvedValue([]),
     clearLibrary: vi.fn(),
     startLibraryCheck: vi.fn().mockResolvedValue(''),
+    startDuplicateCheck: vi.fn(),
+    duplicateResults: vi.fn().mockResolvedValue([]),
+    duplicateGameReferences: vi.fn().mockResolvedValue([]),
+    duplicateReviews: vi.fn().mockResolvedValue([]),
+    setDuplicateReview: vi.fn(),
     removeGame: vi.fn(),
     previewRelocation: vi.fn(),
     relocateGame: vi.fn(),
@@ -168,6 +173,7 @@ beforeEach(() => {
   vi.mocked(api.openFolder).mockResolvedValue();
   vi.mocked(api.importRecoveryIssues).mockResolvedValue([]);
   vi.mocked(api.startLibraryCheck).mockResolvedValue('');
+  vi.mocked(api.duplicateReviews).mockResolvedValue([]);
   vi.mocked(api.syncScanMtool).mockResolvedValue([]);
   vi.mocked(api.launchHistory).mockResolvedValue([]);
   vi.mocked(api.settings).mockResolvedValue(config);
@@ -205,14 +211,52 @@ function goLibrary() {
 function openScan() {
   fireEvent.click(
     within(screen.getByRole('navigation', { name: '主导航' })).getByRole('button', {
-      name: '扫描入库',
+      name: '游戏整理',
     }),
   );
+  fireEvent.click(screen.getByRole('tab', { name: '目录扫描' }));
 }
 function openConfig(section: 'MTool' | '设置') {
   fireEvent.click(screen.getByRole('button', { name: section }));
 }
 describe('iteration interactions', () => {
+  it('orders organizing after import and defaults to duplicates without starting either task', async () => {
+    render(<App />);
+    await screen.findByRole('button', { name: game.display_title });
+    const navigation = within(screen.getByRole('navigation', { name: '主导航' }));
+    expect(navigation.getAllByRole('button').map((button) => button.textContent)).toEqual([
+      '游戏库1',
+      '导入',
+      '游戏整理',
+      'MTool',
+    ]);
+    fireEvent.click(navigation.getByRole('button', { name: '游戏整理' }));
+    expect(screen.getByRole('tab', { name: '重复检查' }).getAttribute('aria-selected')).toBe(
+      'true',
+    );
+    expect(api.startScan).not.toHaveBeenCalled();
+    expect(api.startDuplicateCheck).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('tab', { name: '目录扫描' }));
+    fireEvent.change(screen.getByRole('textbox', { name: '搜索扫描结果' }), {
+      target: { value: 'retained' },
+    });
+    fireEvent.click(screen.getByRole('tab', { name: '重复检查' }));
+    fireEvent.click(screen.getByRole('tab', { name: '目录扫描' }));
+    expect((screen.getByRole('textbox', { name: '搜索扫描结果' }) as HTMLInputElement).value).toBe(
+      'retained',
+    );
+  });
+  it('defaults an empty library to directory scanning without starting a task', async () => {
+    vi.mocked(api.games).mockResolvedValue([]);
+    render(<App />);
+    await screen.findByText('从你的游戏目录开始');
+    fireEvent.click(screen.getByRole('button', { name: '游戏整理' }));
+    expect(screen.getByRole('tab', { name: '目录扫描' }).getAttribute('aria-selected')).toBe(
+      'true',
+    );
+    expect(api.startScan).not.toHaveBeenCalled();
+    expect(api.startDuplicateCheck).not.toHaveBeenCalled();
+  });
   it('opens the same save editor from the hero action and the retained save tab entry', async () => {
     render(<App />);
     fireEvent.click(await screen.findByRole('button', { name: game.display_title }));
@@ -250,6 +294,7 @@ describe('iteration interactions', () => {
     fireEvent.change(within(detail).getByRole('textbox', { name: '显示名称' }), {
       target: { value: '修改标题' },
     });
+    fireEvent.click(within(detail).getByRole('radio', { name: '已通关' }));
     showDetailTab('启动配置');
     fireEvent.change(within(detail).getByRole('combobox', { name: /启动文件（/ }), {
       target: { value: 'new.exe' },
@@ -277,12 +322,17 @@ describe('iteration interactions', () => {
       expect(api.saveGame).toHaveBeenCalledWith(
         expect.objectContaining({
           display_title: '修改标题',
+          play_status: 'COMPLETED',
           main_executable: 'new.exe',
           save_paths: ['<GAME>/save'],
           aliases: ['另一个名称'],
         }),
       ),
     );
+    await screen.findByText('游戏资料已保存。');
+    expect(
+      (within(detail).getByRole('radio', { name: '已通关' }) as HTMLInputElement).checked,
+    ).toBe(true);
     showDetailTab('存档位置');
     expect(
       (within(detail).getByRole('textbox', { name: /存档位置/ }) as HTMLTextAreaElement).value,
@@ -2439,19 +2489,5 @@ describe('iteration interactions', () => {
     openScan();
     expect(screen.getByText('启动文件：main-v1.2.exe')).toBeTruthy();
     expect(api.startScan).toHaveBeenCalledTimes(1);
-  });
-  it('saves a manual completion status through the existing detail form', async () => {
-    vi.mocked(api.saveGame).mockImplementation(async (edit) => ({ ...game, ...edit }));
-    render(<App />);
-    fireEvent.click(await screen.findByRole('button', { name: game.display_title }));
-    fireEvent.click(screen.getByRole('radio', { name: '已通关' }));
-    fireEvent.click(screen.getByRole('button', { name: '保存资料' }));
-    await waitFor(() =>
-      expect(api.saveGame).toHaveBeenCalledWith(
-        expect.objectContaining({ play_status: 'COMPLETED' }),
-      ),
-    );
-    await screen.findByText('游戏资料已保存。');
-    expect((screen.getByRole('radio', { name: '已通关' }) as HTMLInputElement).checked).toBe(true);
   });
 });

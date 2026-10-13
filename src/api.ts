@@ -2,6 +2,10 @@ import { invoke } from '@tauri-apps/api/core';
 import type { SaveCatalog, SaveDocument, SaveChange } from './saveEditorTypes';
 import type {
   Game,
+  DuplicatePair,
+  DuplicateReview,
+  DuplicateStatus,
+  DuplicateGameReference,
   DeletePlan,
   DeleteReport,
   GameEdit,
@@ -82,6 +86,13 @@ export const api = {
       workingDirectory,
     }),
   startLibraryCheck: () => invoke<string>('start_library_check'),
+  startDuplicateCheck: () => invoke<string>('start_duplicate_check'),
+  duplicateResults: (jobId: string) => invoke<DuplicatePair[]>('duplicate_results', { jobId }),
+  duplicateGameReferences: (ids: string[]) =>
+    invoke<DuplicateGameReference[]>('duplicate_game_references', { ids }),
+  duplicateReviews: () => invoke<DuplicateReview[]>('duplicate_reviews'),
+  setDuplicateReview: (leftId: string, rightId: string, status: DuplicateStatus) =>
+    invoke<void>('set_duplicate_review', { leftId, rightId, status }),
   removeGame: (id: string) => invoke<void>('remove_game', { id, confirmation: id }),
   previewDelete: (id: string) => invoke<DeletePlan>('preview_game_delete', { id }),
   deleteFiles: (id: string, token: string) =>

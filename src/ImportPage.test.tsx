@@ -105,6 +105,15 @@ const props = () => ({
   onError: vi.fn(),
   onOpenGame: vi.fn(),
 });
+async function expandSettings(...sections: string[]) {
+  await screen.findByRole('button', { name: /展开设置|收起设置/ });
+  const folded = screen.queryByRole('button', { name: '展开设置' });
+  if (folded) fireEvent.click(folded);
+  for (const section of sections.length ? sections : ['基本信息']) {
+    const tab = await screen.findByRole('tab', { name: section });
+    if (tab.getAttribute('aria-selected') !== 'true') fireEvent.click(tab);
+  }
+}
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(api.importPlans).mockResolvedValue([]);
@@ -139,11 +148,14 @@ describe('batch import flow', () => {
       vi.mocked(api.job).mockResolvedValue({ ...page, changes: [bundled] });
       render(<ImportPage {...props()} settings={{ ...settings, mtool_root: 'E:/SharedMTool' }} />);
       fireEvent.click(screen.getByRole('button', { name: '添加文件夹' }));
+      await expandSettings('随包 MTool');
       const cleanup = await screen.findByRole('checkbox', { name: '导入成功后清理随包 MTool' });
       expect((cleanup as HTMLInputElement).checked).toBe(true);
+      await expandSettings('启动配置');
       expect(
         (screen.getByRole('checkbox', { name: '公共 MTool' }) as HTMLInputElement).checked,
       ).toBe(true);
+      await expandSettings('随包 MTool');
       expect(screen.getByText(/StartWithTool.bat/)).toBeTruthy();
       if (!keepChecked) fireEvent.click(cleanup);
       const selection = screen.getByRole('checkbox', {
@@ -169,6 +181,7 @@ describe('batch import flow', () => {
     });
     render(<ImportPage {...props()} />);
     fireEvent.click(screen.getByRole('button', { name: '添加文件夹' }));
+    await expandSettings('随包 MTool');
     await screen.findByText('混有游戏资源，保留目录');
     expect(screen.queryByRole('checkbox', { name: '导入成功后清理随包 MTool' })).toBeNull();
   });
@@ -302,12 +315,15 @@ describe('batch import flow', () => {
       const associate = await screen.findByRole('button', { name: `关联：${oldTitle}` });
       expect(screen.getByText(reason)).toBeTruthy();
       expect(screen.queryByText('已关联库中游戏')).toBeNull();
-      fireEvent.click(screen.getByRole('checkbox', { name: `选择 ${title}` }));
+      expect(
+        (screen.getByRole('checkbox', { name: `选择 ${title}` }) as HTMLInputElement).checked,
+      ).toBe(true);
       const generate = screen.getByRole('button', {
         name: '生成导入与更新计划（1）',
       }) as HTMLButtonElement;
       expect(generate.disabled).toBe(true);
       fireEvent.click(associate);
+      await expandSettings('游戏关联');
       await screen.findByRole('radiogroup', { name: '存档处理' });
       expect(generate.disabled).toBe(false);
       fireEvent.click(generate);
@@ -329,6 +345,7 @@ describe('batch import flow', () => {
     };
     render(<ImportPage {...props()} games={[existing]} />);
     fireEvent.click(screen.getByRole('button', { name: '添加文件夹' }));
+    await expandSettings('游戏关联');
     fireEvent.click(await screen.findByRole('button', { name: '关联已有游戏…' }));
     const modal = screen.getByRole('dialog', { name: '关联已有游戏' });
     fireEvent.change(within(modal).getByRole('textbox', { name: '关联游戏搜索' }), {
@@ -398,6 +415,255 @@ describe('batch import flow', () => {
     aliases: ['Game'],
     save_paths: ['<GAME>/SaveData'],
   };
+  it('starts folded, synchronizes summaries after edits, and submits the same reviewed options', async () => {
+    render(<ImportPage {...props()} settings={{ ...settings, mtool_root: 'E:/SharedMTool' }} />);
+    fireEvent.click(screen.getByRole('button', { name: '添加文件夹' }));
+    const expand = await screen.findByRole('button', { name: '展开设置' });
+    expect(expand.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByRole('textbox', { name: '游戏名称' })).toBeNull();
+    expect(
+      screen
+        .getByText('game.exe', { selector: '.import-compact-facts > span' })
+        .closest('.import-compact-facts'),
+    ).toBeTruthy();
+    expect(
+      screen.getByText('Game v1.2', { selector: '.import-compact-facts > span' }),
+    ).toBeTruthy();
+    fireEvent.click(expand);
+    expect(screen.getByRole('tab', { name: '游戏关联' }).getAttribute('aria-selected')).toBe(
+      'false',
+    );
+    fireEvent.change(screen.getByRole('textbox', { name: '游戏名称' }), {
+      target: { value: 'Edited title' },
+    });
+    fireEvent.change(screen.getByRole('textbox', { name: '目标文件夹' }), {
+      target: { value: 'Edited folder' },
+    });
+    fireEvent.change(screen.getByRole('textbox', { name: '版本' }), { target: { value: 'v2.0' } });
+    await expandSettings('启动配置');
+    fireEvent.click(screen.getByRole('checkbox', { name: '公共 MTool' }));
+    fireEvent.click(screen.getByRole('button', { name: '收起设置' }));
+    expect(screen.getByText('Edited title', { selector: 'strong' })).toBeTruthy();
+    expect(
+      screen.getByText('Edited folder', { selector: '.import-compact-facts > span' }),
+    ).toBeTruthy();
+    expect(screen.getByText('v2.0', { selector: '.import-compact-facts > span' })).toBeTruthy();
+    expect(screen.getByText('公共 MTool 启动')).toBeTruthy();
+    expect(screen.queryByRole('checkbox', { name: '公共 MTool' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '生成导入与更新计划（1）' }));
+    await waitFor(() =>
+      expect(api.importPlan).toHaveBeenCalledWith('analysis', [
+        expect.objectContaining({
+          title: 'Edited title',
+          target_name: 'Edited folder',
+          version: 'v2.0',
+          mtool: true,
+        }),
+      ]),
+    );
+  });
+
+  it('keeps the summary mounted and edits one settings panel at a time without losing changes', async () => {
+    render(<ImportPage {...props()} />);
+    const categories = screen.getByRole('tablist', { name: '导入分类' });
+    expect(categories.closest('.import-toolbar')).toBe(
+      screen.getByRole('textbox', { name: '导入搜索' }).closest('.import-toolbar'),
+    );
+    fireEvent.click(screen.getByRole('button', { name: '添加文件夹' }));
+    const expand = await screen.findByRole('button', { name: '展开设置' });
+    const facts = screen
+      .getByText('game.exe', { selector: '.import-compact-facts > span' })
+      .closest('.import-compact-facts');
+    fireEvent.click(expand);
+    expect(
+      screen
+        .getByText('game.exe', { selector: '.import-compact-facts > span' })
+        .closest('.import-compact-facts'),
+    ).toBe(facts);
+    fireEvent.change(screen.getByRole('textbox', { name: '游戏名称' }), {
+      target: { value: 'Keep this edit' },
+    });
+    const settingsTabs = screen.getByRole('tablist', { name: '游戏导入设置' });
+    const basic = within(settingsTabs).getByRole('tab', { name: '基本信息' });
+    fireEvent.keyDown(basic, { key: 'ArrowRight' });
+    expect(
+      within(settingsTabs).getByRole('tab', { name: '启动配置' }).getAttribute('aria-selected'),
+    ).toBe('true');
+    expect(document.activeElement).toBe(
+      within(settingsTabs).getByRole('tab', { name: '启动配置' }),
+    );
+    expect(screen.queryByRole('textbox', { name: '游戏名称' })).toBeNull();
+    expect(screen.getByRole('checkbox', { name: '公共 MTool' })).toBeTruthy();
+    fireEvent.click(within(settingsTabs).getByRole('tab', { name: '游戏关联' }));
+    expect(screen.queryByRole('checkbox', { name: '公共 MTool' })).toBeNull();
+    expect(screen.getByRole('button', { name: '关联已有游戏…' })).toBeTruthy();
+    fireEvent.click(basic);
+    expect((screen.getByRole('textbox', { name: '游戏名称' }) as HTMLInputElement).value).toBe(
+      'Keep this edit',
+    );
+    expect(
+      screen
+        .getAllByRole('tabpanel')
+        .filter((panel) => panel.classList.contains('import-settings-panel')),
+    ).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: '收起设置' }));
+    expect(
+      screen
+        .getByText('game.exe', { selector: '.import-compact-facts > span' })
+        .closest('.import-compact-facts'),
+    ).toBe(facts);
+    expect(screen.queryByRole('tablist', { name: '游戏导入设置' })).toBeNull();
+  });
+
+  it.each(['manual', 'automatic'])(
+    'keeps %s association stable, bounds the title and reviews missing saves inline',
+    async (mode) => {
+      const longTitle = '爱欲之都 第一季 再启S1 v1.1.4.3 City Light sand Love Bites Season1';
+      const existing = { ...oldGame, display_title: longTitle, save_paths: [] };
+      vi.mocked(api.importMatches).mockResolvedValue({
+        [candidate.install_path]: [
+          {
+            id: existing.id,
+            title: longTitle,
+            version: existing.current_version,
+            path: existing.install_path,
+            reason: '主要标题相近',
+            auto_associate: mode === 'automatic',
+          },
+        ],
+      });
+      render(<ImportPage {...props()} games={[existing]} />);
+      fireEvent.click(screen.getByRole('button', { name: '添加文件夹' }));
+      const link = await screen.findByRole('button', {
+        name: (mode === 'manual' ? '关联：' : '已关联：') + longTitle,
+      });
+      const tabs = screen.getByRole('tablist', { name: '游戏导入设置' });
+      const labels = within(tabs)
+        .getAllByRole('tab')
+        .map((tab) => tab.textContent);
+      if (mode === 'manual') fireEvent.click(link);
+      const linked = await screen.findByRole('button', { name: '已关联：' + longTitle });
+      expect(linked.textContent).toBe('已关联：' + longTitle);
+      expect(within(linked).getByTitle(longTitle)).toBeTruthy();
+      expect(
+        within(tabs)
+          .getAllByRole('tab')
+          .map((tab) => tab.textContent),
+      ).toEqual(labels);
+      expect(
+        within(tabs).getByRole('tab', { name: '游戏关联' }).getAttribute('aria-selected'),
+      ).toBe('true');
+      expect(within(tabs).queryByRole('tab', { name: '存档处理' })).toBeNull();
+      expect(
+        screen.getByRole('radiogroup', { name: '存档处理' }).closest('.import-associated-saves'),
+      ).toBeTruthy();
+      const capsule = screen.getByText(
+        '关联已有游戏：' + Array.from(longTitle).slice(0, 32).join('') + '…',
+      );
+      expect(capsule.classList.contains('import-choice-text')).toBe(true);
+      expect(capsule.closest('.import-linked-game')?.getAttribute('title')).toBe(longTitle);
+      expect(screen.getByRole('alert').textContent).toContain('旧游戏未配置存档位置');
+      fireEvent.click(screen.getByRole('button', { name: '收起设置' }));
+      expect(screen.getByRole('alert').textContent).toContain('旧游戏未配置存档位置');
+      await expandSettings('游戏关联');
+      fireEvent.click(screen.getByRole('radio', { name: '使用新包存档' }));
+      fireEvent.click(screen.getByRole('button', { name: '收起设置' }));
+      expect(screen.queryByRole('alert')).toBeNull();
+      expect(screen.getByText('已关联所选游戏。')).toBeTruthy();
+      expect(
+        screen.getByText('使用新包存档', { selector: '.import-choice-summary .mode' }),
+      ).toBeTruthy();
+    },
+  );
+
+  it('opens an association conflict and keeps its warning visible when settings are folded', async () => {
+    vi.mocked(api.importMatches).mockResolvedValue({
+      [candidate.install_path]: [
+        {
+          id: oldGame.id,
+          title: oldGame.display_title,
+          version: 'v1.1',
+          path: oldGame.install_path,
+          reason: '名称相近',
+          auto_associate: false,
+        },
+      ],
+    });
+    render(<ImportPage {...props()} games={[oldGame]} />);
+    fireEvent.click(screen.getByRole('button', { name: '添加文件夹' }));
+    await screen.findByRole('button', { name: '关联：Game' });
+    expect(screen.getByRole('tab', { name: '游戏关联' }).getAttribute('aria-selected')).toBe(
+      'true',
+    );
+    fireEvent.click(screen.getByRole('button', { name: '收起设置' }));
+    expect(screen.getByRole('alert').textContent).toContain('请选择关联');
+    expect(screen.getByText('关联待确认')).toBeTruthy();
+    expect(
+      (screen.getByRole('button', { name: '生成导入与更新计划（1）' }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    await expandSettings('游戏关联');
+    fireEvent.click(screen.getByRole('button', { name: '改为新游戏' }));
+    fireEvent.click(screen.getByRole('button', { name: '收起设置' }));
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByText('按新游戏导入')).toBeTruthy();
+    expect(
+      (screen.getByRole('button', { name: '生成导入与更新计划（1）' }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false);
+  });
+
+  it('exposes invalid MTool configuration while folded and updates its cleanup summary', async () => {
+    vi.mocked(api.job).mockResolvedValue({
+      ...page,
+      changes: [
+        {
+          ...candidate,
+          bundled_mtool: [
+            { folder: 'tool', bats: ['StartWithTool.bat'], safe: true, reason: '已确认' },
+          ],
+        },
+      ],
+    });
+    render(<ImportPage {...props()} />);
+    fireEvent.click(screen.getByRole('button', { name: '添加文件夹' }));
+    await expandSettings('随包 MTool');
+    await screen.findByRole('checkbox', { name: '导入成功后清理随包 MTool' });
+    expect(screen.getByRole('tab', { name: '随包 MTool' }).getAttribute('aria-selected')).toBe(
+      'true',
+    );
+    fireEvent.click(screen.getByRole('button', { name: '收起设置' }));
+    expect(screen.getByRole('alert').textContent).toContain('请先配置公共 MTool');
+    expect(screen.getByText('随包 MTool：回收清理')).toBeTruthy();
+    await expandSettings('随包 MTool');
+    fireEvent.click(screen.getByRole('checkbox', { name: '导入成功后清理随包 MTool' }));
+    await expandSettings('启动配置');
+    fireEvent.click(screen.getByRole('checkbox', { name: '公共 MTool' }));
+    fireEvent.click(screen.getByRole('button', { name: '收起设置' }));
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByText('随包 MTool：保留')).toBeTruthy();
+  });
+
+  it('keeps authoritative preview blockers and errors visible after folding', async () => {
+    vi.mocked(api.importPlans).mockResolvedValue([
+      {
+        ...plan,
+        items: [
+          { ...plan.items[0], blockers: ['启动文件依赖待删除的工具目录'], error: '文件校验失败' },
+        ],
+      },
+    ]);
+    render(<ImportPage {...props()} />);
+    fireEvent.click(await screen.findByRole('tab', { name: /待确认/ }));
+    await screen.findByText('启动文件依赖待删除的工具目录');
+    fireEvent.click(screen.getByRole('button', { name: '收起设置' }));
+    expect(screen.getAllByRole('alert').map((alert) => alert.textContent)).toEqual(
+      expect.arrayContaining(['启动文件依赖待删除的工具目录', '文件校验失败']),
+    );
+    expect(screen.queryByRole('button', { name: '确认执行计划' })).toBeNull();
+    expect(api.importApply).not.toHaveBeenCalled();
+  });
+
   it('offers disposal only for associated equal versions and requires explicit confirmation', async () => {
     const installed = { ...oldGame, current_version: '1.2' };
     vi.mocked(api.importMatches).mockResolvedValue({
@@ -430,10 +696,12 @@ describe('batch import flow', () => {
     await screen.findByText('待确认关联');
     expect(screen.queryByRole('button', { name: '删除导入副本…' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: '关联：Game' }));
+    await expandSettings();
     const version = screen.getByRole('textbox', { name: '版本' });
     fireEvent.change(version, { target: { value: 'v1.3' } });
     expect(screen.queryByRole('button', { name: '删除导入副本…' })).toBeNull();
     fireEvent.change(version, { target: { value: 'v1.2' } });
+    await expandSettings('游戏关联');
     fireEvent.click(screen.getByRole('button', { name: '删除导入副本…' }));
     const confirmation = await screen.findByRole('button', { name: '确认移入回收站' });
     await waitFor(() => expect((confirmation as HTMLButtonElement).disabled).toBe(false));
@@ -475,7 +743,9 @@ describe('batch import flow', () => {
     });
     render(<ImportPage {...props()} games={[oldGame]} />);
     fireEvent.click(screen.getByRole('button', { name: '添加文件夹' }));
+    await expandSettings('游戏关联');
     await screen.findByRole('radiogroup', { name: '存档处理' });
+    await expandSettings();
     expect((screen.getByRole('textbox', { name: '目标文件夹' }) as HTMLInputElement).value).toBe(
       'Game v1.2',
     );
@@ -483,8 +753,8 @@ describe('batch import flow', () => {
       false,
     );
     const select = screen.getByRole('checkbox', { name: '选择 Game v1.2' });
-    expect((select as HTMLInputElement).checked).toBe(false);
-    fireEvent.click(select);
+    expect((select as HTMLInputElement).checked).toBe(true);
+    await expandSettings('游戏关联');
     expect((screen.getByRole('radio', { name: /保留旧存档/ }) as HTMLInputElement).checked).toBe(
       true,
     );
@@ -498,6 +768,7 @@ describe('batch import flow', () => {
       false,
     );
     expect(screen.getByText('不迁移内部旧存档，使用新包存档；外部存档不操作。')).toBeTruthy();
+    await expandSettings();
     fireEvent.change(screen.getByRole('textbox', { name: '游戏名称' }), {
       target: { value: '新名称 v1.2' },
     });
@@ -540,9 +811,11 @@ describe('batch import flow', () => {
       });
       render(<ImportPage {...props()} games={[installed]} />);
       fireEvent.click(screen.getByRole('button', { name: '添加文件夹' }));
+      await expandSettings('游戏关联');
       await screen.findByRole('radiogroup', { name: '存档处理' });
+      await expandSettings('启动配置');
       fireEvent.click(screen.getByRole('checkbox', { name: '公共 MTool' }));
-      fireEvent.click(screen.getByText('更新启动配置'));
+      expect(screen.getByText('更新启动配置').closest('details')?.open).toBe(true);
       const working = screen.getByLabelText('工作目录（相对新版游戏目录）') as HTMLInputElement;
       const loader = screen.getByLabelText(
         'MTool loader（相对公共 MTool 目录）',
@@ -560,7 +833,6 @@ describe('batch import flow', () => {
         expect(working.value).toBe('manual-cwd');
         expect(loader.value).toBe('loaders/custom.dll');
       }
-      fireEvent.click(screen.getByRole('checkbox', { name: '选择 Game v1.2' }));
       fireEvent.click(screen.getByRole('button', { name: '生成导入与更新计划（1）' }));
       await waitFor(() => expect(api.importPlan).toHaveBeenCalledOnce());
       const selected = vi.mocked(api.importPlan).mock.calls[0][1][0];
@@ -598,7 +870,6 @@ describe('batch import flow', () => {
       expect(screen.getAllByText(recommendation.reason).length).toBe(ambiguous ? 2 : 1);
       expect(screen.queryByText(`${recommendation.title}（${recommendation.reason}）`)).toBeNull();
       expect(screen.queryByRole('radiogroup', { name: '存档处理' })).toBeNull();
-      fireEvent.click(screen.getByRole('checkbox', { name: '选择 Game v1.2' }));
       const generate = screen.getByRole('button', {
         name: '生成导入与更新计划（1）',
       }) as HTMLButtonElement;
@@ -612,7 +883,9 @@ describe('batch import flow', () => {
         expect(screen.queryByText(/还有 1 项需要确认关联/)).toBeNull();
       } else {
         fireEvent.click(screen.getByRole('button', { name: '关联：Game' }));
+        await expandSettings('游戏关联');
         await screen.findByRole('radiogroup', { name: '存档处理' });
+        await expandSettings('游戏关联');
         expect(screen.getByRole('button', { name: '已关联：Game' })).toBeTruthy();
         expect(screen.getByText('已关联库中游戏')).toBeTruthy();
         expect(screen.queryByText(/还有 1 项需要确认关联/)).toBeNull();
@@ -651,7 +924,10 @@ describe('batch import flow', () => {
         status: 'cancelled',
         items: [
           completedItem,
-          { ...plan.items[0], selection: { ...plan.items[0].selection, title: 'Unfinished' } },
+          {
+            ...plan.items[0],
+            selection: { ...plan.items[0].selection, title: 'Unfinished', source: 'D:/Unfinished' },
+          },
         ],
       },
       {
@@ -797,8 +1073,9 @@ describe('batch import flow', () => {
     const inputProps = props();
     const { rerender } = render(<ImportPage {...inputProps} />);
     fireEvent.click(screen.getByRole('button', { name: '添加文件夹' }));
+    await expandSettings();
     await screen.findByRole('textbox', { name: '游戏名称' });
-    const viewport = () => screen.getByRole('tabpanel');
+    const viewport = () => screen.getByRole('tabpanel', { name: /新的导入/ });
     fireEvent.scroll(viewport(), { target: { scrollTop: 500 } });
     rerender(<ImportPage {...inputProps} visible={false} />);
     rerender(<ImportPage {...inputProps} visible />);
@@ -852,14 +1129,31 @@ describe('batch import flow', () => {
   it('preserves existing edits and an unchecked choice when adding more folders', async () => {
     render(<ImportPage {...props()} />);
     fireEvent.click(screen.getByRole('button', { name: '添加文件夹' }));
+    await expandSettings();
     fireEvent.change(await screen.findByRole('textbox', { name: '游戏名称' }), {
       target: { value: 'Kept Edit' },
     });
     fireEvent.click(screen.getByRole('checkbox', { name: '选择 Kept Edit' }));
     vi.mocked(api.chooseImportSources).mockResolvedValue(['D:/Incoming/Another']);
     vi.mocked(api.importAnalyze).mockResolvedValue('analysis-again');
-    vi.mocked(api.job).mockResolvedValue({ ...page, id: 'analysis-again' });
+    vi.mocked(api.job).mockResolvedValue({
+      ...page,
+      id: 'analysis-again',
+      changes: [
+        candidate,
+        {
+          ...candidate,
+          install_path: 'D:/Incoming/Another',
+          suggested_title: 'Another',
+          executables: [],
+          status: 'needs_manual',
+        },
+      ],
+    });
     fireEvent.click(screen.getByRole('button', { name: '添加文件夹' }));
+    expect(
+      ((await screen.findByRole('checkbox', { name: '选择 Another' })) as HTMLInputElement).checked,
+    ).toBe(true);
     await waitFor(() =>
       expect(api.importAnalyze).toHaveBeenLastCalledWith([
         candidate.install_path,
@@ -878,10 +1172,11 @@ describe('batch import flow', () => {
       (screen.getByRole('checkbox', { name: '选择 Kept Edit' }) as HTMLInputElement).checked,
     ).toBe(false);
   });
-  it('groups plans into tabs, retains new-import edits, and confirms with only two buttons', async () => {
+  it('moves drafts into pending, restores edits on return and confirms with only two buttons', async () => {
     const options = props();
     render(<ImportPage {...options} />);
     fireEvent.click(screen.getByRole('button', { name: '添加文件夹' }));
+    await expandSettings();
     fireEvent.change(await screen.findByRole('textbox', { name: '游戏名称' }), {
       target: { value: 'Edited Game' },
     });
@@ -918,9 +1213,9 @@ describe('batch import flow', () => {
     expect(document.querySelector('.toast')).toBeNull();
     expect(screen.getByText('导入与更新计划已生成，请确认。')).toBeTruthy();
     fireEvent.click(screen.getByRole('tab', { name: /新的导入/ }));
-    expect((screen.getByRole('textbox', { name: '游戏名称' }) as HTMLInputElement).value).toBe(
-      'Edited Game',
-    );
+    expect(screen.queryByRole('textbox', { name: '游戏名称' })).toBeNull();
+    expect(screen.queryByRole('checkbox', { name: '选择 Edited Game' })).toBeNull();
+    expect(screen.getByRole('tab', { name: '新的导入' })).toBeTruthy();
     fireEvent.click(screen.getByRole('tab', { name: /导入记录/ }));
     expect(screen.getByText('Finished Game')).toBeTruthy();
     expect(screen.queryByRole('button', { name: '确认执行计划' })).toBeNull();
@@ -934,6 +1229,121 @@ describe('batch import flow', () => {
     ).toEqual(['取消', '确认']);
     fireEvent.click(within(dialog).getByRole('button', { name: '取消' }));
     expect(api.importApply).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: '返回调整' }));
+    await screen.findByRole('checkbox', { name: '选择 Edited Game' });
+    await expandSettings();
+    expect((screen.getByRole('textbox', { name: '游戏名称' }) as HTMLInputElement).value).toBe(
+      'Edited Game',
+    );
+    expect(
+      (screen.getByRole('checkbox', { name: '选择 Edited Game' }) as HTMLInputElement).checked,
+    ).toBe(true);
+    expect(api.discardImportPlan).toHaveBeenCalledWith('plan');
+  });
+  it.each(['completed', 'failed'] as const)(
+    'keeps unplanned drafts and routes an %s apply to its category',
+    async (outcome) => {
+      const other = { ...candidate, install_path: 'D:/Other', suggested_title: 'Other Game' };
+      let savedPlans: ImportPlan[] = [];
+      vi.mocked(api.importPlans).mockImplementation(async () => savedPlans);
+      vi.mocked(api.importPlan).mockImplementation(async () => {
+        savedPlans = [plan];
+        return 'plan';
+      });
+      vi.mocked(api.importApply).mockImplementation(async () => {
+        savedPlans = [
+          {
+            ...plan,
+            status: outcome,
+            items: [
+              {
+                ...plan.items[0],
+                state: outcome === 'completed' ? 'completed' : 'copying',
+                registered_id: outcome === 'completed' ? 'new-game' : null,
+                error: outcome === 'failed' ? 'copy failed' : null,
+              },
+            ],
+          },
+        ];
+        return 'apply';
+      });
+      vi.mocked(api.job).mockImplementation(async (id) =>
+        id === 'analysis'
+          ? {
+              ...page,
+              changes: [candidate, other],
+              total: 2,
+              processed: 2,
+              next_cursor: 2,
+              change_count: 2,
+            }
+          : {
+              ...page,
+              id,
+              kind: id === 'plan' ? 'import_plan' : 'import_apply',
+              status: id === 'plan' ? 'completed' : outcome,
+              changes: [],
+              next_cursor: 0,
+              change_count: 0,
+              error: outcome === 'failed' && id === 'apply' ? 'copy failed' : null,
+            },
+      );
+      const options = props();
+      render(<ImportPage {...options} />);
+      fireEvent.click(screen.getByRole('button', { name: '添加文件夹' }));
+      const unplanned = await screen.findByRole('checkbox', { name: '选择 Other Game' });
+      fireEvent.click(unplanned);
+      fireEvent.click(screen.getByRole('button', { name: '生成导入与更新计划（1）' }));
+      await screen.findByRole('button', { name: '确认执行计划' });
+      fireEvent.click(screen.getByRole('tab', { name: '新的导入 (1)' }));
+      expect(screen.queryByRole('checkbox', { name: '选择 Game v1.2' })).toBeNull();
+      expect(
+        (screen.getByRole('checkbox', { name: '选择 Other Game' }) as HTMLInputElement).checked,
+      ).toBe(false);
+      fireEvent.click(screen.getByRole('tab', { name: '待确认 (1)' }));
+      fireEvent.click(screen.getByRole('button', { name: '确认执行计划' }));
+      fireEvent.click(
+        within(screen.getByRole('dialog', { name: '确认导入与更新' })).getByRole('button', {
+          name: '确认',
+        }),
+      );
+      if (outcome === 'completed') {
+        await waitFor(() =>
+          expect(
+            screen.getByRole('tab', { name: '导入记录 (1)' }).getAttribute('aria-selected'),
+          ).toBe('true'),
+        );
+        expect(screen.getByRole('article', { name: 'Game v1.2' })).toBeTruthy();
+        expect(screen.getByRole('tab', { name: '待确认' })).toBeTruthy();
+      } else {
+        await waitFor(() => expect(options.onError).toHaveBeenCalledWith('copy failed'));
+        expect(screen.getByRole('tab', { name: '待确认 (1)' }).getAttribute('aria-selected')).toBe(
+          'true',
+        );
+        expect(screen.getByRole('tab', { name: '导入记录' })).toBeTruthy();
+      }
+      fireEvent.click(screen.getByRole('tab', { name: '新的导入 (1)' }));
+      expect(screen.queryByRole('checkbox', { name: '选择 Game v1.2' })).toBeNull();
+      expect(
+        (screen.getByRole('checkbox', { name: '选择 Other Game' }) as HTMLInputElement).checked,
+      ).toBe(false);
+    },
+  );
+  it('retains selected drafts when generating the plan fails', async () => {
+    const options = props();
+    vi.mocked(api.importPlan).mockRejectedValue(new Error('plan failed'));
+    render(<ImportPage {...options} />);
+    fireEvent.click(screen.getByRole('button', { name: '添加文件夹' }));
+    await screen.findByRole('checkbox', { name: '选择 Game v1.2' });
+    fireEvent.click(screen.getByRole('button', { name: '生成导入与更新计划（1）' }));
+    await waitFor(() => expect(options.onError).toHaveBeenCalledWith('Error: plan failed'));
+    expect(
+      (screen.getByRole('checkbox', { name: '选择 Game v1.2' }) as HTMLInputElement).checked,
+    ).toBe(true);
+    expect(screen.getByRole('tab', { name: '新的导入 (1)' }).getAttribute('aria-selected')).toBe(
+      'true',
+    );
+    expect(screen.getByRole('tab', { name: '待确认' })).toBeTruthy();
   });
   it('keeps ambiguous QSP files blank and submits the explicit choice without a player', async () => {
     const qsp = {
@@ -953,12 +1363,16 @@ describe('batch import flow', () => {
     );
     expect(
       (screen.getByRole('checkbox', { name: '选择 Game v1.2' }) as HTMLInputElement).checked,
-    ).toBe(false);
+    ).toBe(true);
     expect(screen.queryByLabelText('公共 MTool')).toBeNull();
+    expect(
+      (screen.getByRole('button', { name: '生成导入与更新计划（1）' }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    expect(api.importPlan).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: '更改 QSP 文件…' }));
     await waitFor(() => expect((file as HTMLInputElement).value).toBe('mod.qsp'));
     expect(api.choosePlayerFile).toHaveBeenCalledWith(candidate.install_path, 'qsp');
-    fireEvent.click(screen.getByRole('checkbox', { name: '选择 Game v1.2' }));
     fireEvent.click(screen.getByRole('button', { name: '生成导入与更新计划（1）' }));
     await waitFor(() =>
       expect(api.importPlan).toHaveBeenCalledWith('analysis', [
@@ -985,6 +1399,7 @@ describe('batch import flow', () => {
     vi.mocked(api.job).mockResolvedValue({ ...page, changes: [qsp] });
     render(<ImportPage {...props()} />);
     fireEvent.click(screen.getByRole('button', { name: '添加文件夹' }));
+    await expandSettings('启动配置');
     expect(
       ((await screen.findByRole('combobox', { name: 'QSP 主游戏文件' })) as HTMLInputElement).value,
     ).toBe('彼女の冒険.qsp');
@@ -1003,6 +1418,7 @@ describe('batch import flow', () => {
     const options = props();
     const rendered = render(<ImportPage {...options} />);
     fireEvent.click(screen.getByRole('button', { name: '添加文件夹' }));
+    await expandSettings();
     await screen.findByRole('textbox', { name: '游戏名称' });
     await waitFor(() => expect(api.importAnalyze).toHaveBeenCalledWith(sources));
     expect(api.chooseImportSources).toHaveBeenCalledWith();
@@ -1047,7 +1463,7 @@ describe('batch import flow', () => {
     expect(screen.queryByRole('button', { name: '继续未完成项' })).toBeNull();
     expect(api.importApply).not.toHaveBeenCalled();
   });
-  it('keeps matched existing games unchecked and allows explicit new-game override', async () => {
+  it('keeps matched existing games checked and allows explicit new-game override', async () => {
     vi.mocked(api.importMatches).mockResolvedValue({
       [candidate.install_path]: [
         {
@@ -1061,11 +1477,11 @@ describe('batch import flow', () => {
     });
     render(<ImportPage {...props()} />);
     fireEvent.click(screen.getByRole('button', { name: '添加文件夹' }));
+    await expandSettings('游戏关联');
     await screen.findByRole('button', { name: '已关联：Game' });
     const checkbox = screen.getByRole('checkbox', { name: '选择 Game v1.2' }) as HTMLInputElement;
-    expect(checkbox.checked).toBe(false);
+    expect(checkbox.checked).toBe(true);
     fireEvent.click(screen.getByRole('button', { name: '改为新游戏' }));
-    fireEvent.click(checkbox);
     fireEvent.click(screen.getByRole('button', { name: '生成导入与更新计划（1）' }));
     await waitFor(() =>
       expect(api.importPlan).toHaveBeenCalledWith('analysis', [

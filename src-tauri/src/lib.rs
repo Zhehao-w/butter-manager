@@ -11,6 +11,7 @@ pub mod import_sources;
 pub mod importer;
 pub mod jobs;
 pub mod launcher;
+pub mod library_duplicates;
 pub mod maintenance;
 pub mod mtool;
 pub mod paths;

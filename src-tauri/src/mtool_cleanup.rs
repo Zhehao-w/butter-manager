@@ -158,8 +158,13 @@ fn snapshot(path: &Path, stop: &dyn Fn() -> bool) -> Result<BTreeMap<String, Sta
         if !prefix.as_os_str().is_empty() {
             keys.push(paths::path_text(prefix)?);
         }
-        for key in ["package.json", "MTool.exe", "loaders/inject.exe"] {
+        for key in ["package.json", "MTool.exe"] {
             keys.push(paths::path_text(&prefix.join(key))?.replace('\\', "/"));
+        }
+        for key in ["loaders/inject.exe", "loaders/inject.bin"] {
+            if named(&tool, key).is_some() {
+                keys.push(paths::path_text(&prefix.join(key))?.replace('\\', "/"));
+            }
         }
     }
     capture(path, keys, stop)
@@ -199,9 +204,9 @@ fn tool_signature(root: &Path) -> bool {
             let name = name.to_ascii_lowercase();
             name == "mtool" || name == "mtoolclient" || name.starts_with("mtoolclient_")
         })
-        && named(root, "loaders")
-            .and_then(|p| named(&p, "inject.exe"))
-            .is_some_and(|p| plain(&p).is_ok_and(|m| m.is_file()))
+        && ["loaders/inject.exe", "loaders/inject.bin"]
+            .iter()
+            .any(|name| named(root, name).is_some_and(|p| plain(&p).is_ok_and(|m| m.is_file())))
 }
 
 // Narrow static paths only. Filenames alone are never authority to remove a BAT.
@@ -306,9 +311,26 @@ fn safe_bundle(top: &Path, tool: &Path) -> Result<()> {
     if !tool_signature(tool) {
         return Err(invalid("未确认 MTool package.json 与注入器，保留目录"));
     }
-    // A wrapper must belong entirely to the tool. Its unrelated siblings are never recycled.
-    if top != tool && children(top)?.iter().any(|p| p != tool) {
-        return Err(invalid("一级目录混有其他内容，保留目录"));
+    // Standard distribution wrappers include their own launchers and display-repair helpers.
+    // Unknown siblings still prevent recycling the entire first-level folder.
+    if top != tool {
+        for entry in children(top)? {
+            if entry == tool {
+                continue;
+            }
+            let metadata = plain(&entry)?;
+            let name = entry.file_name().unwrap().to_string_lossy();
+            let helper = if metadata.is_dir() {
+                name == "在工具无法正常显示时打开我"
+                    || name.eq_ignore_ascii_case("Open me when the tool can't display correctly")
+            } else {
+                name == "点我打开工具.bat"
+                    || name.eq_ignore_ascii_case("Use me to open the Tool.bat")
+            };
+            if !helper {
+                return Err(invalid("一级目录混有其他内容，保留目录"));
+            }
+        }
     }
     // Reject clear game layouts at the package root, without inspecting MTool's own data/runtime.
     for entry in children(tool)? {
@@ -1013,6 +1035,55 @@ mod tests {
             assert!(detect(&f.source, &|| false)[0].safe);
             assert!(detect(&f.source, &|| false)[0].bats.is_empty());
         }
+    }
+    #[test]
+    fn recognizes_inject_bin_distribution_and_recycles_the_entire_wrapper() {
+        let f = Fixture::new(true);
+        fs::remove_file(f.source.join("与工具一同启动.bat")).unwrap();
+        fs::rename(
+            f.source.join("辅助工具/client"),
+            f.source.join("辅助工具/Tool"),
+        )
+        .unwrap();
+        fs::rename(f.source.join("辅助工具"), f.source.join("MTool")).unwrap();
+        let tool = f.source.join("MTool/Tool");
+        fs::rename(
+            tool.join("loaders/inject.exe"),
+            tool.join("loaders/inject.bin"),
+        )
+        .unwrap();
+        for name in [
+            "在工具无法正常显示时打开我",
+            "Open me when the tool can't display correctly",
+        ] {
+            fs::create_dir(f.source.join("MTool").join(name)).unwrap();
+        }
+        for name in ["点我打开工具.bat", "Use me to open the Tool.bat"] {
+            fs::write(f.source.join("MTool").join(name), b"internal tool launcher").unwrap();
+        }
+        let bundles = detect(&f.source, &|| false);
+        assert_eq!(bundles.len(), 1);
+        assert_eq!(bundles[0].folder, "MTool");
+        assert!(bundles[0].safe, "{}", bundles[0].reason);
+        let id = f.plan(true, None, "Game.exe", false);
+        let cleanup = f.store.get(&id).unwrap().items[0]
+            .mtool_cleanup
+            .clone()
+            .unwrap();
+        assert_eq!(cleanup.targets.len(), 1);
+        assert_eq!(cleanup.targets[0].path, "MTool");
+        assert!(cleanup.targets[0]
+            .snapshot
+            .contains_key("Tool/loaders/inject.bin"));
+        let ids = f.apply(&id).unwrap();
+        assert!(!f.root.join("Game v2/MTool").exists());
+        assert!(f.root.join("Game v2/Game.exe").is_file());
+        assert_eq!(
+            f.db.lock().unwrap().game(&ids[0]).unwrap().launch_type,
+            "MTOOL"
+        );
+        assert!(f.shared.join("MTool.exe").is_file());
+        assert_eq!(f.apply(&id).unwrap(), ids);
     }
     #[test]
     fn keeps_mixed_game_resources_and_wrapper_siblings() {

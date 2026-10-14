@@ -5,3 +5,5 @@
 - 优先用终端、脚本、API、文件和进程检查完成操作。GUI 自动化必须获得用户对当前任务的明确授权。
 - 终止可能影响用户工作的进程需先获得授权；覆盖升级仅关闭本项目的指定应用进程。
 - 用户已授权覆盖升级前直接强制退出本项目的管理器进程。先通过可执行文件路径确认归属，不终止游戏或其他应用；覆盖完成后重新打开管理器。
+- 本机日常使用程序为 `E:\butter-manager\butter-manager.exe`，正式资料为旁边完整的 `data\`；开发仓库在 `E:\butter-manager\dev\`。不要从构建输出启动新的空库代替正式库。
+- 日常构建产物为仓库内 `artifacts\windows\butter-manager.exe`；每次本地构建成功后，默认覆盖 `E:\butter-manager\butter-manager.exe` 根目录试用版并重新打开，无须再次询问是否覆盖。只替换 EXE，保留正式 `data\`，不改游戏或存档；构建失败不覆盖。开发缓存留在仓库 `.tools\` / `node_modules\` / `src-tauri\target\`，Rust 与 Windows 编译工具使用全局安装。

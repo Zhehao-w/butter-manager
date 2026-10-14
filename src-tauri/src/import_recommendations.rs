@@ -226,6 +226,7 @@ impl<'a> MatchIndex<'a> {
                         .zip(old.names.iter().take(2))
                         .any(|(a, b)| {
                             a.library_conflict(b)
+                                && a.package_proposal(b).is_none()
                                 && !(supported && a.metadata_proposal(b).is_some())
                         })
                 {
@@ -478,6 +479,124 @@ mod tests {
     }
 
     #[test]
+    fn compact_package_names_match_spaced_titles_in_import_and_library() {
+        let mut missing = Vec::new();
+        for (old_title, new_title, executable) in [
+            (
+                "和妹妹一起的一个月 妹と過ごす1ヵ月間 Ver2026.09 AI汉化版 去码版+全画廊",
+                "和妹妹共度的一个月 妹と过ごす1ヵ月间 v26.10",
+                "妹と過ごす1ヵ月間_Re.exe",
+            ),
+            (
+                "PaleCarnations-Ch4Up4-pc",
+                "PaleCarnations Ch.4 Up.7 康乃馨俱乐部",
+                "PaleCarnations.exe",
+            ),
+            (
+                "PublicSexLifeH-v0.83a-pc",
+                "Public Sex Life H v0.87.0 公共性生活公共生活 调教大师",
+                "PublicSexLifeH.exe",
+            ),
+            ("Ripples-0.5.0-pc2", "Ripples V0.9.22 涟漪", "Ripples.exe"),
+            (
+                "Supower-Re0.45-pc",
+                "Supower-Re 0.69 超能力重制版",
+                "Supower.exe",
+            ),
+        ] {
+            let mut old = game("old", old_title, Path::new("Z:/missing/old"));
+            // These four legacy records really have no launch metadata configured.
+            if !old_title.is_ascii() {
+                old.main_executable = Some(executable.into());
+                old.engine = "Unity".into();
+            }
+            let mut incoming = game("new", new_title, Path::new("Z:/missing/new"));
+            incoming.main_executable = Some(executable.into());
+            let mut candidate = scanner::pending_candidate(Path::new("Z:/missing/source")).unwrap();
+            candidate.suggested_title = new_title.into();
+            candidate.executables = vec![exe(executable)];
+            let matches =
+                MatchIndex::new(std::slice::from_ref(&old)).matches(&candidate, &|| false);
+            if matches.len() != 1 {
+                missing.push(format!("Import: {old_title} / {new_title}"));
+            }
+            assert!(matches.iter().all(|matched| !matched.auto_associate));
+            let index_games = [old, incoming];
+            let index = MatchIndex::new(&index_games);
+            let pairs = index.library_pairs(&|| false, &|_| {}).unwrap();
+            if pairs.len() != 1 {
+                missing.push(format!("library: {old_title} / {new_title}"));
+            }
+            assert!(pairs.iter().all(|pair| pair.confidence == "review"));
+            assert!(index.identities.is_empty());
+        }
+        assert!(missing.is_empty(), "{}", missing.join("\n"));
+    }
+
+    #[test]
+    fn package_only_recommendations_require_release_evidence_and_preserve_name_conflicts() {
+        for (old_title, new_title, old_exe, incoming_exe) in [
+            (
+                "PublicSexLifeH",
+                "Public Sex Life H v0.87.0",
+                None,
+                "PublicSexLifeH.exe",
+            ),
+            (
+                "PaleCarnations-Ch4Up4-pc",
+                "PaleCarnations Ch.5 Up.7",
+                None,
+                "PaleCarnations.exe",
+            ),
+            (
+                "Supower-Re0.45-pc",
+                "Supower-Re 0.69 外传",
+                None,
+                "Supower.exe",
+            ),
+            (
+                "Princess v1.0 旧译名",
+                "Princess v2.0 新译名",
+                None,
+                "Princess.exe",
+            ),
+            (
+                "和妹妹一起的一个月 妹と過ごす1ヵ月間 Ver2026.09",
+                "和妹妹共度的一个月 妹と过ごす1ヵ月间 v26.10",
+                None,
+                "妹と過ごす1ヵ月間_Re.exe",
+            ),
+            (
+                "和妹妹一起的一个月 妹と過ごす1ヵ月間 Ver2026.09",
+                "和妹妹共度的一个月 妹と遊ぶ1ヵ月間 v26.10",
+                Some("SharedProjectLauncher.exe"),
+                "SharedProjectLauncher.exe",
+            ),
+        ] {
+            let mut old = game("old", old_title, Path::new("Z:/missing/old"));
+            old.main_executable = old_exe.map(str::to_owned);
+            let mut incoming = game("new", new_title, Path::new("Z:/missing/new"));
+            incoming.main_executable = Some(incoming_exe.into());
+            let mut candidate = scanner::pending_candidate(Path::new("Z:/missing/source")).unwrap();
+            candidate.suggested_title = new_title.into();
+            candidate.executables = vec![exe(incoming_exe)];
+            assert!(
+                MatchIndex::new(std::slice::from_ref(&old))
+                    .matches(&candidate, &|| false)
+                    .is_empty(),
+                "Import: {old_title} / {new_title}"
+            );
+            assert!(
+                MatchIndex::new(&[old, incoming])
+                    .library_pairs(&|| false, &|_| {})
+                    .unwrap()
+                    .is_empty(),
+                "library: {old_title} / {new_title}"
+            );
+        }
+    }
+
+    #[test]
     fn screenshot_titles_match_in_import_and_library_without_auto_associating() {
         for (old_title, new_title, executable, save) in [
             (
@@ -529,6 +648,10 @@ mod tests {
             ("Moonlight Garden", "Moonlight Garden II"),
             ("Moonlight Garden", "Moonlight Garden DLC"),
             ("Moonlight Garden", "Moonlight Garden 外传"),
+            ("PaleCarnations-Ch4Up4-pc", "PaleCarnations Ch.5 Up.7"),
+            ("PublicSexLifeH-v0.83a-pc", "Public Sex Life H 2 v0.87.0"),
+            ("Supower-Re0.45-pc", "Supower-Re 0.69 外传"),
+            ("Moonlight Garden II", "Moonlight Garden I I"),
             ("NTR足球 NTRサッカー", "NTR篮球 NTRバスケット"),
             (
                 "爱欲之都 中场季 - 再启 City Lights Love Bites",

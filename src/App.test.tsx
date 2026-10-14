@@ -974,6 +974,70 @@ describe('iteration interactions', () => {
     expect(api.saveGame).not.toHaveBeenCalled();
     expect((paths as HTMLTextAreaElement).value).toBe('<GAME>/www/save\n%APPDATA%/RenPy/彼女');
   });
+  it('integrates bulk path relocation in advanced settings and refreshes the existing library', async () => {
+    const migrated = { ...game, install_path: 'D:/Games/已登记游戏' };
+    const savedSettings = { ...config, game_root: 'D:/Games' };
+    vi.mocked(api.chooseDirectory).mockResolvedValue('D:/Games');
+    vi.mocked(api.previewLibraryRelocation).mockResolvedValue({
+      token: 'bulk-token',
+      old_root: config.game_root,
+      new_root: 'D:/Games',
+      items: [
+        {
+          id: game.id,
+          title: game.display_title,
+          old_path: game.install_path,
+          new_path: migrated.install_path,
+          reason: null,
+        },
+      ],
+      mtool: {
+        old_path: '',
+        new_path: null,
+        state: 'unchanged',
+        reason: '公共 MTool 未配置，设置保持原样',
+      },
+    });
+    vi.mocked(api.applyLibraryRelocation).mockResolvedValue({
+      migrated: 1,
+      skipped: 0,
+      mtool_migrated: false,
+      settings: savedSettings,
+      games: [migrated],
+    });
+    render(<App />);
+    await screen.findByRole('button', { name: game.display_title });
+    openConfig('设置');
+    const page = screen.getByRole('region', { name: '设置页面' });
+    const advanced = page.querySelector('.settings-maintenance') as HTMLDetailsElement;
+    expect(advanced.open).toBe(false);
+    fireEvent.click(advanced.querySelector('summary')!);
+    const editor = within(page).getByRole('region', { name: '批量迁移游戏库路径' });
+    expect(
+      (within(editor).getByRole('textbox', { name: '旧游戏库根目录' }) as HTMLInputElement).value,
+    ).toBe(config.game_root);
+    fireEvent.click(within(editor).getByRole('button', { name: '选择新根目录…' }));
+    await waitForEnabledButton('预览迁移', within(editor));
+    fireEvent.click(within(editor).getByRole('button', { name: '预览迁移' }));
+    await within(editor).findByText('可迁移 1 个游戏，无法迁移 0 个游戏。');
+    vi.mocked(api.games).mockResolvedValue([migrated]);
+    fireEvent.click(within(editor).getByRole('button', { name: '确认迁移' }));
+    const modal = screen.getByRole('dialog', { name: '确认迁移游戏库路径？' });
+    fireEvent.click(within(modal).getByRole('button', { name: '确认迁移' }));
+    await within(editor).findByText('已迁移 1 个游戏，跳过 0 个。公共 MTool 设置未变。');
+    await waitFor(() =>
+      expect(
+        (within(page).getByRole('textbox', { name: /Game Root/ }) as HTMLInputElement).value,
+      ).toBe('D:/Games'),
+    );
+    goLibrary();
+    const search = screen.getByRole('textbox', { name: '搜索游戏或别名' });
+    fireEvent.change(search, { target: { value: migrated.install_path } });
+    expect(screen.getByRole('button', { name: game.display_title })).toBeTruthy();
+    expect(api.startLibraryCheck).toHaveBeenCalled();
+    expect(api.startScan).not.toHaveBeenCalled();
+    expect(api.register).not.toHaveBeenCalled();
+  });
   it('shows AppData cleanup only for RenPy and disables it without a valid directory', async () => {
     const detail = await openDetail();
     showDetailTab('存档位置');
@@ -1011,6 +1075,11 @@ describe('iteration interactions', () => {
       });
       await waitForEnabledButton('清理 AppData 存档', within(detail));
       const open = within(detail).getByRole('button', { name: '清理 AppData 存档' });
+      const saveActions = open.closest('.save-location-actions');
+      expect(saveActions).not.toBeNull();
+      expect(
+        within(saveActions as HTMLElement).getByRole('button', { name: '编辑存档' }),
+      ).toBeTruthy();
       fireEvent.click(open);
       const cancelDialog = await screen.findByRole('dialog', { name: '清理 AppData 存档？' });
       expect(within(cancelDialog).getByText('C:/Fixture/RenPy/彼女-1234')).toBeTruthy();

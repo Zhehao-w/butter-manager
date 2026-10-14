@@ -11,6 +11,76 @@ pub(super) struct Name {
     translation: String,
     numbers: Vec<String>,
     title: Title,
+    package: PackageTitle,
+}
+
+#[derive(Default)]
+struct PackageTitle {
+    latin: String,
+    chapters: Vec<String>,
+    re: bool,
+    release: bool,
+}
+
+impl PackageTitle {
+    fn new(value: &str, release: bool) -> Self {
+        let mut result = Self {
+            release,
+            ..Self::default()
+        };
+        let tokens = tokenize(value);
+        for token in tokens.iter().map(|token| token.trim_matches('.')) {
+            if !token.is_ascii()
+                || package_label(token)
+                || package_version(token)
+                || release_date(token)
+                || token.chars().all(|c| c.is_ascii_digit())
+            {
+                continue;
+            }
+            // Ren'Py packages sometimes attach the decimal version to the Re label.
+            // Keep Re as part of the title; never strip arbitrary title digits.
+            if token == "re"
+                || token.strip_prefix("re").is_some_and(|suffix| {
+                    let parts: Vec<_> = suffix.split('.').collect();
+                    (2..=4).contains(&parts.len())
+                        && parts.iter().all(|part| {
+                            !part.is_empty() && part.chars().all(|c| c.is_ascii_digit())
+                        })
+                })
+            {
+                result.re = true;
+                result.release |= token != "re";
+                result.latin.push_str("re");
+                continue;
+            }
+            // Chapter is an identity guard; Up is a release revision within that chapter.
+            if let Some(chapter) = token.strip_prefix("ch").map(|s| s.trim_start_matches('.')) {
+                let (chapter, update) = chapter
+                    .split_once("up")
+                    .map_or((chapter, None), |(a, b)| (a, Some(b)));
+                if !chapter.is_empty()
+                    && chapter.chars().all(|c| c.is_ascii_digit())
+                    && update.is_none_or(|u| !u.is_empty() && u.chars().all(|c| c.is_ascii_digit()))
+                {
+                    result.chapters.push(chapter.into());
+                    result.release |= update.is_some();
+                    continue;
+                }
+            }
+            if !result.chapters.is_empty()
+                && token
+                    .strip_prefix("up")
+                    .map(|s| s.trim_start_matches('.'))
+                    .is_some_and(|u| !u.is_empty() && u.chars().all(|c| c.is_ascii_digit()))
+            {
+                result.release = true;
+                continue;
+            }
+            result.latin.push_str(&token.replace('.', ""));
+        }
+        result
+    }
 }
 
 #[derive(Default)]
@@ -23,6 +93,12 @@ struct Title {
 }
 
 fn package_label(token: &str) -> bool {
+    if token
+        .strip_prefix("pc")
+        .is_some_and(|suffix| !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit()))
+    {
+        return true;
+    }
     if translation_package_label(token)
         || [
             "pc", "windows", "win", "win32", "win64", "x86", "x64", "android", "linux", "mac", "ai",
@@ -281,9 +357,52 @@ fn release_date(token: &str) -> bool {
 }
 
 impl Name {
+    fn compact_match(&self, old: &Self) -> bool {
+        self.package.latin.len() >= 7
+            && !["princess", "school", "sister", "adventure"].contains(&self.package.latin.as_str())
+            && self.package.latin == old.package.latin
+            && self.package.chapters == old.package.chapters
+            && !if self.package.re && old.package.re {
+                let base = |name: &Self| {
+                    Name::new(&name.versionless.replace("重制版", "").replace("重製版", ""))
+                };
+                base(self).library_conflict(&base(old))
+            } else {
+                self.library_conflict(old)
+            }
+            && (self.title.japanese.is_empty()
+                || old.title.japanese.is_empty()
+                || self.title.japanese.concat() == old.title.japanese.concat())
+    }
+
+    pub(super) fn package_proposal(&self, old: &Self) -> Option<(u8, String)> {
+        // Legacy library entries may have no executable metadata. Both names must carry
+        // explicit release information, and the entire compact title/chapter must agree.
+        (self.package.release
+            && old.package.release
+            && self.compact_match(old)
+            && (self.title.chinese.is_empty()
+                || old.title.chinese.is_empty()
+                || self.title.chinese == old.title.chinese))
+            .then(|| {
+                (
+                    72,
+                    "英文完整标题与章节一致，空格、连字符或包版本不同；请确认".into(),
+                )
+            })
+    }
+
     // This fallback is gated by matching distinctive executable / external save metadata.
-    // Only a missing first-season annotation is relaxed, never conflicting sequels or DLC.
+    // Relax packaging/separators and missing first-season annotations, never conflicting works.
     pub(super) fn metadata_proposal(&self, old: &Self) -> Option<(u8, String)> {
+        // Separator/packaging normalization remains gated by auxiliary game metadata.
+        // It never establishes automatic association, even when the compact title is exact.
+        if self.compact_match(old) {
+            return Some((
+                60,
+                "忽略英文空格、连字符及明确包版本后标题一致；结合项目资料确认".into(),
+            ));
+        }
         let base = |name: &Self| {
             let raw = name
                 .versionless
@@ -314,6 +433,13 @@ impl Name {
         let japanese = a.title.japanese.concat();
         let old_japanese = b.title.japanese.concat();
         if !japanese.is_empty() && !old_japanese.is_empty() && japanese != old_japanese {
+            // Some translated packages replace Japanese Han characters with Simplified
+            // Chinese. Restrict this fallback to these variants within a kana title;
+            // callers still require matching distinctive executable/external-save evidence.
+            let variant = |s: &str| s.replace('过', "過").replace('间', "間");
+            if japanese.chars().count() >= 8 && variant(&japanese) == variant(&old_japanese) {
+                return Some((70, "日文标题的简繁文字变体一致；结合项目资料确认".into()));
+            }
             return None;
         }
         let common_words = a
@@ -346,6 +472,7 @@ impl Name {
     pub(super) fn new(title: &str) -> Self {
         let raw = paths::normalize_alias(title);
         let simple = version::simple_version(title);
+        let release = simple.is_some();
         let versionless = simple.map_or_else(
             || raw.clone(),
             |value| paths::normalize_alias(&title.replacen(&value, " ", 1)),
@@ -356,6 +483,7 @@ impl Name {
         // Separate scripts even without spaces, so translated names can change position.
         let tokens = tokenize(&versionless);
         let title = Title::new(&tokens, &versionless);
+        let package = PackageTitle::new(&versionless, release);
         let mut words = Vec::new();
         let mut other = String::new();
         let mut japanese = String::new();
@@ -408,6 +536,7 @@ impl Name {
             translation,
             numbers,
             title,
+            package,
         }
     }
 
@@ -465,6 +594,9 @@ impl Name {
             format!("exact:{}", self.raw),
             format!("versionless:{}", self.versionless),
         ]);
+        if self.package.latin.len() >= 8 {
+            keys.insert(format!("compact:{}", self.package.latin));
+        }
         keys.extend(
             self.title
                 .words
@@ -558,10 +690,11 @@ impl Name {
 
     /// All relaxed comparisons are recommendations. A subset score never grants auto-association.
     pub(super) fn proposal(&self, old: &Self) -> Option<(u8, String)> {
+        let packaged = self.package_proposal(old);
         if self.raw != old.raw
             && (self.numbers != old.numbers || self.title.editions != old.title.editions)
         {
-            return None;
+            return packaged;
         }
         let dlc_difference = self.title.dlc != old.title.dlc;
         let legacy = self
@@ -651,7 +784,7 @@ impl Name {
             .into_iter()
             .max_by_key(|(score, _)| *score)
             .map(|(score, reason)| (score, format!("{reason}；请确认")));
-        let mut result = [legacy, best]
+        let mut result = [legacy, best, packaged]
             .into_iter()
             .flatten()
             .max_by_key(|(score, _)| *score)?;

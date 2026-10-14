@@ -49,6 +49,7 @@ import { FolderErrorDialog } from './FolderErrorDialog';
 import { SaveEditor } from './SaveEditor';
 import { WindowTitleBar } from './WindowTitleBar';
 import { RenpyAppdataCleanup } from './RenpyAppdataCleanup';
+import { LibraryRelocation } from './LibraryRelocation';
 import { WindowCloseGuards, useWindowCloseGuard, useWindowClosing } from './windowClose';
 import { useLibraryLayout, useSavedSort } from './preferences';
 import {
@@ -1249,12 +1250,6 @@ export default function App() {
                 description="确认启动文件和版本。切换页面后保留结果与选择。"
               >
                 <div className="header-actions">
-                  <span className="muted">
-                    已选 {selected.size} 项
-                    {visibleSelections < selected.size
-                      ? `（当前显示 ${visibleSelections} 项）`
-                      : ''}
-                  </span>
                   <button
                     disabled={taskActive || !settings?.game_root}
                     onClick={() => void startScan()}
@@ -1271,14 +1266,14 @@ export default function App() {
                   </button>
                 </div>
               </PageHeader>
-              {organizerTabs}
-              <div className="scan-filters">
+              <div className="scan-filters organizer-toolbar">
                 <SearchField
                   label="搜索扫描结果"
                   placeholder="搜索文件夹、路径、启动文件或版本"
                   value={scanSearch}
                   onChange={setScanSearch}
                 />
+                {organizerTabs}
                 <button
                   type="button"
                   className={`library-filter-button ${scanUnregisteredOnly ? 'active' : ''}`}
@@ -1302,6 +1297,12 @@ export default function App() {
                   <option value="modified-asc">目录修改时间 · 最早</option>
                 </SortField>
                 <div className="scan-selection-actions" role="group" aria-label="批量选择扫描结果">
+                  <span className="muted">
+                    已选 {selected.size} 项
+                    {visibleSelections < selected.size
+                      ? `（当前显示 ${visibleSelections} 项）`
+                      : ''}
+                  </span>
                   <button
                     type="button"
                     aria-pressed={scanAllSelected}
@@ -1497,6 +1498,17 @@ export default function App() {
               scrollPositions={settingsScroll}
               navigationGuard={settingsGuard}
               locked={taskActive || launchingIds.size > 0}
+              onMigrated={(report) => {
+                refreshLibraryAfterMaintenance();
+                setGames(report.games);
+                setSettings(report.settings);
+                setPathChecks({});
+                setAnalyses({});
+                setAnalysisNotices({});
+                setLinkCandidate(null);
+                setToast(`路径已迁移：${report.migrated} 个游戏，跳过 ${report.skipped} 个。`);
+                void startLibraryCheck(true);
+              }}
               onReset={async (confirmation) => {
                 const report = await api.clearLibrary(confirmation);
                 libraryEpoch.current += 1;
@@ -1964,6 +1976,7 @@ function SettingsPage({
   locked,
   onSave,
   onReset,
+  onMigrated,
 }: {
   settings: Settings;
   initialSection: SettingsSection;
@@ -1972,6 +1985,7 @@ function SettingsPage({
   locked: boolean;
   onSave: (settings: Settings) => Promise<void>;
   onReset: (confirmation: string) => Promise<void>;
+  onMigrated: (report: import('./types').LibraryRelocationReport) => void;
 }) {
   const [draft, setDraft] = useState(settings);
   const formId = useId();
@@ -2303,47 +2317,70 @@ function SettingsPage({
               <Icon name="next" size={18} />
             </span>
           </summary>
+          <LibraryRelocation
+            root={settings.game_root}
+            locked={busy || locked || dirty || confirmClose}
+            lockReason={
+              dirty
+                ? '请先保存或放弃当前设置修改，再预览路径迁移。'
+                : '有任务正在执行，请等待完成后再预览迁移。'
+            }
+            onBusy={setBusy}
+            onMigrated={onMigrated}
+          />
           <section className="reset-library" aria-label="清空游戏库">
             <h3>清空游戏库</h3>
-            <p>
-              删除数据库中的全部游戏、别名、存档路径记录、运行历史和设置。游戏与存档文件保持原位。
-            </p>
+            <p>清除全部管理记录和设置，游戏与存档文件保持原位。</p>
             {resetOpen ? (
-              <div role="alert">
-                <label>
-                  输入“清空数据库”确认
-                  <input
-                    aria-label="清空确认"
-                    value={confirmation}
-                    disabled={busy}
-                    onChange={(e) => setConfirmation(e.target.value)}
-                  />
-                </label>
-                <div className="footer-actions">
-                  <button
-                    disabled={busy}
-                    onClick={() => {
-                      setResetOpen(false);
-                      setConfirmation('');
-                    }}
-                  >
-                    取消清空
-                  </button>
-                  <button
-                    className="danger"
-                    disabled={busy || locked || confirmation !== '清空数据库'}
-                    onClick={() => {
-                      setBusy(true);
-                      setError('');
-                      void onReset(confirmation)
-                        .catch((reason) => setError(String(reason)))
-                        .finally(() => setBusy(false));
-                    }}
-                  >
-                    {busy ? '正在清空…' : '确认清空数据库'}
-                  </button>
+              <Modal
+                title="清空游戏库？"
+                variant="confirm"
+                onClose={() => {
+                  if (!busy) {
+                    setResetOpen(false);
+                    setConfirmation('');
+                  }
+                }}
+              >
+                <div role="alert">
+                  <p>
+                    删除数据库中的全部游戏、别名、存档路径记录、运行历史和设置。游戏与存档文件保持原位。
+                  </p>
+                  <label>
+                    输入“清空数据库”确认
+                    <input
+                      aria-label="清空确认"
+                      value={confirmation}
+                      disabled={busy}
+                      onChange={(e) => setConfirmation(e.target.value)}
+                    />
+                  </label>
+                  <div className="footer-actions">
+                    <button
+                      disabled={busy}
+                      onClick={() => {
+                        setResetOpen(false);
+                        setConfirmation('');
+                      }}
+                    >
+                      取消清空
+                    </button>
+                    <button
+                      className="danger"
+                      disabled={busy || locked || confirmation !== '清空数据库'}
+                      onClick={() => {
+                        setBusy(true);
+                        setError('');
+                        void onReset(confirmation)
+                          .catch((reason) => setError(String(reason)))
+                          .finally(() => setBusy(false));
+                      }}
+                    >
+                      {busy ? '正在清空…' : '确认清空数据库'}
+                    </button>
+                  </div>
                 </div>
-              </div>
+              </Modal>
             ) : (
               <button
                 className="danger"
@@ -3219,15 +3256,15 @@ function GameDetail({
                   >
                     添加存档目录…
                   </button>
+                  {game.engine === "Ren'Py" && (
+                    <RenpyAppdataCleanup
+                      game={game}
+                      active={detailTab === 'saves'}
+                      disabled={busy || launching || analysisLocked || confirmClose}
+                      onBusy={setMaintenanceBusy}
+                    />
+                  )}
                 </div>
-                {game.engine === "Ren'Py" && (
-                  <RenpyAppdataCleanup
-                    game={game}
-                    active={detailTab === 'saves'}
-                    disabled={busy || launching || analysisLocked || confirmClose}
-                    onBusy={setMaintenanceBusy}
-                  />
-                )}
               </div>
             </section>
           </div>

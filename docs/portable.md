@@ -2,6 +2,29 @@
 
 Windows Release 默认将应用资料放在 `butter-manager.exe` 旁的 `data/`。应放置在用户可写的文件夹；目录不可写时明确报错并退出，不回退到 AppData。
 
+## 安装、升级与迁移
+
+正式主资产为 `butter-manager-vX.Y.Z-windows-x64-portable.zip`，可同时下载独立 EXE 和 `SHA256SUMS.txt`。本轮只准备构建与发布流程，不实际创建 Release。
+
+首次安装：下载 ZIP，解压到可写的专用目录，运行 EXE。ZIP 内只有 `butter-manager/butter-manager.exe`；首次运行自动建立 `data/`，不携带别人的数据库、导入记录、WebView2 资料、缓存或游戏存档。
+
+升级：关闭管理器，只用新版 EXE 替换旧 EXE，保留 `data/` 及其全部内容。不要把已有用户资料删除或换成空目录。需要系统 [WebView2 Runtime](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution)，不随 ZIP 携带多文件运行时。未签名 EXE 可能触发 [SmartScreen](https://learn.microsoft.com/en-us/windows/security/operating-system-security/virus-and-threat-protection/microsoft-defender-smartscreen/)，请核对官方来源和校验值。
+
+迁移到新电脑：
+
+1. 完成或撤回未结束的文件操作，关闭管理器。
+2. 复制整个程序文件夹（EXE 和完整 `data/`），另将游戏目录复制到新位置。
+3. 打开新电脑上的管理器，在“设置 → 高级维护”执行“批量迁移游戏库路径”。旧根目录可以不存在，新根目录须已包含复制好的游戏。
+4. 预览每项结果，确认后检查公共 MTool、游戏启动与存档；无法迁移的记录保持原样，可用详情中的单游戏目录关联处理。
+
+映射严格按旧根目录下的相对组件进行，不按名称猜测。例如 `E:\Butter\RPG\Game B` 映射到 `D:\Games\Butter\RPG\Game B`，`E:\Butter2` 不属于前者。游戏启动文件、MTool target、QSP 主文件、工作目录、目录链接及 UUID 冲突不通过时跳过该项；原本未配置的启动项保持未配置。
+
+公共 MTool 位于旧根目录内时也按相对位置迁移，无固定文件夹名称。新目录及现有相对程序 / Loader 验证成功才更新；无效时保留旧 MTool 设置，有效游戏可继续迁移。不在旧根目录内的公共工具保持原样。
+
+迁移只在同一个数据库事务中更新安装路径、路径 key、根目录设置及原游戏目录内的绝对存档路径；`<GAME>`、相对路径、AppData 与其他外部路径保持原样。UUID、名字、别名、版本、启动模式、状态、时间、运行 / 版本历史及查重关系不改。不复制 / 移动 / 删除文件，不重新检测存档或重建记录。未完成文件任务或 Import Recovery 阻止迁移；预览期间数据库、目标身份或配置变化需重新预览，提交失败整体回滚。
+
+历史 Import Journal 与导入记录中的原路径不改写。原电脑回收站中的版本不会随 ZIP 或 `data/` 搬走；历史回退可能因此不可用，管理器不会伪造新的回退能力。
+
 ```text
 butter-manager/
 ├── butter-manager.exe
@@ -17,18 +40,32 @@ butter-manager/
 
 在“设置 → 关于应用”点击“打开数据目录”可打开当前构建实际使用的目录。
 
+## 本机使用与开发分开
+
+当前本机正式程序位于 `E:\butter-manager\butter-manager.exe`，完整正式资料位于 `E:\butter-manager\data\`；开发仓库（包括 `.git`、源码及未提交修改）位于 `E:\butter-manager\dev\`。日常从根目录 EXE 或指向它的快捷方式启动。构建输出旁首次启动会建立独立空库，因此不能以输出目录的新 `data/` 覆盖正式资料。
+
+开发命令在 `dev/` 中执行。Rust 工具链和 Windows C++ Build Tools 全局共享；`scripts/Use-Toolchain.ps1` 发现已安装的编译工具，将 Cargo registry、pnpm、临时文件缓存保留在项目 `.tools/`，`node_modules/` 和 Rust target 也留在仓库内。后续将源码及未提交修改完整转移到云端后，可清理整个 `dev/`，根目录 EXE 与 `data/` 可继续使用；全局编译工具按系统安装方式管理。
+
+本机升级先完成构建，关闭根目录管理器，只将 `dev/artifacts/windows/butter-manager.exe` 替换到根目录，再从根目录重新启动。构建脚本本身不覆盖正式程序；无需为这种单纯替换 EXE 的升级每次执行 Portable 专项测试，不移动或备份正式数据库。
+
 ## 开发与发布
 
-保持原命令：
+开发及正式打包命令：
 
 ```powershell
 pnpm tauri dev
-pnpm tauri build --no-bundle -- --locked
+./scripts/Build-PortableRelease.ps1
 ```
 
 `tauri.windows.conf.json` 使用 Tauri 2.12 的 `app.appDirectoriesOverride: "./data"`。Tauri 相对于 **EXE** 解析此路径，不依赖工作目录；config/data/localData 使用该根目录，cache/log 使用其 `caches/` 和 `logs/`。不设置窗口的 `dataDirectory`，使默认 WebView2 跟随同一个根目录。[官方说明](https://v2.tauri.app/reference/config/#appdirectoriesoverride)
 
-Windows 开发模式或 debug 构建在创建 Tauri 应用之前把覆盖根切为 `./data-dev`。`pnpm tauri dev` 使用 `src-tauri/target/debug/data-dev/`，数据库、恢复记录和浏览器数据全部与正式 Release 隔离，也不读取旧正式资料。`tauri dev --release` 也按开发模式使用 `data-dev/`。正式 Release 构建对应 `src-tauri/target/release/data/`。非 Windows 的目录行为不变。GitHub Windows CI 的命令与工作流保持原样。
+Windows 开发模式或 debug 构建在创建 Tauri 应用之前把覆盖根切为 `./data-dev`。`pnpm tauri dev` 使用 `src-tauri/target/debug/data-dev/`，数据库、恢复记录和浏览器数据全部与正式 Release 隔离，也不读取旧正式资料。`tauri dev --release` 也按开发模式使用 `data-dev/`。所有正式 EXE 的 `data/` 均相对于自身位置，与构建缓存或启动工作目录无关；非 Windows 行为不变。
+
+脚本检查 `package.json`、Cargo package 与 Tauri 配置版本一致，构建生产前端及 Windows x64 `tauri/custom-protocol` EXE。独立缓存位于 `src-tauri/target/portable-release/`，默认只输出 `artifacts/windows/butter-manager.exe`；未来正式发布加 `-PortableZip`，另生成版本化 ZIP 与 SHA-256。只打包明确的一份 EXE，不遍历或复制旁边的资料；拒绝覆盖正在使用的构建 / 输出 EXE，不关闭程序或启动 GUI。每轮先清除自身旧分发产物，失败后也清理，不能拿旧成功包冒充新结果；构建缓存可继续复用。
+
+`-SkipFrontendBuild` 仅供已完成前端检查的 CI / 本地流程复用资源，普通打包不要跳过。`-ExpectedTag vX.Y.Z` 要求 Tag 与源码版本完全一致，不自动改版。输出目录只能是本仓库 `artifacts/` 下的专用子目录；`-CargoExecutable` 用于隔离的构建失败回归，不用于正常发布。
+
+现有 `check.yml` 保留 PR EXE artifact，普通 Push / PR 只构建 EXE，不发布。Release published 事件或手动选择已有 Tag 并显式启用发布时才加 `-PortableZip`，同一套完整检查 / 构建结果交给独立上传 job；只有该 job 有 `contents: write`。上传前复核 SHA-256、已有 Release 和版本化文件名，失败明确报错；不创建 Tag / Release、不签名 EXE。手动发布请确认所选 Tag 已存在且版本一致，取消勾选时只检查与构建。
 
 发布时复制 EXE 到专用文件夹，已有资料需连同整个 `data/` 一起移动。关闭程序后移动整个文件夹，配置与库记录仍在；游戏库、存档和公共工具的绝对路径保持原值。跨用户/机器移动时，原游戏路径可能需重新关联；Windows 加密的浏览器秘密不保证跨用户可读。
 
@@ -41,6 +78,8 @@ Windows 开发模式或 debug 构建在创建 Tauri 应用之前把覆盖根切�
 现有配置、导入恢复记录和 localStorage 随整个 `data/` 一起保留。移动时先关闭程序，不要只移动 SQLite 主文件而遗漏 WAL/SHM、`imports/` 或 WebView2 用户目录。Windows 加密的浏览器资料不保证跨用户/机器可读。
 
 ## 验证
+
+Portable 专项测试是手动回归，不随常规构建或 CI 执行。首次准备分发、数据目录 / 启动协议或打包脚本改变时，按改动范围选择验证：先用 `-PortableZip` 构建，再执行 `./scripts/Test-PortableRelease.ps1` 检查包内结构、哈希与失败清理；涉及资料目录和迁移时执行下面的真实 WebView2 检查。普通业务改动保留对应回归与 EXE 构建即可。
 
 后端使用独立临时夹具，合并验证开发/正式隔离、同目录实例保护、不可写提示与已有内容保留；未完成更新记录在数据文件夹移动后继续执行及回退。前端验证关于区按钮及失败提示。
 

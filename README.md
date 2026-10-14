@@ -41,10 +41,16 @@ butter-manager 是一个轻量的 Windows 本地游戏库与启动器。扫描�
 
 ## 开始使用
 
-1. **准备程序**：按下方步骤构建，将 `butter-manager.exe` 放到可写的专用文件夹中运行。需要 Windows 与 WebView2 Runtime，主要开发环境为 Windows 11。
+1. **准备程序**：正式发布后，从 [Releases](https://github.com/Zhehao-w/butter-manager/releases) 下载 `butter-manager-vX.Y.Z-windows-x64-portable.zip`，解压到可写的专用目录，运行其中的 `butter-manager.exe`；首次启动自动建立旁边的 `data/`。也可按下方步骤从源码构建。目前本轮只准备发布流程，没有创建新的 Release。
 2. **选择游戏库**：在“设置”中选择游戏库根目录并保存；扫描线程可选低占用、均衡或性能。
 3. **扫描并登记**：点击游戏库的“扫描目录”，或进入“游戏整理 → 目录扫描”，从结果中选择要入库的游戏。扫描同时检查已有记录的目录与启动文件；失效记录由你决定如何处理。
 4. **开始游玩**：从游戏库直接启动，或打开详情调整资料。成功启动后自动标记为“正在玩”，“已通关”状态保留。
+
+Windows 需要 [WebView2 Runtime](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution)，ZIP 不包含浏览器运行时。未签名程序可能显示 [SmartScreen 提示](https://learn.microsoft.com/en-us/windows/security/operating-system-security/virus-and-threat-protection/microsoft-defender-smartscreen/)；请核对下载来源与同一发布页的 `SHA256SUMS.txt` 校验值。
+
+**升级**：关闭管理器，下载新版，只替换 EXE，保留整个现有 `data/`。发布 ZIP 只包含程序，不包含用户资料。
+
+**迁移到新电脑**：先完成或撤回未结束的文件任务，关闭管理器，将整个 Portable 程序文件夹（含 `data/`）和游戏文件复制到新电脑。在“设置 → 高级维护 → 批量迁移游戏库路径”填写旧根目录、选择已复制好的新根目录，预览后确认。按原相对目录重新关联已有 UUID；同时检查位于旧根目录内的公共 MTool，失效项保留原记录供你手动处理。此功能不搬动文件、不重新扫描或修改游戏名称。最后核对游戏启动及存档；依赖原电脑回收站的历史版本可能无法继续回退，历史导入记录保持原样。详见 [Portable 说明](docs/portable.md)。
 
 ### 已有游戏与新下载的游戏
 
@@ -79,7 +85,7 @@ butter-manager 是一个轻量的 Windows 本地游戏库与启动器。扫描�
 
 ## 存档编辑，直接在详情中完成
 
-点击游戏详情顶部或“存档位置”中的粉色 **编辑存档** 按钮，选择槽位、搜索字段，修改后统一保存。
+点击游戏详情顶部或“存档位置”中的粉色 **编辑存档** 按钮，选择槽位，按变量名称、值或字段路径搜索，修改后统一保存。未保存的修改值也可搜索，编辑期间保留原值匹配，避免输入框因筛选突然消失。
 
 | 格式                          | 当前可编辑内容                                                                |
 | ----------------------------- | ----------------------------------------------------------------------------- |
@@ -130,14 +136,17 @@ pnpm tauri dev
 构建 Windows EXE：
 
 ```powershell
-pnpm tauri build --no-bundle -- --locked
+. ./scripts/Use-Toolchain.ps1
+./scripts/Build-PortableRelease.ps1
 ```
 
-产物位于 `src-tauri/target/release/butter-manager.exe`。正式 EXE 应通过 Tauri CLI 构建；仅运行普通 `cargo build --release` 会缺少正式资源协议，窗口可能连接开发服务器。开发模式使用独立的 `data-dev/`；仅打开 Vite 浏览器页面不能扫描、启动游戏或访问本地资料。
+默认只生成 `artifacts/windows/butter-manager.exe`。未来发布时加 `-PortableZip`，另生成版本化 ZIP 和 `SHA256SUMS.txt`；ZIP 中仅有 `butter-manager/butter-manager.exe`。脚本核对三处版本、构建前端及带 `tauri/custom-protocol` 的 x64 EXE，用独立的 `src-tauri/target/portable-release/` 缓存，不覆盖正在使用的正式程序，也不自动启动 GUI。现有 `pnpm tauri build --no-bundle -- --locked` 仍可用于常规本地构建，产物在 `src-tauri/target/release/`；普通 `cargo build --release` 缺少生产资源协议。开发模式使用独立 `data-dev/`；Vite 浏览器页面不能执行桌面文件操作。
+
+本机使用布局：`E:\butter-manager\` 放日常 EXE 和完整 `data\`，仓库放在 `dev\`。升级只将构建好的 EXE 替换到父目录，保留资料；Rust / Windows 编译工具共享全局安装，项目依赖、下载缓存和构建产物留在 `dev\`。详见 [本机使用与开发分开](docs/portable.md#本机使用与开发分开)。
 
 已有本地工具链可使用 `. ./scripts/Use-Toolchain.ps1`；新环境直接使用已安装的系统工具链。开发依赖、缓存及临时文件位于忽略提交的 `.tools/`，构建产物位于 `src-tauri/target/`。
 
-贡献约定、增量测试命令和隔离测试见 [CONTRIBUTING](CONTRIBUTING.md)。GitHub Windows CI 完整检查格式、前后端测试、TypeScript / Vite 与 Clippy；PR、main 推送及正式 Release 均构建 Windows EXE，PR 另提供可下载的 artifact，不自动创建 Release 或上传 Release 附件。开发与升级不备份正式数据库或导出可恢复记录，测试只使用独立夹具。
+贡献约定、增量测试命令和隔离测试见 [CONTRIBUTING](CONTRIBUTING.md)。GitHub Windows CI 完整检查格式、前后端测试、TypeScript / Vite 与 Clippy，普通 Push / PR 只构建 EXE，PR 保留 EXE artifact。仅明确的 Release published 事件，或指定已有 Tag 且主动勾选发布的手动流程，才另打 ZIP、校验版本 / SHA-256 并上传已有 Release 的资产；不创建 Tag 或 Release。检查和构建只执行一套，Portable 专项测试保留为手动命令，不随每次构建或 CI 执行。开发与升级不备份正式数据库或导出可恢复记录，测试只使用独立夹具。
 
 ## 项目与许可
 

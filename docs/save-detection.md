@@ -15,6 +15,8 @@
 | Unity                             | 游戏包含与所选 EXE 对应的 `*_Data/app.info`，且两行明确表示厂商 / 产品时，使用其作为路径线索，匹配已有 `%USERPROFILE%/AppData/LocalLow/厂商/产品`；忽略 DefaultCompany 等公共默认名 |
 | NW.js                             | 字典记录 `%LOCALAPPDATA%/package.json 的 name`，但不自动把整个 Chromium 数据目录视为存档，因为它包含缓存及其他应用数据                                                              |
 
+Unity 还会根据所选 EXE 精确检查同目录下的 `EXE名_Data/SaveData`、`Saves` 等白名单子目录，支持启动文件位于游戏内子目录的情况。不需要 app.info，不检查其他 EXE 的 `_Data` 或资源深层目录，不改变现有 LocalLow 识别规则。
+
 只认实际存在的路径；不全盘查找，不执行游戏，不读取存档内容，不解析 `.rpyc` / `.pck`，不处理注册表 PlayerPrefs、Steam Cloud 或浏览器 IndexedDB。只读配置文本上限 256 KiB；跳过链接 / junction，外部路径须由明确元数据组成。Unity app.info 是分发包线索，不等于所有 Unity 游戏都采用该默认目录；定制游戏仍可手工修改。
 
 来源（2026-10-07 查阅）：

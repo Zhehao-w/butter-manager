@@ -264,6 +264,7 @@ pub fn discover_root(
                 .file_name()
                 .to_string_lossy()
                 .starts_with(".butter-import-")
+            && !entry.file_name().to_string_lossy().starts_with(".bm-")
         {
             let path = entry.path();
             publish(&path);
@@ -1236,6 +1237,14 @@ mod tests {
         fs::write(game.join("uninstall.exe"), b"").unwrap();
         fs::write(game.join("Tool/MTool.exe"), b"").unwrap();
         fs::write(root.path().join("Ignored.exe"), b"").unwrap();
+        for name in [".butter-import-existing", ".bm-existing-0"] {
+            fs::create_dir_all(root.path().join(name).join("previous")).unwrap();
+            fs::write(
+                root.path().join(name).join("previous/Game.exe"),
+                b"old game",
+            )
+            .unwrap();
+        }
         let report = scan_root(root.path()).unwrap();
         assert_eq!(report.candidates.len(), 1);
         assert_eq!(report.candidates[0].executables.len(), 1);

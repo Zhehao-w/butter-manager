@@ -7,13 +7,22 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      publish_release:
+        description: Upload assets to an existing Release (never creates a tag or Release)
+        type: boolean
+        default: false
+      release_tag:
+        description: Existing vX.Y.Z tag; required when publishing
+        type: string
+        default: ''
 
 permissions:
   contents: read
 
 concurrency:
-  group: checks-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: checks-${{ github.workflow }}-${{ inputs.release_tag || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'release' && !inputs.publish_release }}
 
 jobs:
   windows:
@@ -27,6 +36,7 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || (inputs.publish_release && inputs.release_tag) || github.sha }}
 
       - name: Set up Node.js
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
@@ -67,13 +77,71 @@ jobs:
         run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 
       - name: Build Windows app
-        # The interface was already checked/built above; avoid Tauri CLI rebuilding it.
-        run: cargo build --locked --manifest-path src-tauri/Cargo.toml --release --features tauri/custom-protocol
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || (inputs.publish_release && inputs.release_tag) || '' }}
+          PUBLISH_RELEASE: ${{ inputs.publish_release || false }}
+          EVENT_NAME: ${{ github.event_name }}
+          PREPARE_RELEASE: ${{ github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.publish_release) }}
+        run: |
+          if ($env:EVENT_NAME -eq 'workflow_dispatch' -and $env:PUBLISH_RELEASE -eq 'true' -and -not $env:RELEASE_TAG) { throw 'Publishing requires an existing release tag.' }
+          # Reuse the frontend already checked/built above.
+          ./scripts/Build-PortableRelease.ps1 -SkipFrontendBuild -ExpectedTag $env:RELEASE_TAG -PortableZip:($env:PREPARE_RELEASE -eq 'true')
 
       - name: Upload PR Windows executable
         if: github.event_name == 'pull_request'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: butter-manager-windows-pr-${{ github.event.pull_request.number }}
-          path: src-tauri/target/release/butter-manager.exe
+          path: artifacts/windows/butter-manager.exe
           if-no-files-found: error
+
+      - name: Preserve verified Release assets
+        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.publish_release)
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: windows-release-assets
+          path: |
+            artifacts/windows/butter-manager.exe
+            artifacts/windows/butter-manager-v*-windows-x64-portable.zip
+            artifacts/windows/SHA256SUMS.txt
+          if-no-files-found: error
+
+  publish:
+    needs: windows
+    if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.publish_release)
+    runs-on: windows-2022
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.release_tag }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Download verified assets
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: windows-release-assets
+          path: artifacts/windows
+
+      - name: Verify checksums and upload to existing Release
+        run: |
+          if ($env:RELEASE_TAG -notmatch '^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$') { throw 'Invalid release tag.' }
+          $assets = @('butter-manager.exe', "butter-manager-$env:RELEASE_TAG-windows-x64-portable.zip")
+          $checksums = @(Get-Content -LiteralPath artifacts/windows/SHA256SUMS.txt)
+          if ($checksums.Count -ne 2) { throw 'Expected two checksums.' }
+          $names = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+          foreach ($line in $checksums) {
+            if ($line -notmatch '^([a-f0-9]{64})  (.+)$') { throw 'Invalid checksum line.' }
+            $expected = $Matches[1]
+            $name = $Matches[2]
+            if (-not $names.Add($name)) { throw 'Duplicate checksum entry.' }
+            if ($assets -cnotcontains $name) { throw 'Unexpected release asset.' }
+            if ((Get-FileHash -LiteralPath (Join-Path artifacts/windows $name) -Algorithm SHA256).Hash.ToLowerInvariant() -cne $expected) { throw 'Asset checksum mismatch.' }
+          }
+          gh release view $env:RELEASE_TAG --repo $env:GH_REPO
+          if ($LASTEXITCODE -ne 0) { throw 'The Release must already exist; nothing will be created.' }
+          gh release upload $env:RELEASE_TAG artifacts/windows/butter-manager.exe "artifacts/windows/butter-manager-$env:RELEASE_TAG-windows-x64-portable.zip" artifacts/windows/SHA256SUMS.txt --clobber --repo $env:GH_REPO
+          if ($LASTEXITCODE -ne 0) { throw 'Release asset upload failed.' }

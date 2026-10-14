@@ -75,7 +75,7 @@ export function RenpyAppdataCleanup({
   }
 
   return (
-    <div className="full">
+    <div className="renpy-appdata-actions">
       <button
         type="button"
         disabled={disabled || busy || !preview?.token}

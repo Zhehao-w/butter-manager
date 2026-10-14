@@ -238,6 +238,7 @@ export function LibraryDuplicates({
   }
   async function changeState(pair: DuplicatePair, status: DuplicateStatus) {
     setBusy(true);
+    setMessage('');
     reviewGeneration.current++;
     try {
       await api.setDuplicateReview(pair.left_id, pair.right_id, status);
@@ -275,7 +276,11 @@ export function LibraryDuplicates({
       setMessage(
         status === 'confirmed'
           ? '已确认重复，请选中要删除的一份，或稍后处理。'
-          : '确认状态已更新。',
+          : status === 'excluded'
+            ? '已标记为不是同一游戏。'
+            : statuses.get(pairKey(pair)) === 'excluded'
+              ? '已撤销排除，请重新确认。'
+              : '已撤销确认，请重新确认。',
       );
     } catch (error) {
       onError(String(error));
@@ -329,14 +334,14 @@ export function LibraryDuplicates({
           </button>
         </div>
       </PageHeader>
-      {tabs}
-      <div className="scan-filters duplicate-toolbar">
+      <div className="scan-filters organizer-toolbar duplicate-toolbar">
         <SearchField
           label="搜索重复组合"
           placeholder="搜索名称、版本、引擎或路径"
           value={search}
           onChange={setSearch}
         />
+        {tabs}
         <div className="import-tabs duplicate-status-tabs" role="tablist" aria-label="重复处理状态">
           {(['all', 'pending', 'confirmed', 'excluded'] as const).map((status) => (
             <button
@@ -388,6 +393,13 @@ export function LibraryDuplicates({
         >
           {rendered.map(({ pair, row }) => {
             const status = statuses.get(pairKey(pair)) || 'pending';
+            const reason = pair.score
+              ? pair.reason
+              : status === 'pending'
+                ? '已撤销决定，请重新检查匹配程度'
+                : status === 'confirmed'
+                  ? '已确认重复，待处理'
+                  : '已标记为不是同一游戏';
             return (
               <div
                 key={pairKey(pair)}
@@ -410,9 +422,66 @@ export function LibraryDuplicates({
                     >
                       {status === 'confirmed' ? '已确认重复' : statusLabels[status]}
                     </span>
-                    <p title={pair.score ? `${pair.reason} · 匹配程度 ${pair.score}` : pair.reason}>
-                      {pair.reason}
+                    <p title={pair.score ? `${reason} · 匹配程度 ${pair.score}` : reason}>
+                      {reason}
                     </p>
+                    <div className="duplicate-card-actions">
+                      {status === 'pending' ? (
+                        <>
+                          <button
+                            disabled={locked || active}
+                            onClick={() => void changeState(pair, 'excluded')}
+                          >
+                            不是同一游戏
+                          </button>
+                          <button
+                            className="primary"
+                            disabled={locked || active}
+                            onClick={() => void changeState(pair, 'confirmed')}
+                          >
+                            确认重复
+                          </button>
+                        </>
+                      ) : status === 'excluded' ? (
+                        <button
+                          disabled={locked || active}
+                          onClick={() => void changeState(pair, 'pending')}
+                        >
+                          撤销排除
+                        </button>
+                      ) : (
+                        <>
+                          <button
+                            disabled={locked || active}
+                            onClick={() => void changeState(pair, 'pending')}
+                          >
+                            撤销确认
+                          </button>
+                          <button
+                            className="danger"
+                            disabled={
+                              locked ||
+                              active ||
+                              ![pair.left_id, pair.right_id].includes(
+                                selectedForDeletion[pairKey(pair)],
+                              )
+                            }
+                            onClick={() =>
+                              setDeleting({
+                                game: gamesById.get(selectedForDeletion[pairKey(pair)])!,
+                                kept: gamesById.get(
+                                  selectedForDeletion[pairKey(pair)] === pair.left_id
+                                    ? pair.right_id
+                                    : pair.left_id,
+                                )!,
+                              })
+                            }
+                          >
+                            删除选中游戏…
+                          </button>
+                        </>
+                      )}
+                    </div>
                   </div>
                   <div
                     className="duplicate-game-grid"
@@ -516,63 +585,6 @@ export function LibraryDuplicates({
                         </div>
                       );
                     })}
-                  </div>
-                  <div className="duplicate-card-actions">
-                    {status === 'pending' ? (
-                      <>
-                        <button
-                          disabled={locked || active}
-                          onClick={() => void changeState(pair, 'excluded')}
-                        >
-                          不是同一游戏
-                        </button>
-                        <button
-                          className="primary"
-                          disabled={locked || active}
-                          onClick={() => void changeState(pair, 'confirmed')}
-                        >
-                          确认重复
-                        </button>
-                      </>
-                    ) : status === 'excluded' ? (
-                      <button
-                        disabled={locked || active}
-                        onClick={() => void changeState(pair, 'pending')}
-                      >
-                        撤销排除
-                      </button>
-                    ) : (
-                      <>
-                        <button
-                          disabled={locked || active}
-                          onClick={() => void changeState(pair, 'pending')}
-                        >
-                          撤销确认
-                        </button>
-                        <button
-                          className="danger"
-                          disabled={
-                            locked ||
-                            active ||
-                            ![pair.left_id, pair.right_id].includes(
-                              selectedForDeletion[pairKey(pair)],
-                            )
-                          }
-                          onClick={() =>
-                            setDeleting({
-                              game: gamesById.get(selectedForDeletion[pairKey(pair)])!,
-                              kept: gamesById.get(
-                                selectedForDeletion[pairKey(pair)] === pair.left_id
-                                  ? pair.right_id
-                                  : pair.left_id,
-                              )!,
-                            })
-                          }
-                        >
-                          删除选中游戏…
-                        </button>
-                      </>
-                    )}
                   </div>
                 </article>
               </div>

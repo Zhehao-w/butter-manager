@@ -82,6 +82,34 @@ beforeEach(() => {
 });
 afterEach(() => vi.restoreAllMocks());
 describe('Save Editor Lite', () => {
+  it.each([
+    ['number', 9876.25, '9876.25'],
+    ['number', 0, '0'],
+    ['boolean', false, 'false'],
+    ['boolean', true, 'true'],
+    ['string', '勇者 ExampleValue', 'examplevalue'],
+    ['null', null, 'none'],
+    ['string_set', ['cg_alpha', 'cg_beta'], 'cg_beta'],
+  ] as [SaveField['kind'], SaveField['value'], string][])(
+    'searches %s values using %s',
+    async (kind, value, needle) => {
+      const original = doc();
+      original.fields = [
+        field('target', Array.isArray(value) ? [...value] : value, kind),
+        field('other', 'unrelated', 'string'),
+      ];
+      vi.mocked(api.readEditableSave).mockResolvedValue(original);
+      render(<SaveEditor game={game} onClose={vi.fn()} />);
+      await screen.findByText('target');
+      fireEvent.change(screen.getByRole('textbox', { name: '存档字段' }), {
+        target: { value: needle },
+      });
+      expect(screen.getByText('target')).toBeTruthy();
+      expect(screen.queryByText('other')).toBeNull();
+      expect(api.applySaveEdits).not.toHaveBeenCalled();
+    },
+  );
+
   it('registers current save drafts with window close protection and preserves them on failed save', async () => {
     const guards = new Map() as NonNullable<ContextType<typeof WindowCloseGuards>>;
     const { unmount } = render(
@@ -129,8 +157,10 @@ describe('Save Editor Lite', () => {
     fireEvent.change(screen.getByLabelText('data["money"]'), { target: { value: '19' } });
     fireEvent.click(screen.getByRole('button', { name: '收起 data' }));
     fireEvent.change(screen.getByRole('textbox', { name: '存档字段' }), {
-      target: { value: 'money' },
+      target: { value: '19' },
     });
+    expect((screen.getByLabelText('data["money"]') as HTMLInputElement).value).toBe('19');
+    fireEvent.change(screen.getByRole('textbox', { name: '存档字段' }), { target: { value: '5' } });
     expect((screen.getByLabelText('data["money"]') as HTMLInputElement).value).toBe('19');
     fireEvent.click(screen.getByRole('button', { name: '保存修改 (1)' }));
     await waitFor(() =>

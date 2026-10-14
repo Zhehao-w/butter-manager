@@ -239,10 +239,22 @@ export function SaveEditor({ game, onClose }: { game: Game; onClose: () => void 
     const byId = new Map(document?.fields.map((field) => [field.id, field]) ?? []);
     return (document?.fields ?? []).filter((field) => {
       if (field.category !== category) return false;
-      if (needle)
-        return `${field.name} ${field.path} ${field.type_name ?? ''} ${field.description ?? ''}`
+      if (needle) {
+        // Keep the saved value searchable while editing, as well as the pending value,
+        // so a value filter does not remove the input halfway through typing.
+        const values =
+          field.kind === 'container'
+            ? []
+            : [field.value, ...(field.id in drafts ? [drafts[field.id]] : [])];
+        const valueText = values
+          .map((value) =>
+            Array.isArray(value) ? value.join('\n') : value === null ? 'null none' : String(value),
+          )
+          .join(' ');
+        return `${field.name} ${field.path} ${field.type_name ?? ''} ${field.description ?? ''} ${valueText}`
           .toLocaleLowerCase()
           .includes(needle);
+      }
       let parent = field.parent_id;
       const visited = new Set<string>();
       while (parent) {
@@ -252,7 +264,7 @@ export function SaveEditor({ game, onClose }: { game: Game; onClose: () => void 
       }
       return true;
     });
-  }, [document, category, search, expanded]);
+  }, [document, category, search, expanded, drafts]);
   const virtual = useVirtualizer({
     count: fields.length,
     getScrollElement: () => viewport.current,
@@ -481,7 +493,7 @@ export function SaveEditor({ game, onClose }: { game: Game; onClose: () => void 
                 label="存档字段"
                 value={search}
                 onChange={setSearch}
-                placeholder="搜索名称、ID 或字段路径"
+                placeholder="搜索名称、值、ID 或字段路径"
               />
             </div>
             <div

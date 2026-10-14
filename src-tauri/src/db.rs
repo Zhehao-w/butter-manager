@@ -3,7 +3,7 @@ use crate::domain::{
     Settings,
 };
 use crate::paths::{contained_file, normalize_alias, path_key, path_text, relative_path};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use std::path::Path;
 use uuid::Uuid;
 
@@ -688,6 +688,109 @@ impl Database {
         }
         transaction.commit()?;
         self.game(&game.id)
+    }
+
+    pub(crate) fn relocation_revision(&self) -> Result<(u64, i64)> {
+        Ok((
+            self.connection.total_changes(),
+            self.connection
+                .query_row("PRAGMA data_version", [], |row| row.get(0))?,
+        ))
+    }
+    pub fn preview_library_relocation(
+        &self,
+        old: &str,
+        new: &str,
+        token: &str,
+    ) -> Result<crate::library_relocation::Plan> {
+        let revision = self.relocation_revision()?;
+        let plan = crate::library_relocation::preview(
+            self.games()?,
+            self.settings()?,
+            revision,
+            old,
+            new,
+            token,
+        )?;
+        if self.relocation_revision()? != revision {
+            return Err(Error::Validation("数据库已变化，请重新预览迁移".into()));
+        }
+        Ok(plan)
+    }
+    pub fn apply_library_relocation(
+        &mut self,
+        plan: &crate::library_relocation::Plan,
+    ) -> Result<crate::library_relocation::Report> {
+        crate::library_relocation::revalidate(plan)?;
+        self.commit_library_relocation(plan)
+    }
+    pub(crate) fn commit_library_relocation(
+        &mut self,
+        plan: &crate::library_relocation::Plan,
+    ) -> Result<crate::library_relocation::Report> {
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let revision = (
+            tx.total_changes(),
+            tx.query_row("PRAGMA data_version", [], |row| row.get::<_, i64>(0))?,
+        );
+        if revision != plan.revision {
+            return Err(Error::Validation("数据库已变化，请重新预览迁移".into()));
+        }
+        let mut migrated = 0;
+        for item in plan.view.items.iter().filter(|item| item.reason.is_none()) {
+            let new = item
+                .new_path
+                .as_deref()
+                .ok_or_else(|| Error::Validation("迁移预览缺少目标路径".into()))?;
+            if tx.execute("UPDATE games SET install_path=?2,install_path_key=?3 WHERE id=?1 AND install_path=?4", params![item.id, new, path_key(Path::new(new))?, item.old_path])? != 1 {
+                return Err(Error::Validation("游戏路径已变化，请重新预览迁移".into()));
+            }
+            let game = plan
+                .games
+                .iter()
+                .find(|game| game.id == item.id)
+                .ok_or_else(|| Error::Validation("迁移游戏不存在".into()))?;
+            for path in &game.save_paths {
+                let rebased = crate::maintenance::rebase_save(
+                    path,
+                    Path::new(&item.old_path),
+                    Path::new(new),
+                );
+                if rebased != *path {
+                    tx.execute(
+                        "UPDATE save_paths SET path=?3 WHERE game_id=?1 AND path=?2",
+                        params![item.id, path, rebased],
+                    )?;
+                }
+            }
+            migrated += 1;
+        }
+        tx.execute(
+            "UPDATE settings SET game_root=?1 WHERE id=1 AND game_root!=?1",
+            [&plan.view.new_root],
+        )?;
+        let mtool_migrated = plan.view.mtool.state == "ready";
+        if mtool_migrated {
+            tx.execute(
+                "UPDATE settings SET mtool_root=?1 WHERE id=1 AND mtool_root!=?1",
+                [plan
+                    .view
+                    .mtool
+                    .new_path
+                    .as_deref()
+                    .ok_or_else(|| Error::Validation("迁移预览缺少 MTool 路径".into()))?],
+            )?;
+        }
+        tx.commit()?;
+        Ok(crate::library_relocation::Report {
+            migrated,
+            skipped: plan.view.items.len() - migrated,
+            mtool_migrated,
+            settings: self.settings()?,
+            games: self.games()?,
+        })
     }
     pub fn games_by_ids(&self, ids: &[String]) -> Result<Vec<Game>> {
         let mut result = Vec::new();

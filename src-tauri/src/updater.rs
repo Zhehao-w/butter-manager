@@ -586,9 +586,11 @@ pub(super) fn validate_record(id: &str, root: &str, index: usize, item: &Item) -
         }
         return Ok(());
     };
+    let quarantine = paths::path_key(Path::new(&update.quarantine))?;
     if item.selection.existing_id.as_deref() != Some(&item.game_id)
-        || paths::path_key(Path::new(&update.quarantine))?
+        || (quarantine
             != paths::path_key(&Path::new(root).join(format!(".butter-import-{id}-{index}")))?
+            && quarantine != paths::path_key(&compact_stage_path(root, id, index))?)
         || paths::path_key(Path::new(&item.target))?
             != paths::path_key(Path::new(staging_target(item)))?
     {
@@ -855,6 +857,39 @@ fn validate_launch(target: &Path, config: &VersionConfig) -> Result<()> {
 }
 
 impl ImportStore {
+    fn compact_update_stage(&self, plan: &mut Plan, index: usize) -> Result<()> {
+        let item = &plan.items[index];
+        validate_record(&plan.id, &plan.root, index, item)?;
+        require_identity(Path::new(&plan.root), Some(&plan.root_id))?;
+        let compact = compact_stage_path(&plan.root, &plan.id, index);
+        let current = stage_path(plan, index);
+        if !exists(&current)? {
+            return Ok(());
+        }
+        verify_owner(&current, &plan.id)?;
+        let previous = current.join("previous");
+        if exists(&previous)? {
+            require_identity(&previous, Some(&item.update.as_ref().unwrap().old_id))?;
+        }
+        if current != compact {
+            // Never adopt or replace a directory at a colliding shortened name.
+            if exists(&compact)? {
+                return Err(invalid("短暂存目录已被占用，保留旧版本并停止回收"));
+            }
+            check_stage_idle(
+                &[current.clone(), PathBuf::from(&item.target)],
+                item.update.as_ref().unwrap().lightweight,
+            )?;
+            rename_new(&current, &compact)?;
+        }
+        let compact_text = paths::path_text(&compact)?;
+        if plan.items[index].update.as_ref().unwrap().quarantine != compact_text {
+            plan.items[index].update.as_mut().unwrap().quarantine = compact_text;
+            self.save(plan)?;
+        }
+        Ok(())
+    }
+
     fn finish_identity(
         &self,
         plan: &mut Plan,
@@ -1598,6 +1633,9 @@ impl ImportStore {
         job: &Job,
         database: &Arc<Mutex<Database>>,
     ) -> Result<()> {
+        if plan.items[index].state == "update_recycle" {
+            self.compact_update_stage(plan, index)?;
+        }
         if plan.items[index].state == "update_identity"
             || plan.items[index].state == "rollback_identity"
         {

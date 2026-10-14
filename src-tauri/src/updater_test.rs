@@ -891,6 +891,73 @@ fn rollback_carries_latest_progress_back_without_discarding_current_version_or_h
         .is_empty());
 }
 #[test]
+fn legacy_recycle_stage_shortening_recovers_after_rename_and_protects_collisions_and_identity() {
+    for mode in ["resume", "renamed_before_journal", "collision", "replaced"] {
+        let mut f = Fixture::new();
+        let id = f.plan(true, true);
+        let legacy = f.root.join(format!(".butter-import-{id}-0"));
+        let compact = compact_stage_path(&paths::path_text(&f.root).unwrap(), &id, 0);
+        let mut plan = f.store.get(&id).unwrap();
+        plan.items[0].update.as_mut().unwrap().quarantine = paths::path_text(&legacy).unwrap();
+        f.store.save(&plan).unwrap();
+        FAIL_CHECKPOINT.with(|failure| *failure.borrow_mut() = Some("update_recycle".into()));
+        assert!(f.apply(&id).is_err());
+        assert!(legacy.join("previous").exists());
+        let old_id = identity(&legacy.join("previous")).unwrap();
+        assert!(!f.source.exists());
+        match mode {
+            "renamed_before_journal" => rename_new(&legacy, &compact).unwrap(),
+            "collision" => {
+                fs::create_dir(&compact).unwrap();
+                fs::write(compact.join("owner"), "another plan").unwrap();
+                fs::write(compact.join("foreign.txt"), b"untouched").unwrap();
+            }
+            "replaced" => {
+                rename_new(&legacy.join("previous"), &legacy.join("original")).unwrap();
+                fs::create_dir(legacy.join("previous")).unwrap();
+                fs::write(legacy.join("previous/foreign.txt"), b"untouched").unwrap();
+            }
+            _ => {}
+        }
+        f.store = ImportStore::open(f.store.directory.clone()).unwrap();
+        assert!(f.store.recovery_issues().is_empty());
+        if mode == "collision" || mode == "replaced" {
+            assert!(f.apply(&id).is_err());
+            let protected = if mode == "collision" {
+                compact.join("foreign.txt")
+            } else {
+                legacy.join("previous/foreign.txt")
+            };
+            assert_eq!(fs::read(protected).unwrap(), b"untouched");
+            assert_eq!(fs::read(f.old().join("游戏.html")).unwrap(), b"new game");
+            if mode == "collision" {
+                assert_eq!(identity(&legacy.join("previous")).unwrap(), old_id);
+            }
+            continue;
+        }
+        f.apply(&id).unwrap();
+        let finished = f.store.get(&id).unwrap();
+        assert_eq!(finished.items[0].state, "completed");
+        assert_eq!(
+            finished.items[0].update.as_ref().unwrap().quarantine,
+            paths::path_text(&compact).unwrap()
+        );
+        assert!(!legacy.exists() && !compact.exists());
+        assert_eq!(
+            f.db.lock().unwrap().version_history(&f.id).unwrap().len(),
+            1
+        );
+        f.rollback(&id).unwrap();
+        assert_eq!(identity(&f.old()).unwrap(), old_id);
+        assert_eq!(fs::read(f.old().join("游戏.html")).unwrap(), b"old game");
+        assert_eq!(
+            fs::read(f.old().join("www/save/進行.sav")).unwrap(),
+            b"old progress"
+        );
+    }
+}
+
+#[test]
 fn every_update_checkpoint_survives_restart_without_losing_sources_or_duplicate_history() {
     for legacy in [false, true] {
         for state in [

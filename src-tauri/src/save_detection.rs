@@ -514,8 +514,21 @@ fn detect_with_environment(
             let data = executable
                 .parent()
                 .unwrap_or(Path::new(""))
-                .join(format!("{stem}_Data/app.info"));
-            if let Some(text) = path_text(&data)
+                .join(format!("{stem}_Data"));
+            if executable
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("exe"))
+                && local_directory(&root, &data)
+            {
+                for (name, relative) in visible_directories(&root, &data) {
+                    if save_name(&name) {
+                        if let Ok(path) = path_text(&relative) {
+                            result.push(format!("<GAME>/{}", path.replace('\\', "/")));
+                        }
+                    }
+                }
+            }
+            if let Some(text) = path_text(&data.join("app.info"))
                 .ok()
                 .and_then(|path| small_text(&root, &path))
             {
@@ -706,6 +719,77 @@ mod tests {
         assert!(valid_detected_path(&root, "<GAME>/SaveGames")); // A safe local file, but not a dictionary match.
         assert!(!valid_detected_path(&root, "<GAME>/missing"));
         assert!(!valid_detected_path(&root, "D:/outside/save"));
+    }
+
+    #[test]
+    fn unity_local_saves_follow_the_selected_executable_without_scanning_other_data_folders() {
+        for executable in ["Game.exe", "包装/Game.exe"] {
+            let temp = tempfile::tempdir().unwrap();
+            let root = temp.path();
+            let data = Path::new(executable).parent().unwrap().join("Game_Data");
+            for name in ["sAvEdAtA", "Saves", "Assets/SaveData"] {
+                fs::create_dir_all(root.join(&data).join(name)).unwrap();
+            }
+            fs::create_dir_all(root.join("Other_Data/SaveData")).unwrap();
+            let marker = root.join(&data).join("sAvEdAtA/slot.dat");
+            fs::write(&marker, b"unchanged").unwrap();
+            let no_external = &|_: &str| None;
+            let expected: Vec<_> = ["Saves", "sAvEdAtA"]
+                .into_iter()
+                .map(|name| {
+                    format!(
+                        "<GAME>/{}",
+                        path_text(&data.join(name)).unwrap().replace('\\', "/")
+                    )
+                })
+                .collect();
+            assert_eq!(
+                detect_with_environment(root, ".", "Unity", Some(executable), no_external),
+                expected
+            );
+            for (engine, exe) in [
+                ("Unity", None),
+                ("Unknown", Some(executable)),
+                ("Unity", Some("../Game.exe")),
+                ("Unity", Some("Missing.exe")),
+                ("Unity", Some("Game.bat")),
+            ] {
+                assert!(detect_with_environment(root, ".", engine, exe, no_external).is_empty());
+            }
+            assert_eq!(fs::read(&marker).unwrap(), b"unchanged");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn unity_local_saves_refuse_junctions_in_data_and_save_directories() {
+        for linked in ["Game_Data", "Game_Data/SaveData"] {
+            let temp = tempfile::tempdir().unwrap();
+            let outside = tempfile::tempdir().unwrap();
+            fs::create_dir_all(outside.path().join("SaveData")).unwrap();
+            fs::write(outside.path().join("slot.dat"), b"foreign save").unwrap();
+            let link = temp.path().join(linked);
+            fs::create_dir_all(link.parent().unwrap()).unwrap();
+            let created = std::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(link.to_string_lossy().replace('/', "\\"))
+                .arg(outside.path().to_string_lossy().replace('/', "\\"))
+                .output()
+                .unwrap();
+            assert!(
+                created.status.success(),
+                "{}",
+                String::from_utf8_lossy(&created.stderr)
+            );
+            let found =
+                detect_with_environment(temp.path(), ".", "Unity", Some("Game.exe"), &|_| None);
+            fs::remove_dir(&link).unwrap();
+            assert!(found.is_empty());
+            assert_eq!(
+                fs::read(outside.path().join("slot.dat")).unwrap(),
+                b"foreign save"
+            );
+        }
     }
 
     #[test]

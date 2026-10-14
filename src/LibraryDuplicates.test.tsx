@@ -138,6 +138,13 @@ describe('library duplicate review', () => {
       fireEvent.click(screen.getByRole('tab', { name: '待确认 1' }));
       expect(screen.getByRole('button', { name: '确认重复' })).toBeTruthy();
       expect(screen.getByText('Title v1.2')).toBeTruthy();
+      expect(screen.getByText('已撤销决定，请重新检查匹配程度')).toBeTruthy();
+      fireEvent.click(screen.getByRole('button', { name: '不是同一游戏' }));
+      await screen.findByText('没有待确认的组合');
+      fireEvent.click(screen.getByRole('tab', { name: '已排除 1' }));
+      expect(screen.getByText('已标记为不是同一游戏')).toBeTruthy();
+      expect(screen.queryByText('已撤销决定，请重新检查匹配程度')).toBeNull();
+      expect(screen.getByText('已标记为不是同一游戏。')).toBeTruthy();
     },
   );
   it('preserves filters and results across tabs and preserves the last complete results on cancellation', async () => {

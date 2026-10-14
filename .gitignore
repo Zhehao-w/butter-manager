@@ -1,6 +1,7 @@
 node_modules/
 .pnpm-store/
 dist/
+artifacts/
 src-tauri/target/
 src-tauri/gen/
 .tools/

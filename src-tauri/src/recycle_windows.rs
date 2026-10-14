@@ -1,6 +1,7 @@
 use std::{
     os::windows::ffi::OsStrExt,
     path::{Path, PathBuf},
+    sync::{Arc, Mutex},
 };
 use windows::{
     core::{implement, Ref, HRESULT, PCWSTR},
@@ -101,6 +102,7 @@ pub fn restore(path: &Path, target: &Path) -> crate::domain::Result<()> {
         )?;
         let sink: IFileOperationProgressSink = RecycleOnly {
             restore_target: Some(target.to_path_buf()),
+            failure: Default::default(),
         }
         .into();
         operation.MoveItem(&item, &destination, PCWSTR(name.as_ptr()), &sink)?;
@@ -118,6 +120,7 @@ pub fn restore(path: &Path, target: &Path) -> crate::domain::Result<()> {
 #[implement(IFileOperationProgressSink)]
 struct RecycleOnly {
     restore_target: Option<PathBuf>,
+    failure: Arc<Mutex<Option<String>>>,
 }
 #[allow(non_snake_case, unused_variables)]
 impl IFileOperationProgressSink_Impl for RecycleOnly_Impl {
@@ -125,12 +128,19 @@ impl IFileOperationProgressSink_Impl for RecycleOnly_Impl {
         Ok(())
     }
     fn FinishOperations(&self, hr: HRESULT) -> WResult {
+        if let Err(error) = hr.ok() {
+            self.failure
+                .lock()
+                .unwrap()
+                .get_or_insert_with(|| error.to_string());
+        }
         hr.ok()
     }
     fn PreDeleteItem(&self, flags: u32, item: Ref<IShellItem>) -> WResult {
         // Abort any permanent-delete fallback, including a disabled/full recycle bin.
         // https://learn.microsoft.com/windows/win32/api/shobjidl_core/nf-shobjidl_core-ifileoperationprogresssink-predeleteitem
         if self.restore_target.is_some() || flags & TSF_DELETE_RECYCLE_IF_POSSIBLE.0 as u32 == 0 {
+            *self.failure.lock().unwrap() = Some("Windows 未批准回收此目录，已阻止永久删除".into());
             return Err(E_ABORT.into());
         }
         Ok(())
@@ -142,6 +152,12 @@ impl IFileOperationProgressSink_Impl for RecycleOnly_Impl {
         hr: HRESULT,
         new: Ref<IShellItem>,
     ) -> WResult {
+        if let Err(error) = hr.ok() {
+            self.failure
+                .lock()
+                .unwrap()
+                .get_or_insert_with(|| error.to_string());
+        }
         hr.ok()
     }
     fn PreRenameItem(&self, flags: u32, item: Ref<IShellItem>, name: &PCWSTR) -> WResult {
@@ -242,7 +258,7 @@ impl IFileOperationProgressSink_Impl for RecycleOnly_Impl {
     }
 }
 pub fn recycle(path: &Path) -> crate::domain::Result<()> {
-    fn run(path: &Path) -> WResult {
+    fn run(path: &Path, failure: Arc<Mutex<Option<String>>>) -> WResult {
         unsafe {
             CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok()?;
             struct Apartment;
@@ -267,6 +283,7 @@ pub fn recycle(path: &Path) -> crate::domain::Result<()> {
             let item: IShellItem = SHCreateItemFromParsingName(PCWSTR(wide.as_ptr()), None)?;
             let sink: IFileOperationProgressSink = RecycleOnly {
                 restore_target: None,
+                failure,
             }
             .into();
             operation.DeleteItem(&item, &sink)?;
@@ -277,8 +294,15 @@ pub fn recycle(path: &Path) -> crate::domain::Result<()> {
             Ok(())
         }
     }
-    run(path).map_err(|e| {
-        crate::domain::Error::Validation(format!("无法送入回收站（不会转为永久删除）：{e}"))
+    let failure = Arc::new(Mutex::new(None));
+    run(path, failure.clone()).map_err(|e| {
+        let detail = failure
+            .lock()
+            .unwrap()
+            .clone()
+            .map(|reason| format!("；{reason}"))
+            .unwrap_or_default();
+        crate::domain::Error::Validation(format!("无法送入回收站（不会转为永久删除）：{e}{detail}"))
     })
 }
 
@@ -287,12 +311,20 @@ mod tests {
     use super::*;
     #[test]
     fn sink_vetoes_permanent_deletion_without_touching_files() {
+        let failure = Arc::new(Mutex::new(None));
         let sink: IFileOperationProgressSink = RecycleOnly {
             restore_target: None,
+            failure: failure.clone(),
         }
         .into();
         unsafe {
             assert!(sink.PreDeleteItem(0, None).is_err());
+            assert!(failure
+                .lock()
+                .unwrap()
+                .as_deref()
+                .unwrap()
+                .contains("已阻止永久删除"));
             assert!(sink
                 .PreDeleteItem(TSF_DELETE_RECYCLE_IF_POSSIBLE.0 as u32, None)
                 .is_ok());
@@ -300,25 +332,65 @@ mod tests {
     }
 
     #[test]
+    fn sink_preserves_specific_shell_failure_before_generic_abort() {
+        let failure = Arc::new(Mutex::new(None));
+        let sink: IFileOperationProgressSink = RecycleOnly {
+            restore_target: None,
+            failure: failure.clone(),
+        }
+        .into();
+        unsafe {
+            assert!(sink
+                .PostDeleteItem(0, None, HRESULT(0x80070005u32 as i32), None)
+                .is_err());
+            assert!(sink.FinishOperations(E_ABORT).is_err());
+        }
+        assert!(failure
+            .lock()
+            .unwrap()
+            .as_deref()
+            .unwrap()
+            .contains("0x80070005"));
+    }
+
+    #[test]
     #[ignore = "native Shell roundtrip uses only an isolated temporary fixture"]
     fn native_unicode_recycle_and_restore_roundtrip() {
-        let temp = tempfile::tempdir().unwrap();
-        let original = temp.path().join("魔法少女 日本語 old version");
-        std::fs::create_dir(&original).unwrap();
-        std::fs::write(original.join("進行.sav"), b"fixture").unwrap();
-        let id = crate::importer::identity(&original).unwrap();
-        recycle(&original).unwrap();
-        assert!(!original.exists());
-        let recycled = recycled_paths()
-            .unwrap()
-            .into_iter()
-            .find(|p| crate::importer::identity(p).ok().as_deref() == Some(&id))
-            .unwrap();
-        restore(&recycled, &original).unwrap();
-        assert_eq!(
-            std::fs::read(original.join("進行.sav")).unwrap(),
-            b"fixture"
-        );
-        assert_eq!(crate::importer::identity(&original).unwrap(), id);
+        for long_stage in [false, true] {
+            let temp = tempfile::tempdir().unwrap();
+            let plan_id = "12345678-1234-1234-1234-123456789abc";
+            let legacy = temp.path().join(format!(".butter-import-{plan_id}-0"));
+            let mut original = legacy.join("previous");
+            std::fs::create_dir_all(&original).unwrap();
+            let leaf = if long_stage {
+                let prefix_len = original.as_os_str().encode_wide().count() + 1;
+                format!(
+                    "{}進行.sav",
+                    "x".repeat(270 - prefix_len - "進行.sav".encode_utf16().count())
+                )
+            } else {
+                "進行.sav".into()
+            };
+            std::fs::write(original.join(&leaf), b"fixture").unwrap();
+            let id = crate::importer::identity(&original).unwrap();
+            if long_stage {
+                assert!(original.join(&leaf).as_os_str().encode_wide().count() >= 260);
+                let compact =
+                    crate::importer::compact_stage_path(temp.path().to_str().unwrap(), plan_id, 0);
+                crate::importer::rename_new(&legacy, &compact).unwrap();
+                original = compact.join("previous");
+                assert!(original.join(&leaf).as_os_str().encode_wide().count() < 260);
+            }
+            recycle(&original).unwrap();
+            assert!(!original.exists());
+            let recycled = recycled_paths()
+                .unwrap()
+                .into_iter()
+                .find(|p| crate::importer::identity(p).ok().as_deref() == Some(&id))
+                .unwrap();
+            restore(&recycled, &original).unwrap();
+            assert_eq!(std::fs::read(original.join(&leaf)).unwrap(), b"fixture");
+            assert_eq!(crate::importer::identity(&original).unwrap(), id);
+        }
     }
 }

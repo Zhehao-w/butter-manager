@@ -16,9 +16,11 @@ cargo test --locked --manifest-path src-tauri/Cargo.toml --no-default-features -
 cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 ```
 
-PR 执行完整前端 / Rust 回归、Prettier / Rustfmt、TypeScript / Vite 和所有目标 Clippy，构建 Windows Release EXE，并上传可下载的 PR artifact。Push 到 main（兼容原 master）、手动工作流及正式 Release 的 published 事件执行相同完整检查和 EXE 构建。工作流不自动创建 Release 或上传 Release 附件。
+PR 执行完整前端 / Rust 回归、Prettier / Rustfmt、TypeScript / Vite 和所有目标 Clippy，只构建 Windows Release EXE，并上传 PR EXE artifact。Push main（兼容 master）执行相同检查和 EXE 构建。Release published 或手动显式启用发布且指定已有 Tag 时，复用这一套构建，额外打 ZIP 并将 EXE / ZIP / SHA-256 上传到已有 Release；不创建 Tag、Release 或自动修改版本。仅上传 job 有 `contents: write`。
 
-EXE 构建复用前面已经生成的前端资源，使用 `cargo build --locked --manifest-path src-tauri/Cargo.toml --release --features tauri/custom-protocol`，避免再次运行 Tauri 的前端构建步骤。
+CI 调用 `scripts/Build-PortableRelease.ps1 -SkipFrontendBuild` 复用已检查的前端，使用独立 x64 Cargo target 和 `tauri/custom-protocol`；本地默认脚本会先构建前端，只输出 EXE。正式发布加 `-PortableZip`。`scripts/Test-PortableRelease.ps1`（ZIP 白名单、哈希及失败清理）和 `scripts/Test-Portable.ps1`（数据目录与移动后读取）保留为手动专项回归，首次验证或对应逻辑改变时执行，不进入常规 CI。最终产物在忽略提交的 `artifacts/windows/`，不会打包任何正式用户资料。详见 [Portable 说明](docs/portable.md)。
+
+本机仓库已放在 `E:\butter-manager\dev\`，日常程序和完整正式 `data\` 留在父目录。Windows 本地可先执行 `. ./scripts/Use-Toolchain.ps1`，使用全局 Rust / C++ 工具和项目内缓存；工具无需逐项目安装，缓存可随仓库清理。构建与测试不要读取父目录正式资料，升级只替换父目录 EXE。
 
 局部修改优先运行相关测试；发布或整合较大功能时再执行上面的完整检查。例如：
 

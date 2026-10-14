@@ -40,6 +40,37 @@ export interface RenpyAppdataPreview {
   reason: string | null;
 }
 
+export interface LibraryRelocationPreview {
+  token: string;
+  old_root: string;
+  new_root: string;
+  items: {
+    id: string;
+    title: string;
+    old_path: string;
+    new_path: string | null;
+    reason: string | null;
+  }[];
+  mtool: {
+    old_path: string;
+    new_path: string | null;
+    state: 'ready' | 'blocked' | 'unchanged';
+    reason: string;
+  };
+}
+export interface LibraryRelocationProgress {
+  processed: number;
+  total: number;
+  current: string;
+}
+export interface LibraryRelocationReport {
+  migrated: number;
+  skipped: number;
+  mtool_migrated: boolean;
+  settings: Settings;
+  games: Game[];
+}
+
 export interface Game {
   id: string;
   canonical_title: string;

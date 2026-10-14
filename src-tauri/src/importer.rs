@@ -80,6 +80,7 @@ pub fn folder_name(name: &str) -> Result<()> {
         || name == ".."
         || name.chars().any(|c| c < ' ' || "<>:\"/\\|?*".contains(c))
         || name.to_ascii_lowercase().starts_with(".butter-import-")
+        || name.to_ascii_lowercase().starts_with(".bm-")
         || [
             "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7",
             "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
@@ -794,8 +795,7 @@ impl ImportStore {
             let files = manifest.iter().filter(|e| !e.directory).count();
             let cross_volume = volume(&source)? != volume(&root)?;
             let update = if let Some(game) = existing {
-                let quarantine =
-                    root.join(format!(".butter-import-{}-{}", plan.id, plan.items.len()));
+                let quarantine = compact_stage_path(&plan.root, &plan.id, plan.items.len());
                 match self.prepare_update(
                     game,
                     &selection,
@@ -1346,7 +1346,20 @@ impl ImportStore {
 }
 
 fn stage_path(plan: &Plan, index: usize) -> PathBuf {
-    Path::new(&plan.root).join(format!(".butter-import-{}-{index}", plan.id))
+    let legacy = Path::new(&plan.root).join(format!(".butter-import-{}-{index}", plan.id));
+    if let Some(update) = &plan.items[index].update {
+        let compact = compact_stage_path(&plan.root, &plan.id, index);
+        // A rename may have completed immediately before the journal write was interrupted.
+        // Subsequent owner/file-identity checks still gate every mutation of this directory.
+        if Path::new(&update.quarantine) == compact || !legacy.exists() && compact.exists() {
+            return compact;
+        }
+    }
+    legacy
+}
+pub(crate) fn compact_stage_path(root: &str, id: &str, index: usize) -> PathBuf {
+    let key: String = id.chars().filter(|c| *c != '-').take(12).collect();
+    Path::new(root).join(format!(".bm-{key}-{index}"))
 }
 fn verify_owner(container: &Path, id: &str) -> Result<()> {
     checked_dir(container)?;
@@ -1407,15 +1420,26 @@ fn validate_paths(plan: &Plan, item: &Item, journal: &Path) -> Result<()> {
 }
 #[cfg(windows)]
 pub(crate) fn identity(path: &Path) -> Result<String> {
+    file_identity(path, false)
+}
+/// Reassociation only needs file identity, without requesting access to file contents.
+#[cfg(windows)]
+pub(crate) fn metadata_identity(path: &Path) -> Result<String> {
+    file_identity(path, true)
+}
+#[cfg(windows)]
+fn file_identity(path: &Path, metadata_only: bool) -> Result<String> {
     use std::os::windows::fs::OpenOptionsExt;
     use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::Storage::FileSystem::{
         GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION, FILE_FLAG_BACKUP_SEMANTICS,
     };
-    let file = OpenOptions::new()
-        .read(true)
-        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
-        .open(path)?;
+    let mut options = OpenOptions::new();
+    options.read(true).custom_flags(FILE_FLAG_BACKUP_SEMANTICS);
+    if metadata_only {
+        options.access_mode(0);
+    }
+    let file = options.open(path)?;
     let mut information: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
     // SAFETY: the file owns a live handle and the output has the exact Windows ABI layout.
     if unsafe { GetFileInformationByHandle(file.as_raw_handle() as _, &mut information) } == 0 {
@@ -1431,6 +1455,10 @@ pub(crate) fn identity(path: &Path) -> Result<String> {
     use std::os::unix::fs::MetadataExt;
     let m = fs::metadata(path)?;
     Ok(format!("{}:{}", m.dev(), m.ino()))
+}
+#[cfg(not(windows))]
+pub(crate) fn metadata_identity(path: &Path) -> Result<String> {
+    identity(path)
 }
 pub(crate) fn require_identity(path: &Path, expected: Option<&str>) -> Result<()> {
     checked_dir(path)?;
@@ -2590,6 +2618,7 @@ mod tests {
             "trail.",
             " leading",
             ".butter-import-foreign",
+            ".bm-foreign",
         ] {
             assert!(folder_name(name).is_err());
         }

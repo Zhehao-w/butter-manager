@@ -24,10 +24,126 @@ struct AppState {
         Arc<Mutex<std::collections::HashMap<String, crate::import_duplicate::DuplicatePlan>>>,
     appdata_plans:
         Arc<Mutex<std::collections::HashMap<String, crate::maintenance::RenpyAppdataPlan>>>,
+    relocation_plans:
+        Arc<Mutex<std::collections::HashMap<String, crate::library_relocation::Plan>>>,
     running: Arc<crate::runtime::RunningGames>,
     external_saves: Arc<crate::save_editor::ExternalSaves>,
 }
 type CommandResult<T> = std::result::Result<T, String>;
+
+#[tauri::command]
+async fn preview_library_relocation(
+    state: State<'_, AppState>,
+    old_root: String,
+    new_root: String,
+    on_progress: tauri::ipc::Channel<crate::library_relocation::Progress>,
+) -> CommandResult<crate::library_relocation::Preview> {
+    let db = state.db.clone();
+    let plans = state.relocation_plans.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let (games, settings, revision) = {
+            let database = db.lock().map_err(|_| "数据库锁不可用")?;
+            let revision = database.relocation_revision().map_err(|e| e.to_string())?;
+            let games = database.games().map_err(|e| e.to_string())?;
+            let settings = database.settings().map_err(|e| e.to_string())?;
+            if database.relocation_revision().map_err(|e| e.to_string())? != revision {
+                return Err("数据库已变化，请重新预览迁移".into());
+            }
+            (games, settings, revision)
+        };
+        let token = uuid::Uuid::new_v4().to_string();
+        let plan = crate::library_relocation::preview_with_progress(
+            games,
+            settings,
+            revision,
+            &old_root,
+            &new_root,
+            &token,
+            |progress| {
+                let _ = on_progress.send(progress);
+            },
+        )
+        .map_err(|e| e.to_string())?;
+        if db
+            .lock()
+            .map_err(|_| "数据库锁不可用")?
+            .relocation_revision()
+            .map_err(|e| e.to_string())?
+            != revision
+        {
+            return Err("数据库已变化，请重新预览迁移".into());
+        }
+        let view = plan.view.clone();
+        let mut stored = plans.lock().map_err(|_| "迁移预览不可用")?;
+        stored.clear();
+        stored.insert(token, plan);
+        Ok(view)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn apply_library_relocation(
+    state: State<'_, AppState>,
+    token: String,
+) -> CommandResult<crate::library_relocation::Report> {
+    let db = state.db.clone();
+    let plans = state.relocation_plans.clone();
+    let activity = state.activity.clone();
+    let tasks = state.tasks.clone();
+    let imports = state.imports.clone();
+    let running = state.running.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let count = activity.lock().map_err(|_| "操作锁不可用")?;
+        imports.ensure_recovery_clear().map_err(|e| e.to_string())?;
+        crate::library_relocation::ensure_idle(*count, tasks.active(), imports.has_pending_files())
+            .map_err(|e| e.to_string())?;
+        let plan = plans
+            .lock()
+            .map_err(|_| "迁移预览不可用")?
+            .remove(&token)
+            .ok_or("迁移预览已失效，请重新预览")?;
+        let paths = plan
+            .view
+            .items
+            .iter()
+            .filter(|item| item.reason.is_none())
+            .flat_map(|item| {
+                [
+                    Some(std::path::PathBuf::from(&item.old_path)),
+                    item.new_path.as_ref().map(std::path::PathBuf::from),
+                ]
+            })
+            .flatten()
+            .collect::<Vec<_>>();
+        for game in plan.games.iter().filter(|game| {
+            plan.view
+                .items
+                .iter()
+                .any(|item| item.id == game.id && item.reason.is_none())
+        }) {
+            running
+                .ensure_tracked_idle(game)
+                .map_err(|e| e.to_string())?;
+        }
+        crate::runtime::ensure_processes_idle(&paths).map_err(|e| e.to_string())?;
+        crate::library_relocation::revalidate(&plan).map_err(|e| e.to_string())?;
+        let mut database = db.lock().map_err(|_| "数据库锁不可用")?;
+        let report = database
+            .commit_library_relocation(&plan)
+            .map_err(|e| e.to_string())?;
+        for item in plan.view.items.iter().filter(|item| item.reason.is_none()) {
+            tasks.update_registration(&item.old_path, None);
+            if let Some(path) = &item.new_path {
+                tasks.update_registration(path, Some(item.id.clone()));
+            }
+        }
+        Ok(report)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
 
 #[derive(serde::Serialize)]
 struct RenpyAppdataPreview {
@@ -1432,6 +1548,7 @@ fn initialize(app: &tauri::AppHandle) -> std::result::Result<(), Box<dyn std::er
         deletion_plans: Arc::new(Mutex::new(std::collections::HashMap::new())),
         duplicate_plans: Arc::new(Mutex::new(std::collections::HashMap::new())),
         appdata_plans: Arc::new(Mutex::new(std::collections::HashMap::new())),
+        relocation_plans: Arc::new(Mutex::new(std::collections::HashMap::new())),
         running: Arc::new(crate::runtime::RunningGames::default()),
         external_saves: Arc::new(crate::save_editor::ExternalSaves::default()),
     });
@@ -1514,6 +1631,8 @@ pub fn run() {
             preview_renpy_appdata,
             recycle_renpy_appdata,
             preview_relocation,
+            preview_library_relocation,
+            apply_library_relocation,
             relocate_game,
             rename_game_directory,
             check_mtool,

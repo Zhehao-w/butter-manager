@@ -1,8 +1,11 @@
-import { invoke } from '@tauri-apps/api/core';
+import { Channel, invoke } from '@tauri-apps/api/core';
 import type { SaveCatalog, SaveDocument, SaveChange } from './saveEditorTypes';
 import type {
   Game,
   RenpyAppdataPreview,
+  LibraryRelocationPreview,
+  LibraryRelocationReport,
+  LibraryRelocationProgress,
   DuplicatePair,
   DuplicateReview,
   DuplicateStatus,
@@ -27,6 +30,20 @@ import type {
   VersionHistory,
 } from './types';
 export const api = {
+  previewLibraryRelocation: (
+    oldRoot: string,
+    newRoot: string,
+    progress?: (value: LibraryRelocationProgress) => void,
+  ) => {
+    const onProgress = new Channel<LibraryRelocationProgress>(progress ?? (() => {}));
+    return invoke<LibraryRelocationPreview>('preview_library_relocation', {
+      oldRoot,
+      newRoot,
+      onProgress,
+    });
+  },
+  applyLibraryRelocation: (token: string) =>
+    invoke<LibraryRelocationReport>('apply_library_relocation', { token }),
   previewRenpyAppdata: (id: string) => invoke<RenpyAppdataPreview>('preview_renpy_appdata', { id }),
   recycleRenpyAppdata: (id: string, token: string) =>
     invoke<void>('recycle_renpy_appdata', { id, token }),

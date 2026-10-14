@@ -166,7 +166,7 @@ export function PageHeader({
         </span>
         <div className="page-heading-text">
           <h1>{title}</h1>
-          <p>{description}</p>
+          <p title={description}>{description}</p>
         </div>
       </div>
       {children}

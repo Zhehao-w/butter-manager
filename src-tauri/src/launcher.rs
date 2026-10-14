@@ -295,15 +295,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn mtool_tracks_runtime_and_injector_descendants_including_partial_launch_failures() {
-        use std::os::windows::process::CommandExt;
         use std::process::Stdio;
-        fn wait_command(path: &Path) -> String {
-            // Fixture-only command; all paths come from an isolated TempDir.
-            format!(
-                "while (Test-Path -LiteralPath '{}') {{ Start-Sleep -Milliseconds 20 }}",
-                path.display()
-            )
-        }
         for mode in [
             "runtime",
             "descendants",
@@ -317,30 +309,38 @@ mod tests {
             for signal in [&game_signal, &runtime_signal] {
                 std::fs::write(signal, b"fixture").unwrap();
             }
+            // Tiny cmd fixtures avoid PowerShell's slow first startup on cold CI runners.
+            // These isolated scripts are test processes, never downloaded game launchers.
+            for (script, signal) in [
+                ("game-loop.cmd", &game_signal),
+                ("runtime-loop.cmd", &runtime_signal),
+            ] {
+                std::fs::write(temp.path().join(script), format!("@echo off\r\n:wait\r\nif not exist \"{}\" exit /b 0\r\nping.exe -n 2 127.0.0.1 >nul 2>&1\r\ngoto wait\r\n", signal.display())).unwrap();
+            }
             let mut injector = Command::new(std::env::var_os("ComSpec").unwrap());
             let script = if mode == "runtime" {
                 "exit /b 0".into()
             } else {
-                format!("start \"\" /b powershell.exe -NoProfile -NonInteractive -Command \"{}\" & exit /b {}", wait_command(&game_signal), if mode == "injector_failure" { 7 } else { 0 })
+                format!(
+                    "start \"\" /b \"%ComSpec%\" /d /q /c game-loop.cmd\r\nexit /b {}",
+                    if mode == "injector_failure" { 7 } else { 0 }
+                )
             };
+            std::fs::write(temp.path().join("injector.cmd"), script).unwrap();
             injector
-                .args(["/d", "/q", "/c"])
-                .raw_arg(&script)
+                .args(["/d", "/q", "/c", "injector.cmd"])
+                .current_dir(temp.path())
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null());
             let mut runtime = if mode == "runtime_failure" {
                 Command::new(temp.path().join("missing-runtime.exe"))
             } else {
-                Command::new("powershell.exe")
+                Command::new(std::env::var_os("ComSpec").unwrap())
             };
             runtime
-                .args([
-                    "-NoProfile",
-                    "-NonInteractive",
-                    "-Command",
-                    &wait_command(&runtime_signal),
-                ])
+                .args(["/d", "/q", "/c", "runtime-loop.cmd"])
+                .current_dir(temp.path())
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null());

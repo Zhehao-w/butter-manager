@@ -728,6 +728,7 @@ impl Database {
         &mut self,
         plan: &crate::library_relocation::Plan,
     ) -> Result<crate::library_relocation::Report> {
+        crate::library_relocation::ensure_migratable(plan)?;
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;

@@ -119,7 +119,6 @@ pub fn preview_renpy_appdata(
 pub fn recycle_renpy_appdata(
     plan: &RenpyAppdataPlan,
     current: &RenpyAppdataPlan,
-    idle: impl FnOnce() -> Result<()>,
     recycle: impl FnOnce(&Path) -> Result<()>,
 ) -> Result<()> {
     if plan != current {
@@ -127,7 +126,6 @@ pub fn recycle_renpy_appdata(
             "目录身份或游戏配置已变化，请重新打开确认框",
         ));
     }
-    idle()?;
     for (path, identity) in &plan.identities {
         crate::deletion::plain_path(path)?;
         crate::importer::require_identity(path, Some(identity))?;
@@ -568,30 +566,22 @@ pub(crate) mod tests {
             ),
             vec!["<GAME>/game/saves"]
         );
-        assert!(recycle_renpy_appdata(
-            &plan,
-            &plan,
-            || Ok(()),
-            |_| Err(invalid_cleanup("fixture recycle failure"))
-        )
+        assert!(recycle_renpy_appdata(&plan, &plan, |_| Err(invalid_cleanup(
+            "fixture recycle failure"
+        )))
         .unwrap_err()
         .to_string()
         .contains("fixture recycle failure"));
         assert!(Path::new(&plan.path).is_dir());
-        assert!(recycle_renpy_appdata(&plan, &plan, || Ok(()), |_| Ok(())).is_err());
-        recycle_renpy_appdata(
-            &plan,
-            &plan,
-            || Ok(()),
-            |path| {
-                assert_eq!(
-                    path,
-                    dunce::canonicalize(appdata.join("RenPy/彼女-1234")).unwrap()
-                );
-                std::fs::rename(path, temp.path().join("fixture-trash"))?;
-                Ok(())
-            },
-        )
+        assert!(recycle_renpy_appdata(&plan, &plan, |_| Ok(())).is_err());
+        recycle_renpy_appdata(&plan, &plan, |path| {
+            assert_eq!(
+                path,
+                dunce::canonicalize(appdata.join("RenPy/彼女-1234")).unwrap()
+            );
+            std::fs::rename(path, temp.path().join("fixture-trash"))?;
+            Ok(())
+        })
         .unwrap();
         assert!(preview_renpy_appdata(&game, &games, &settings, &data, &appdata).is_err());
         assert_eq!(
@@ -607,6 +597,52 @@ pub(crate) mod tests {
             serde_json::to_string(&db.game(&game.id).unwrap()).unwrap(),
             record
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn appdata_manual_cleanup_does_not_consult_running_game_state() {
+        use std::os::windows::process::CommandExt;
+        use std::process::{Command, Stdio};
+        let temp = tempfile::tempdir().unwrap();
+        let (_db, data, game, appdata) = appdata_fixture(temp.path());
+        let mut child = Command::new(std::env::var_os("ComSpec").unwrap())
+            .args(["/d", "/q", "/c", "set /p fixture="])
+            .creation_flags(0x08000000)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let input = child.stdin.take().unwrap();
+        let running = crate::runtime::RunningGames::default();
+        running
+            .observe(
+                &game.id,
+                crate::runtime::ProcessLease::from_child(child).unwrap(),
+            )
+            .unwrap();
+        assert!(running.ensure_tracked_idle(&game).is_err());
+        ensure_appdata_cleanup_idle(0, false, false).unwrap();
+        let plan = preview_renpy_appdata(
+            &game,
+            std::slice::from_ref(&game),
+            &Settings::default(),
+            &data,
+            &appdata,
+        )
+        .unwrap();
+        recycle_renpy_appdata(&plan, &plan, |path| {
+            std::fs::rename(path, temp.path().join("fixture-trash"))?;
+            Ok(())
+        })
+        .unwrap();
+        assert!(running.ensure_tracked_idle(&game).is_err());
+        assert_eq!(
+            std::fs::read(Path::new(&game.install_path).join("game/saves/local.save")).unwrap(),
+            b"local unchanged"
+        );
+        drop(input);
     }
 
     #[test]
@@ -704,38 +740,19 @@ pub(crate) mod tests {
         let games = vec![game.clone()];
         let plan = preview_renpy_appdata(&game, &games, &settings, &data, &appdata).unwrap();
         for (activity, active, pending) in [(1, false, false), (0, true, false), (0, false, true)] {
-            assert!(recycle_renpy_appdata(
-                &plan,
-                &plan,
-                || ensure_appdata_cleanup_idle(activity, active, pending),
-                |_| panic!("blocked cleanup must not recycle")
-            )
-            .is_err());
+            assert!(ensure_appdata_cleanup_idle(activity, active, pending).is_err());
         }
         ensure_appdata_cleanup_idle(0, false, false).unwrap();
-        assert!(recycle_renpy_appdata(
-            &plan,
-            &plan,
-            || Err(invalid_cleanup("游戏仍在运行")),
-            |_| panic!("running game must not recycle")
-        )
-        .is_err());
         std::fs::rename(&plan.path, appdata.join("RenPy/original-preserved")).unwrap();
         std::fs::create_dir(&plan.path).unwrap();
-        assert!(recycle_renpy_appdata(
-            &plan,
-            &plan,
-            || Ok(()),
-            |_| panic!("replaced directory must not recycle")
-        )
+        assert!(recycle_renpy_appdata(&plan, &plan, |_| panic!(
+            "replaced directory must not recycle"
+        ))
         .is_err());
         let current = preview_renpy_appdata(&game, &games, &settings, &data, &appdata).unwrap();
-        assert!(recycle_renpy_appdata(
-            &plan,
-            &current,
-            || Ok(()),
-            |_| panic!("stale confirmation must not recycle")
-        )
+        assert!(recycle_renpy_appdata(&plan, &current, |_| panic!(
+            "stale confirmation must not recycle"
+        ))
         .is_err());
         std::fs::write(
             Path::new(&game.install_path).join("game/options.rpy"),
@@ -743,12 +760,9 @@ pub(crate) mod tests {
         )
         .unwrap();
         let changed = preview_renpy_appdata(&game, &games, &settings, &data, &appdata).unwrap();
-        assert!(recycle_renpy_appdata(
-            &plan,
-            &changed,
-            || Ok(()),
-            |_| panic!("changed config must not recycle")
-        )
+        assert!(recycle_renpy_appdata(&plan, &changed, |_| panic!(
+            "changed config must not recycle"
+        ))
         .is_err());
         assert!(appdata
             .join("RenPy/original-preserved/persistent")

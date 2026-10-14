@@ -363,6 +363,7 @@ pub fn preview_with_progress(
 }
 
 pub fn revalidate(plan: &Plan) -> Result<()> {
+    ensure_migratable(plan)?;
     let current = preview(
         plan.games.clone(),
         plan.settings.clone(),
@@ -373,6 +374,13 @@ pub fn revalidate(plan: &Plan) -> Result<()> {
     )?;
     if current.view != plan.view || current.identities != plan.identities {
         return Err(invalid("目标目录或配置已变化，请重新预览迁移"));
+    }
+    Ok(())
+}
+
+pub(crate) fn ensure_migratable(plan: &Plan) -> Result<()> {
+    if !plan.view.items.iter().any(|item| item.reason.is_none()) {
+        return Err(invalid("没有可迁移的游戏，请检查新旧根目录"));
     }
     Ok(())
 }

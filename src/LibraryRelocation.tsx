@@ -137,7 +137,7 @@ export function LibraryRelocation({
                 <button
                   type="button"
                   className="migration-confirm"
-                  disabled={busy || locked}
+                  disabled={busy || locked || valid === 0}
                   onClick={() => setConfirm(true)}
                 >
                   确认迁移
@@ -171,6 +171,11 @@ export function LibraryRelocation({
               <p className="library-relocation-counts" role="status">
                 可迁移 {valid} 个游戏，无法迁移 {preview.items.length - valid} 个游戏。
               </p>
+              {valid === 0 && (
+                <p className="error" role="alert">
+                  没有可迁移的游戏，请检查新旧根目录
+                </p>
+              )}
               <div className="library-relocation-tool">
                 <strong>
                   公共 MTool ·{' '}
@@ -191,10 +196,12 @@ export function LibraryRelocation({
               <p className={preview.mtool.state === 'blocked' ? 'error' : 'muted'}>
                 {preview.mtool.reason}
               </p>
-              <p className="muted">
-                将更新游戏库根目录{preview.mtool.state === 'ready' ? '及公共 MTool 根目录' : ''}
-                ；保留原启动配置与游戏资料。
-              </p>
+              {valid > 0 && (
+                <p className="muted">
+                  将更新游戏库根目录{preview.mtool.state === 'ready' ? '及公共 MTool 根目录' : ''}
+                  ；保留原启动配置与游戏资料。
+                </p>
+              )}
               <div className="library-relocation-details">
                 <button
                   type="button"
@@ -259,7 +266,7 @@ export function LibraryRelocation({
         </Modal>
       )}
       {notice && <p role="status">{notice}</p>}
-      {confirm && preview && (
+      {confirm && preview && valid > 0 && (
         <Modal
           title="确认迁移游戏库路径？"
           variant="confirm"
@@ -275,7 +282,7 @@ export function LibraryRelocation({
               <button
                 type="button"
                 className="migration-confirm"
-                disabled={busy || locked}
+                disabled={busy || locked || valid === 0}
                 onClick={() =>
                   void run(async () => {
                     const report = await api.applyLibraryRelocation(preview.token);

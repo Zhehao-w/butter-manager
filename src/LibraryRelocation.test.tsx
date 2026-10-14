@@ -48,7 +48,7 @@ beforeEach(() => {
   vi.mocked(api.chooseDirectory).mockResolvedValue(plan.new_root);
   vi.mocked(api.previewLibraryRelocation).mockResolvedValue(plan);
 });
-async function preview() {
+async function preview(expected = '可迁移 1 个游戏，无法迁移 1 个游戏。') {
   render(
     <LibraryRelocation
       root={plan.old_root}
@@ -60,8 +60,25 @@ async function preview() {
   fireEvent.click(screen.getByRole('button', { name: '选择新根目录…' }));
   await waitForEnabledButton('预览迁移');
   fireEvent.click(screen.getByRole('button', { name: '预览迁移' }));
-  await screen.findByText('可迁移 1 个游戏，无法迁移 1 个游戏。');
+  await screen.findByText(expected);
 }
+it.each(['empty', 'all-skipped'] as const)('blocks zero-match migration: %s', async (mode) => {
+  const items =
+    mode === 'empty' ? [] : plan.items.map((item) => ({ ...item, reason: '启动文件缺失' }));
+  vi.mocked(api.previewLibraryRelocation).mockResolvedValue({
+    ...plan,
+    items,
+    mtool: { ...plan.mtool, state: 'ready' },
+  });
+  await preview(`可迁移 0 个游戏，无法迁移 ${items.length} 个游戏。`);
+  expect(screen.getByRole('alert').textContent).toBe('没有可迁移的游戏，请检查新旧根目录');
+  const confirm = screen.getByRole('button', { name: '确认迁移' });
+  expect((confirm as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.click(confirm);
+  expect(screen.queryByRole('dialog', { name: '确认迁移游戏库路径？' })).toBeNull();
+  expect(api.applyLibraryRelocation).not.toHaveBeenCalled();
+  expect(onMigrated).not.toHaveBeenCalled();
+});
 it('previews exact roots, keeps partial failures explicit and cancels without applying', async () => {
   await preview();
   expect(api.previewLibraryRelocation).toHaveBeenCalledWith(

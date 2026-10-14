@@ -17,8 +17,11 @@ impl Fixture {
             .prefix("bulk-relocation-")
             .tempdir()
             .unwrap();
-        let old = temp.path().join("old library");
-        let new = temp.path().join("new library");
+        // Windows CI TEMP may use an 8.3 alias while scanner paths are canonical.
+        let root = dunce::canonicalize(temp.path()).unwrap();
+        let old = root.join("old library");
+        let new = root.join("new library");
+        fs::create_dir_all(&old).unwrap();
         fs::create_dir_all(&new).unwrap();
         let mut candidates = vec![];
         for index in 0..count {
@@ -158,11 +161,65 @@ fn bulk_missing_old_root_maps_many_nested_games_and_preserves_user_records() {
     assert!(!f.old.exists());
     let repeated = f.plan();
     let revision = f.db.relocation_revision().unwrap();
-    assert_eq!(
-        f.db.apply_library_relocation(&repeated).unwrap().migrated,
-        0
-    );
+    assert!(f.db.apply_library_relocation(&repeated).is_err());
     assert_eq!(f.db.relocation_revision().unwrap(), revision);
+}
+
+#[test]
+fn bulk_zero_matches_rejects_apply_and_direct_commit_without_any_database_changes() {
+    for mode in [
+        "empty",
+        "wrong_old_root",
+        "missing_subdirectories",
+        "missing_launch",
+    ] {
+        let mut f = Fixture::new(if mode == "empty" { 0 } else { 2 });
+        f.tools(); // A valid tool migration must never authorize an empty game migration.
+        if mode == "missing_subdirectories" {
+            fs::remove_dir_all(f.new.join("RPG")).unwrap();
+        }
+        if mode == "missing_launch" {
+            for index in 0..2 {
+                fs::remove_file(f.new.join(format!("RPG/彼女 {index}/Game.exe"))).unwrap();
+            }
+        }
+        let old = if mode == "wrong_old_root" {
+            path_text(&f.temp.path().join("wrong root")).unwrap()
+        } else {
+            path_text(&f.old).unwrap()
+        };
+        let plan =
+            f.db.preview_library_relocation(&old, &path_text(&f.new).unwrap(), "zero")
+                .unwrap();
+        assert!(plan.view.items.iter().all(|item| item.reason.is_some()));
+        if mode != "wrong_old_root" {
+            assert_eq!(plan.view.mtool.state, "ready");
+        }
+        let games = serde_json::to_value(f.db.games().unwrap()).unwrap();
+        let settings = serde_json::to_value(f.db.settings().unwrap()).unwrap();
+        let revision = f.db.relocation_revision().unwrap();
+        for direct in [false, true] {
+            let result = if direct {
+                f.db.commit_library_relocation(&plan)
+            } else {
+                f.db.apply_library_relocation(&plan)
+            };
+            assert!(
+                result
+                    .err()
+                    .unwrap()
+                    .to_string()
+                    .contains("没有可迁移的游戏"),
+                "{mode}"
+            );
+            assert_eq!(serde_json::to_value(f.db.games().unwrap()).unwrap(), games);
+            assert_eq!(
+                serde_json::to_value(f.db.settings().unwrap()).unwrap(),
+                settings
+            );
+            assert_eq!(f.db.relocation_revision().unwrap(), revision);
+        }
+    }
 }
 
 #[test]

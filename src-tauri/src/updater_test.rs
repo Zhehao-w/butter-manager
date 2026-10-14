@@ -38,6 +38,8 @@ impl Fixture {
         fs::write(source.join("www/save/進行.sav"), b"bundled sample").unwrap();
         fs::write(source.join("游戏.html"), b"new game").unwrap();
         fs::create_dir_all(&data).unwrap();
+        // Keep fixture paths identical to the canonical paths stored in update journals.
+        let root = dunce::canonicalize(&root).unwrap();
         let mut db = Database::open(&data.join("fixture.db")).unwrap();
         db.save_settings(Settings {
             game_root: paths::path_text(&root).unwrap(),

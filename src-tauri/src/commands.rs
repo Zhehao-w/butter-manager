@@ -104,6 +104,7 @@ async fn apply_library_relocation(
             .map_err(|_| "迁移预览不可用")?
             .remove(&token)
             .ok_or("迁移预览已失效，请重新预览")?;
+        crate::library_relocation::ensure_migratable(&plan).map_err(|e| e.to_string())?;
         let paths = plan
             .view
             .items
@@ -215,7 +216,6 @@ async fn recycle_renpy_appdata(
     let activity = state.activity.clone();
     let tasks = state.tasks.clone();
     let imports = state.imports.clone();
-    let running = state.running.clone();
     tauri::async_runtime::spawn_blocking(move || {
         // Same gate as deletion/import/launch and save WritePermit; held until recycling finishes.
         let count = activity.lock().map_err(|_| "操作锁不可用")?;
@@ -245,19 +245,8 @@ async fn recycle_renpy_appdata(
             Path::new(&appdata),
         )
         .map_err(|e| e.to_string())?;
-        crate::maintenance::recycle_renpy_appdata(
-            &plan,
-            &current,
-            || {
-                running.ensure_tracked_idle(&game)?;
-                crate::runtime::ensure_processes_idle(&[
-                    std::path::PathBuf::from(&game.install_path),
-                    std::path::PathBuf::from(&plan.path),
-                ])
-            },
-            crate::deletion::recycle,
-        )
-        .map_err(|e| e.to_string())
+        crate::maintenance::recycle_renpy_appdata(&plan, &current, crate::deletion::recycle)
+            .map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| e.to_string())?

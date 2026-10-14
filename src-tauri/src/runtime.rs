@@ -8,6 +8,8 @@ use std::sync::Mutex;
 pub struct ProcessLease {
     #[cfg(windows)]
     handle: std::os::windows::io::OwnedHandle,
+    #[cfg(windows)]
+    job: bool,
     #[cfg(not(windows))]
     child: Child,
 }
@@ -38,6 +40,7 @@ impl ProcessLease {
             }
             Ok(Self {
                 handle: unsafe { std::os::windows::io::OwnedHandle::from_raw_handle(handle) },
+                job: false,
             })
         }
         #[cfg(not(windows))]
@@ -47,7 +50,13 @@ impl ProcessLease {
     }
     #[cfg(windows)]
     pub fn from_handle(handle: std::os::windows::io::OwnedHandle) -> Self {
-        Self { handle }
+        Self { handle, job: false }
+    }
+    /// Attach before the primary thread runs, so even a fast injector's children are tracked.
+    /// No kill-on-close flag: closing the manager must leave the user's games running.
+    #[cfg(windows)]
+    pub fn spawn_tree(command: &mut std::process::Command, flags: u32) -> Result<(Child, Self)> {
+        windows::spawn_tree(command, flags)
     }
     fn exited(&mut self) -> Result<bool> {
         #[cfg(windows)]
@@ -57,6 +66,27 @@ impl ProcessLease {
                 Foundation::{WAIT_OBJECT_0, WAIT_TIMEOUT},
                 System::Threading::WaitForSingleObject,
             };
+            if self.job {
+                use windows_sys::Win32::System::JobObjects::{
+                    JobObjectBasicAccountingInformation, QueryInformationJobObject,
+                    JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
+                };
+                let mut info = JOBOBJECT_BASIC_ACCOUNTING_INFORMATION::default();
+                // SAFETY: the owned job handle and the correctly sized output remain live.
+                if unsafe {
+                    QueryInformationJobObject(
+                        self.handle.as_raw_handle(),
+                        JobObjectBasicAccountingInformation,
+                        (&mut info as *mut JOBOBJECT_BASIC_ACCOUNTING_INFORMATION).cast(),
+                        std::mem::size_of_val(&info) as u32,
+                        std::ptr::null_mut(),
+                    )
+                } == 0
+                {
+                    return Err(std::io::Error::last_os_error().into());
+                }
+                return Ok(info.ActiveProcesses == 0);
+            }
             // SAFETY: the owned process handle remains live; timeout zero never blocks.
             match unsafe { WaitForSingleObject(self.handle.as_raw_handle(), 0) } {
                 WAIT_OBJECT_0 => Ok(true),
@@ -173,6 +203,81 @@ mod windows {
     struct Process {
         image: Option<PathBuf>,
         name: String,
+    }
+    pub(super) fn spawn_tree(
+        command: &mut std::process::Command,
+        flags: u32,
+    ) -> Result<(Child, ProcessLease)> {
+        use std::os::windows::process::CommandExt;
+        use windows_sys::Win32::System::{
+            JobObjects::{AssignProcessToJobObject, CreateJobObjectW},
+            Threading::CREATE_SUSPENDED,
+        };
+        // SAFETY: unnamed job, no inherited handles or process termination policy.
+        let raw = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+        if raw.is_null() {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        let job = unsafe { OwnedHandle::from_raw_handle(raw) };
+        let mut child = command.creation_flags(flags | CREATE_SUSPENDED).spawn()?;
+        let attached = (|| -> Result<()> {
+            // SAFETY: both handles are live and the child has not executed any user code yet.
+            if unsafe { AssignProcessToJobObject(job.as_raw_handle(), child.as_raw_handle()) } == 0
+            {
+                return Err(std::io::Error::last_os_error().into());
+            }
+            resume_primary_thread(child.id())
+        })();
+        if let Err(error) = attached {
+            // Only our new suspended process is stopped; never touch an existing game/process.
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(Error::Validation(format!(
+                "无法建立 MTool 运行跟踪，未启动：{error}"
+            )));
+        }
+        Ok((
+            child,
+            ProcessLease {
+                handle: job,
+                job: true,
+            },
+        ))
+    }
+
+    fn resume_primary_thread(pid: u32) -> Result<()> {
+        use windows_sys::Win32::System::{
+            Diagnostics::ToolHelp::{
+                Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32,
+            },
+            Threading::{OpenThread, ResumeThread, THREAD_SUSPEND_RESUME},
+        };
+        // CREATE_SUSPENDED guarantees this new process has exactly its initial thread.
+        let raw = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) };
+        if raw == INVALID_HANDLE_VALUE {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        let snapshot = unsafe { OwnedHandle::from_raw_handle(raw) };
+        let mut entry = THREADENTRY32 {
+            dwSize: std::mem::size_of::<THREADENTRY32>() as u32,
+            ..Default::default()
+        };
+        let mut found = unsafe { Thread32First(snapshot.as_raw_handle(), &mut entry) };
+        while found != 0 {
+            if entry.th32OwnerProcessID == pid {
+                let raw = unsafe { OpenThread(THREAD_SUSPEND_RESUME, 0, entry.th32ThreadID) };
+                if raw.is_null() {
+                    return Err(std::io::Error::last_os_error().into());
+                }
+                let thread = unsafe { OwnedHandle::from_raw_handle(raw) };
+                if unsafe { ResumeThread(thread.as_raw_handle()) } == u32::MAX {
+                    return Err(std::io::Error::last_os_error().into());
+                }
+                return Ok(());
+            }
+            found = unsafe { Thread32Next(snapshot.as_raw_handle(), &mut entry) };
+        }
+        Err(Error::Validation("无法找到新启动进程的主线程".into()))
     }
     fn processes(cancelled: &dyn Fn() -> bool) -> Result<Vec<Process>> {
         // SAFETY: a process-only snapshot takes no process pointer arguments.
@@ -339,6 +444,20 @@ mod tests {
     use std::fs::OpenOptions;
     use std::os::windows::{fs::OpenOptionsExt, process::CommandExt};
     use std::process::{Command, Stdio};
+    #[test]
+    fn dropping_tree_lease_does_not_terminate_the_launched_process() {
+        let mut command = Command::new(std::env::var_os("ComSpec").unwrap());
+        command
+            .args(["/d", "/q", "/c", "set /p fixture="])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let (mut child, lease) = ProcessLease::spawn_tree(&mut command, 0x08000000).unwrap();
+        drop(lease);
+        assert!(child.try_wait().unwrap().is_none());
+        drop(child.stdin.take());
+        child.wait().unwrap();
+    }
     #[test]
     fn detects_external_process_after_restart_and_releases_tracked_process_after_exit() {
         let temp = tempfile::tempdir().unwrap();

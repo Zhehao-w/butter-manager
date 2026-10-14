@@ -72,27 +72,48 @@ fn launch_observed(
         }
         "MTOOL" => {
             let (mut injector, mut runtime) = mtool_commands(game, settings)?;
-            // Pass each argument separately; never execute or interpolate an incoming BAT.
-            injector.status().and_then(|status| {
-                if status.success() {
-                    Ok(())
-                } else {
-                    Err(std::io::Error::other(format!(
-                        "injector 退出状态：{status}"
-                    )))
-                }
-            })?;
-            runtime.spawn().map_err(|error| {
-                Error::Validation(format!(
-                    "injector 已启动，但 MTool runtime 启动失败：{error}"
-                ))
-            })?;
-            Ok(())
+            launch_mtool(&game.id, &mut injector, &mut runtime, running)
         }
         _ => Err(Error::Validation(
             "CUSTOM_BAT 暂不支持；下载 BAT 不会被执行".into(),
         )),
     }
+}
+
+fn spawn_mtool(
+    id: &str,
+    command: &mut Command,
+    running: Option<&crate::runtime::RunningGames>,
+    flags: u32,
+) -> Result<std::process::Child> {
+    #[cfg(windows)]
+    if let Some(running) = running {
+        let (child, lease) = crate::runtime::ProcessLease::spawn_tree(command, flags)?;
+        running.observe(id, lease)?;
+        return Ok(child);
+    }
+    let _ = (id, running, flags);
+    Ok(command.spawn()?)
+}
+
+fn launch_mtool(
+    id: &str,
+    injector: &mut Command,
+    runtime: &mut Command,
+    running: Option<&crate::runtime::RunningGames>,
+) -> Result<()> {
+    // Separate arguments; downloaded BATs are never executed. Observe before waiting: a failed
+    // injector/runtime can still have launched a game, which must keep mutation guards active.
+    let status = spawn_mtool(id, injector, running, 0x0800_0000)?.wait()?;
+    if !status.success() {
+        return Err(Error::Validation(format!("injector 退出状态：{status}")));
+    }
+    spawn_mtool(id, runtime, running, 0).map_err(|error| {
+        Error::Validation(format!(
+            "injector 已启动，但 MTool runtime 启动失败：{error}"
+        ))
+    })?;
+    Ok(())
 }
 
 fn mtool_commands(game: &Game, settings: &Settings) -> Result<(Command, Command)> {
@@ -271,6 +292,85 @@ pub fn open_save_folder(game: &Game, configured: &str) -> Result<()> {
 mod tests {
     use super::*;
     use crate::{db::Database, scanner::analyze_directory};
+    #[cfg(windows)]
+    #[test]
+    fn mtool_tracks_runtime_and_injector_descendants_including_partial_launch_failures() {
+        use std::os::windows::process::CommandExt;
+        use std::process::Stdio;
+        fn wait_command(path: &Path) -> String {
+            // Fixture-only command; all paths come from an isolated TempDir.
+            format!(
+                "while (Test-Path -LiteralPath '{}') {{ Start-Sleep -Milliseconds 20 }}",
+                path.display()
+            )
+        }
+        for mode in [
+            "runtime",
+            "descendants",
+            "runtime_failure",
+            "injector_failure",
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            let game = crate::maintenance::tests::fixture_game(temp.path());
+            let game_signal = temp.path().join("game-running");
+            let runtime_signal = temp.path().join("runtime-running");
+            for signal in [&game_signal, &runtime_signal] {
+                std::fs::write(signal, b"fixture").unwrap();
+            }
+            let mut injector = Command::new(std::env::var_os("ComSpec").unwrap());
+            let script = if mode == "runtime" {
+                "exit /b 0".into()
+            } else {
+                format!("start \"\" /b powershell.exe -NoProfile -NonInteractive -Command \"{}\" & exit /b {}", wait_command(&game_signal), if mode == "injector_failure" { 7 } else { 0 })
+            };
+            injector
+                .args(["/d", "/q", "/c"])
+                .raw_arg(&script)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+            let mut runtime = if mode == "runtime_failure" {
+                Command::new(temp.path().join("missing-runtime.exe"))
+            } else {
+                Command::new("powershell.exe")
+            };
+            runtime
+                .args([
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    &wait_command(&runtime_signal),
+                ])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+            let running = crate::runtime::RunningGames::default();
+            let result = launch_mtool(&game.id, &mut injector, &mut runtime, Some(&running));
+            assert_eq!(result.is_err(), mode.ends_with("failure"), "{mode}");
+            assert!(running.ensure_tracked_idle(&game).is_err(), "{mode}");
+            assert!(running.ensure_idle(&game).is_err(), "{mode}");
+            let mut other = game.clone();
+            other.id = "another-game".into();
+            running.ensure_tracked_idle(&other).unwrap();
+            if mode == "descendants" {
+                std::fs::remove_file(&runtime_signal).unwrap();
+                // Removing the runtime signal does not release the injector's surviving child.
+                assert!(running.ensure_tracked_idle(&game).is_err());
+            }
+            std::fs::remove_file(&game_signal).unwrap();
+            if runtime_signal.exists() {
+                std::fs::remove_file(&runtime_signal).unwrap();
+            }
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            while running.ensure_tracked_idle(&game).is_err() {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "{mode}: fixture process did not exit"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+        }
+    }
     #[test]
     fn one_time_configuration_uses_draft_paths_but_records_only_the_saved_game() {
         let temp = tempfile::tempdir().unwrap();

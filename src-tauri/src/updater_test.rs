@@ -660,6 +660,13 @@ fn version_updates_preserve_existing_aliases_without_accumulating_names() {
         f.apply(&first).unwrap();
         let updated = f.db.lock().unwrap().game(&f.id).unwrap();
         assert_eq!(updated.aliases, original.aliases);
+        let mut edit: GameEdit =
+            serde_json::from_value(serde_json::to_value(&updated).unwrap()).unwrap();
+        edit.play_status = crate::domain::PlayStatus::Playing;
+        assert_eq!(
+            f.db.lock().unwrap().edit_game(edit).unwrap().aliases,
+            original.aliases
+        );
         if !legacy {
             assert_eq!(updated.display_title, "新名称 v2");
             assert_eq!(

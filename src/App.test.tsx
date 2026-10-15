@@ -63,6 +63,34 @@ async function openDetail() {
   fireEvent.click(await screen.findByRole('button', { name: game.display_title }));
   return screen.getByRole('dialog', { name: game.display_title });
 }
+
+it.each(['list', 'grid'] as const)(
+  'blocks %s and detail launches while a task is active',
+  async (layout) => {
+    vi.mocked(api.job).mockResolvedValue({ ...job, status: 'running' });
+    vi.mocked(api.play).mockResolvedValue(game);
+    render(<App />);
+    await waitForEnabledButton('扫描目录');
+    fireEvent.click(screen.getByRole('button', { name: '扫描目录' }));
+    await waitFor(() => expect(api.job).toHaveBeenCalledWith('scan', 0));
+    goLibrary();
+    if (layout === 'grid') fireEvent.click(screen.getByRole('button', { name: '卡片视图' }));
+    expect(
+      (screen.getByRole('button', { name: `启动 ${game.display_title}` }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: game.display_title }));
+    const modal = screen.getByRole('dialog', { name: game.display_title });
+    const launch = within(modal).getByRole('button', { name: '启动' });
+    expect((launch as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(launch);
+    expect(api.play).not.toHaveBeenCalled();
+    vi.mocked(api.job).mockResolvedValue({ ...job, changes: [], next_cursor: 1 });
+    await waitFor(() => expect((launch as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(launch);
+    await waitFor(() => expect(api.play).toHaveBeenCalledOnce());
+  },
+);
 function showDetailTab(name: string) {
   fireEvent.click(screen.getByRole('tab', { name }));
 }

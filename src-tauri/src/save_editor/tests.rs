@@ -1074,6 +1074,13 @@ fn editor_permit_and_file_tasks_exclude_each_other_until_write_finishes() {
     started_rx.recv().unwrap();
     // Same gate/check used by start_import_apply and start_version_rollback.
     assert_eq!(*activity.lock().unwrap(), 1);
+    assert!(
+        crate::runtime::ensure_request_idle(*activity.lock().unwrap(), tasks.active()).is_err()
+    );
+    assert!(WritePermit::acquire(activity.clone(), || -> Result<()> {
+        panic!("an active request must reject before acquiring a write")
+    })
+    .is_err());
     finish_tx.send(()).unwrap();
     writer.join().unwrap();
     assert_eq!(*activity.lock().unwrap(), 0);
@@ -1081,6 +1088,9 @@ fn editor_permit_and_file_tasks_exclude_each_other_until_write_finishes() {
         let _gate = activity.lock().unwrap();
         tasks.begin("import_apply", String::new()).unwrap()
     };
+    assert!(
+        crate::runtime::ensure_request_idle(*activity.lock().unwrap(), tasks.active()).is_err()
+    );
     assert!(WritePermit::acquire(activity.clone(), || {
         if tasks.active() || imports.blocks_game(&game) {
             return Err(invalid("blocked"));
@@ -1090,6 +1100,7 @@ fn editor_permit_and_file_tasks_exclude_each_other_until_write_finishes() {
     .is_err());
     assert_eq!(*activity.lock().unwrap(), 0);
     job.finish(Ok(Vec::new()));
+    crate::runtime::ensure_request_idle(*activity.lock().unwrap(), tasks.active()).unwrap();
     let (_, permit) = WritePermit::acquire(activity.clone(), || Ok(())).unwrap();
     assert_eq!(*activity.lock().unwrap(), 1);
     drop(permit);

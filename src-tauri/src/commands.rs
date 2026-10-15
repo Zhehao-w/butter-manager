@@ -940,9 +940,8 @@ async fn check_mtool(state: State<'_, AppState>) -> CommandResult<Vec<ToolCheck>
 async fn run_mtool(state: State<'_, AppState>) -> CommandResult<()> {
     let (settings, permit) = {
         let mut count = state.activity.lock().map_err(|_| "操作锁不可用")?;
-        if state.tasks.active() {
-            return Err("请先结束当前任务".into());
-        }
+        crate::runtime::ensure_request_idle(*count, state.tasks.active())
+            .map_err(|e| e.to_string())?;
         let settings = with_db(&state, |db| db.settings())?;
         *count += 1;
         (settings, LaunchPermit(state.activity.clone()))
@@ -1192,6 +1191,8 @@ async fn play_game(
 ) -> CommandResult<Game> {
     let (game, settings, permit) = {
         let mut count = state.activity.lock().map_err(|_| "操作锁不可用")?;
+        crate::runtime::ensure_request_idle(*count, state.tasks.active())
+            .map_err(|e| e.to_string())?;
         let pair = with_db(&state, |db| Ok((db.game(&id)?, db.settings()?)))?;
         if state.imports.blocks_game(&pair.0) {
             return Err("该游戏涉及未恢复的导入文件操作，请先在导入页处理".into());

@@ -27,6 +27,7 @@ impl WritePermit {
         check: impl FnOnce() -> Result<T>,
     ) -> Result<(T, Self)> {
         let mut count = activity.lock().map_err(|_| invalid("操作锁不可用"))?;
+        crate::runtime::ensure_request_idle(*count, false)?;
         let value = check()?;
         *count += 1;
         drop(count);

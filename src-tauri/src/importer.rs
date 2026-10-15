@@ -669,7 +669,9 @@ impl ImportStore {
                 if settings.mtool_root.is_empty() {
                     None
                 } else {
-                    Some(dunce::canonicalize(&settings.mtool_root)?)
+                    Some(crate::deletion::absolute_path(Path::new(
+                        &settings.mtool_root,
+                    ))?)
                 },
             ]
             .into_iter()
@@ -731,6 +733,12 @@ impl ImportStore {
             if selection.cleanup_mtool {
                 selection.mtool = true;
                 selection.external_player = None;
+            }
+            if selection.mtool
+                && !settings.mtool_root.is_empty()
+                && !Path::new(&settings.mtool_root).is_dir()
+            {
+                blockers.push("公共 MTool 目录不可用，请重新配置或恢复工具目录".into());
             }
             if selection.mtool
                 && !Path::new(&selection.executable)
@@ -2203,6 +2211,75 @@ mod tests {
         let recovered = ImportStore::open(f.store.directory.clone()).unwrap();
         assert_eq!(recovered.recovery_issues().len(), 1);
         assert!(recovered.views().is_empty());
+    }
+
+    #[test]
+    fn missing_shared_tool_only_blocks_mtool_items_and_keeps_path_boundaries() {
+        let f = Fixture::new();
+        let tool = f.source.parent().unwrap().join("public-tool");
+        fs::create_dir(&tool).unwrap();
+        let mut settings = f.db.lock().unwrap().settings().unwrap();
+        settings.mtool_root = paths::path_text(&tool).unwrap();
+        f.db.lock()
+            .unwrap()
+            .save_settings(settings.clone())
+            .unwrap();
+        fs::remove_dir(&tool).unwrap();
+        let ordinary = f.game("ordinary");
+        let plan = f.plan(std::slice::from_ref(&ordinary));
+        assert!(f.store.get(&plan).unwrap().items[0].blockers.is_empty());
+        f.apply(&plan).unwrap();
+        assert!(f.root.join("ordinary/包装/游戏.html").is_file());
+
+        let sources = [f.game("direct"), f.game("needs-tool")];
+        fs::write(sources[1].join("Game.exe"), b"fixture").unwrap();
+        let candidates = sources
+            .iter()
+            .map(|source| scanner::analyze_directory(source).unwrap())
+            .collect::<Vec<_>>();
+        let selections = candidates.iter().enumerate().map(|(index, candidate)| {
+            serde_json::from_value::<Selection>(serde_json::json!({
+                "source":candidate.install_path, "title":candidate.suggested_title,
+                "target_name":leaf_name(&candidate.install_path), "version":"v1", "engine":"Unknown",
+                "executable":if index == 0 { "包装/游戏.html" } else { "Game.exe" },
+                "mtool":index == 1, "existing_id":null, "new_override":true
+            })).unwrap()
+        }).collect();
+        let job = f
+            .tasks
+            .begin("import_plan", settings.game_root.clone())
+            .unwrap();
+        f.store
+            .prepare(
+                &job,
+                settings,
+                candidates,
+                selections,
+                &f.db.lock().unwrap().games().unwrap(),
+            )
+            .unwrap();
+        job.finish(Ok(vec![]));
+        let mixed = f.store.get(&job.id).unwrap();
+        assert!(mixed.items[0].blockers.is_empty());
+        assert!(mixed.items[1]
+            .blockers
+            .iter()
+            .any(|reason| reason.contains("公共 MTool 目录不可用")));
+        assert!(f.apply(&job.id).is_err());
+        assert!(sources.iter().all(|source| source.is_dir()));
+
+        let protected = sources[0].join("missing-tool");
+        fs::create_dir(&protected).unwrap();
+        let mut settings = f.db.lock().unwrap().settings().unwrap();
+        settings.mtool_root = paths::path_text(&protected).unwrap();
+        f.db.lock().unwrap().save_settings(settings).unwrap();
+        fs::remove_dir(&protected).unwrap();
+        let plan = f.plan(std::slice::from_ref(&sources[0]));
+        assert!(f.store.get(&plan).unwrap().items[0]
+            .blockers
+            .iter()
+            .any(|reason| reason.contains("公共 MTool 目录重叠")));
+        assert!(sources[0].join("包装/Save/存档.dat").is_file());
     }
 
     #[test]

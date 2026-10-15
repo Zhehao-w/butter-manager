@@ -19,6 +19,38 @@ pub struct DeletePlan {
     pub game_path: String,
     pub saves: Vec<SaveAction>,
     pub blockers: Vec<String>,
+    // Server-only identities; clients cannot supply or replace deletion authority.
+    #[serde(skip)]
+    identities: std::collections::BTreeMap<PathBuf, String>,
+}
+impl DeletePlan {
+    pub(crate) fn bind_recycle_path(&mut self, path: &Path) -> Result<()> {
+        plain_path(path)?;
+        for ancestor in path.ancestors() {
+            let id = crate::importer::metadata_identity(ancestor)?;
+            if let Some(previous) = self.identities.get(ancestor) {
+                if previous != &id {
+                    return Err(fail("删除预览期间目录已变化，请重新检查"));
+                }
+            } else {
+                self.identities.insert(ancestor.to_owned(), id);
+            }
+        }
+        Ok(())
+    }
+    fn require_recycle_path(&self, path: &Path) -> Result<()> {
+        plain_path(path)?;
+        for ancestor in path.ancestors() {
+            let expected = self
+                .identities
+                .get(ancestor)
+                .ok_or_else(|| fail("删除预览缺少目录身份，请重新检查"))?;
+            if crate::importer::metadata_identity(ancestor)? != *expected {
+                return Err(fail("目录已被替换，请重新检查删除预览"));
+            }
+        }
+        Ok(())
+    }
 }
 #[derive(Debug, Clone, Serialize)]
 pub struct DeleteReport {
@@ -66,11 +98,18 @@ pub fn resolve_save(game: &Game, value: &str) -> Result<PathBuf> {
     plain_path(&path)?;
     absolute_path(&path)
 }
-fn absolute_path(path: &Path) -> Result<PathBuf> {
+pub(crate) fn absolute_path(path: &Path) -> Result<PathBuf> {
     match dunce::canonicalize(path) {
         Ok(path) => Ok(path),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            let parent = path.parent().ok_or_else(|| fail("路径没有父目录"))?;
+            let Some(parent) = path.parent() else {
+                // An offline drive still defines a protected absolute namespace.
+                return if path.is_absolute() {
+                    Ok(path.to_owned())
+                } else {
+                    Err(fail("路径没有父目录"))
+                };
+            };
             let name = path
                 .file_name()
                 .ok_or_else(|| fail("路径不是明确的文件或文件夹"))?;
@@ -202,6 +241,7 @@ pub fn preview(
         game_path: game.install_path.clone(),
         saves: vec![],
         blockers: vec![],
+        identities: Default::default(),
     };
     let result = (|| -> Result<()> {
         let raw = Path::new(&game.install_path);
@@ -211,6 +251,7 @@ pub fn preview(
             return Err(fail("游戏目录不存在，可选择仅从库中移除"));
         }
         plan.game_path = text(&root)?;
+        plan.bind_recycle_path(&root)?;
         protected(&root, settings, data, games, &game.id)?;
         check_tree(&root, &mut 1_000_000)?;
         let mut saves = Vec::new();
@@ -241,6 +282,7 @@ pub fn preview(
             .filter(|s| !saves.iter().any(|p| p != *s && s.starts_with(p)))
             .collect::<Vec<_>>();
         for save in selected {
+            plan.bind_recycle_path(save)?;
             plan.saves.push(SaveAction {
                 path: text(save)?,
                 action: "recycle".into(),
@@ -331,17 +373,23 @@ pub fn apply_files(
                     .map(|s| PathBuf::from(&s.path)),
             );
             ensure_delete_idle(plan, &paths)?;
+            // Check every target before recycling any; then check each one at its operation.
+            for path in &paths {
+                plan.require_recycle_path(path)?;
+            }
             // External saves first; internal saves are recycled with the game directory.
             // All failures leave the database record intact and report completed steps.
             for save in plan.saves.iter().filter(|s| {
                 s.action == "recycle" && !Path::new(&s.path).starts_with(&plan.game_path)
             }) {
+                plan.require_recycle_path(Path::new(&save.path))?;
                 recycle(Path::new(&save.path))?;
                 if Path::new(&save.path).try_exists()? {
                     return Err(fail("存档仍在原位，回收站操作未完成"));
                 }
                 report.recycled.push(save.path.clone());
             }
+            plan.require_recycle_path(Path::new(&plan.game_path))?;
             recycle(Path::new(&plan.game_path))?;
             if Path::new(&plan.game_path).try_exists()? {
                 return Err(fail("游戏目录仍在原位，回收站操作未完成"));

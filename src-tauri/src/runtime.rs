@@ -13,6 +13,15 @@ pub struct ProcessLease {
     #[cfg(not(windows))]
     child: Child,
 }
+
+pub(crate) fn ensure_request_idle(activity: usize, task_active: bool) -> Result<()> {
+    if activity > 0 || task_active {
+        return Err(Error::Validation(
+            "请先结束当前任务、启动或存档写入请求".into(),
+        ));
+    }
+    Ok(())
+}
 impl ProcessLease {
     pub fn from_child(child: Child) -> Result<Self> {
         #[cfg(windows)]

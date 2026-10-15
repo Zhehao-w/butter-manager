@@ -60,7 +60,9 @@ pub fn preview(
     let source_key = std::path::PathBuf::from(paths::path_key(&dunce::canonicalize(source)?)?);
     for root in [&settings.game_root, &settings.mtool_root] {
         if !root.is_empty() {
-            let root = std::path::PathBuf::from(paths::path_key(&dunce::canonicalize(root)?)?);
+            let root = std::path::PathBuf::from(paths::path_key(&deletion::absolute_path(
+                Path::new(root),
+            )?)?);
             if source_key.starts_with(&root) || root.starts_with(&source_key) {
                 return Err(invalid(
                     "导入副本不能位于游戏库或公共工具目录内，也不能包含这些目录",

@@ -1488,6 +1488,7 @@ impl ImportStore {
                     return Err(invalid("请先恢复未完成的更新"));
                 }
                 let text = paths::path_text(&container)?;
+                deletion.bind_recycle_path(&container)?;
                 if !deletion.saves.iter().any(|save| save.path == text) {
                     deletion.saves.push(crate::deletion::SaveAction {
                         path: text,

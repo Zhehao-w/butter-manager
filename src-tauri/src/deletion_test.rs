@@ -26,6 +26,91 @@ fn fake_recycle(trash: &Path) -> impl FnMut(&Path) -> Result<()> + '_ {
         Ok(())
     }
 }
+#[cfg(windows)]
+#[test]
+fn offline_volume_keeps_an_absolute_protected_namespace() {
+    let drives = unsafe { windows_sys::Win32::Storage::FileSystem::GetLogicalDrives() };
+    assert_ne!(drives, 0);
+    let Some(letter) = (b'D'..=b'Z')
+        .rev()
+        .find(|letter| drives & (1 << (letter - b'A')) == 0)
+    else {
+        return;
+    };
+    let missing = PathBuf::from(format!("{}:\\public-tool\\nested", char::from(letter)));
+    assert_eq!(absolute_path(&missing).unwrap(), missing);
+}
+#[test]
+fn replaced_game_save_or_parent_invalidates_deletion_before_any_recycling() {
+    for scope in ["game", "save", "parent"] {
+        let (temp, mut game, settings, data) = fixture();
+        let external = temp.path().join("external");
+        fs::create_dir(&external).unwrap();
+        fs::write(external.join("slot.dat"), b"external progress").unwrap();
+        game.save_paths.push(external.display().to_string());
+        let games = std::slice::from_ref(&game);
+        let plan = preview(&game, games, &settings, &data, "identity-test");
+        assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+        let root = Path::new(&game.install_path);
+        let replaced = match scope {
+            "save" => external.clone(),
+            "parent" => root.parent().unwrap().to_path_buf(),
+            _ => root.to_path_buf(),
+        };
+        let original = temp.path().join("original");
+        fs::rename(&replaced, &original).unwrap();
+        fs::create_dir_all(root.join("save/slot")).unwrap();
+        fs::create_dir_all(&external).unwrap();
+        fs::write(replaced.join("unrelated.txt"), b"do not recycle").unwrap();
+        let current = preview(&game, games, &settings, &data, "identity-test");
+        assert!(current.blockers.is_empty(), "{:?}", current.blockers);
+        assert_ne!(plan, current, "{scope}");
+        let report = apply_files(&plan, |_| panic!("no target may be recycled"));
+        assert!(report.error.is_some(), "{scope}");
+        assert!(report.recycled.is_empty());
+        assert!(original.is_dir());
+        assert_eq!(
+            fs::read(replaced.join("unrelated.txt")).unwrap(),
+            b"do not recycle"
+        );
+    }
+}
+
+#[test]
+fn rechecks_game_identity_after_external_save_recycling_and_rejects_unbound_plans() {
+    let (temp, mut game, settings, data) = fixture();
+    let external = temp.path().join("external.dat");
+    fs::write(&external, b"external progress").unwrap();
+    game.save_paths.push(external.display().to_string());
+    let plan = preview(
+        &game,
+        std::slice::from_ref(&game),
+        &settings,
+        &data,
+        "race-test",
+    );
+    assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+    // A serialized UI plan is not server-side deletion authority.
+    let unbound: DeletePlan = serde_json::from_value(serde_json::to_value(&plan).unwrap()).unwrap();
+    assert!(apply_files(&unbound, |_| panic!("unbound plan"))
+        .error
+        .is_some());
+    let original = temp.path().join("original");
+    let report = apply_files(&plan, |path| {
+        assert_eq!(path, dunce::canonicalize(&external).unwrap());
+        fs::rename(path, temp.path().join("fake-trash.dat"))?;
+        fs::rename(&game.install_path, &original)?;
+        fs::create_dir(&game.install_path)?;
+        fs::write(Path::new(&game.install_path).join("unrelated.txt"), b"keep")?;
+        Ok(())
+    });
+    assert!(report.error.is_some());
+    assert_eq!(report.recycled.len(), 1);
+    assert!(original.join("save/slot/存档.dat").is_file());
+    assert!(Path::new(&game.install_path)
+        .join("unrelated.txt")
+        .is_file());
+}
 #[test]
 fn deleting_one_confirmed_duplicate_preserves_the_kept_files_and_metadata() {
     let temp = tempfile::tempdir().unwrap();

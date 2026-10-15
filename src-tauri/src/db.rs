@@ -468,7 +468,6 @@ impl Database {
                 "detected"
             };
             transaction.prepare_cached("INSERT INTO games(id,canonical_title,display_title,install_path,install_path_key,main_executable,engine,current_version,version_source,working_directory,launch_type,mtool_target_exe,launch_source,engine_source) VALUES(?1,?2,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?12)")?.execute(params![id,candidate.suggested_title,candidate.install_path,key,entry.executable,candidate.engine,entry.version,entry.version_source,work,mode,if mtool { entry.executable.as_deref() } else { None },source])?;
-            transaction.prepare_cached("INSERT INTO aliases(id,game_id,alias,normalized_alias,source) VALUES(?1,?2,?3,?4,'folder_name')")?.execute(params![Uuid::new_v4().to_string(),id,candidate.suggested_title,normalize_alias(&candidate.suggested_title)])?;
             transaction.execute(
                 "UPDATE games SET external_player=?2 WHERE id=?1",
                 params![
@@ -1058,11 +1057,7 @@ impl Database {
         )?;
         // Replace metadata only; never delete or mutate anything in a game directory.
         transaction.execute("DELETE FROM aliases WHERE game_id=?1", [&edit.id])?;
-        for alias in edit
-            .aliases
-            .iter()
-            .chain(std::iter::once(&edit.canonical_title))
-        {
+        for alias in &edit.aliases {
             let alias = alias.trim();
             if alias.is_empty() {
                 continue;
@@ -1875,7 +1870,7 @@ mod tests {
             assert_eq!(game.working_directory, "包装");
             assert_eq!(game.main_executable.as_deref(), Some("包装/任意.exe"));
             assert_eq!(game.current_version, "Final / manual");
-            assert_eq!(game.aliases.len(), 1);
+            assert!(game.aliases.is_empty());
         }
         assert_eq!(
             db.register_entries(&entries, &|| false, &|_, _| {})
@@ -1900,6 +1895,43 @@ mod tests {
             aliases: game.aliases.clone(),
             save_paths: vec![],
         }
+    }
+
+    #[test]
+    fn aliases_are_only_explicit_user_values_and_clearing_survives_save_and_reopen() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("Game v1");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(root.join("Game.exe"), b"fixture").unwrap();
+        let path = temp.path().join("fixture.db");
+        let mut db = Database::open(&path).unwrap();
+        let id = db
+            .register(&[analyze_directory(&root).unwrap()])
+            .unwrap()
+            .remove(0);
+        assert!(db.game(&id).unwrap().aliases.is_empty());
+        let mut edit = draft(&db.game(&id).unwrap());
+        edit.aliases = vec!["my alias".into()];
+        let saved = db.edit_game(edit).unwrap();
+        assert_eq!(saved.aliases, vec!["my alias"]);
+        let mut edit = draft(&saved);
+        edit.canonical_title = "Game v2".into();
+        edit.play_status = crate::domain::PlayStatus::Completed;
+        let saved = db.edit_game(edit).unwrap();
+        assert_eq!(saved.aliases, vec!["my alias"]);
+        let mut edit = draft(&saved);
+        edit.aliases.clear();
+        let saved = db.edit_game(edit).unwrap();
+        assert!(saved.aliases.is_empty());
+        db.edit_game(draft(&saved)).unwrap();
+        drop(db);
+        assert!(Database::open(&path)
+            .unwrap()
+            .game(&id)
+            .unwrap()
+            .aliases
+            .is_empty());
+        assert_eq!(std::fs::read(root.join("Game.exe")).unwrap(), b"fixture");
     }
 
     #[test]

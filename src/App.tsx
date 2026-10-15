@@ -132,6 +132,7 @@ export default function App() {
   const [visibleLaunchingIds, setVisibleLaunchingIds] = useState<Set<string>>(new Set());
   const launchRequests = useRef(new Set<string>());
   async function playGame(id: string, configuration?: LaunchConfiguration) {
+    if (taskActive) throw new Error('当前任务完成后可启动');
     if (launchRequests.current.has(id)) return;
     launchRequests.current.add(id);
     setLaunchingIds((current) => new Set(current).add(id));
@@ -2782,6 +2783,7 @@ function GameDetail({
                   aria-busy={launching}
                   disabled={
                     busy ||
+                    analysisLocked ||
                     launching ||
                     confirmClose ||
                     !!launchBlockReason({ ...game, ...configuration }, launchCheck)

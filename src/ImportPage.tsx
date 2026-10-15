@@ -722,6 +722,7 @@ export function ImportPage({
       >
         <div className="header-actions">
           <BrowseButton
+            className="primary"
             disabled={disabled || !!recoveryIssues.length || view !== 'new'}
             onClick={() => void choose()}
           >

@@ -1266,7 +1266,7 @@ export default function App() {
                   </button>
                 </div>
               </PageHeader>
-              <div className="scan-filters organizer-toolbar">
+              <div className="library-toolbar organizer-toolbar">
                 <SearchField
                   label="搜索扫描结果"
                   placeholder="搜索文件夹、路径、启动文件或版本"

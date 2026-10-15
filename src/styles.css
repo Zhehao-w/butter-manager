@@ -830,16 +830,6 @@ button.game-link:focus-visible {
   border-radius: 0;
   padding: 0 8px 8px 0;
 }
-.scan-filters {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--toolbar-gap);
-  margin-bottom: 18px;
-}
-.organizer-toolbar {
-  align-items: flex-start;
-}
 .organizer-toolbar > .organizer-tabs {
   margin: 0;
   height: var(--toolbar-control-height);

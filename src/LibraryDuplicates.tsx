@@ -334,7 +334,7 @@ export function LibraryDuplicates({
           </button>
         </div>
       </PageHeader>
-      <div className="scan-filters organizer-toolbar duplicate-toolbar">
+      <div className="library-toolbar organizer-toolbar duplicate-toolbar">
         <SearchField
           label="搜索重复组合"
           placeholder="搜索名称、版本、引擎或路径"

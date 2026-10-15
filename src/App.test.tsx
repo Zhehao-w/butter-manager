@@ -1780,28 +1780,45 @@ describe('iteration interactions', () => {
     expect(within(play.closest('tr')!).getByText('未启动')).toBeTruthy();
     expect(screen.queryByRole('dialog')).toBeNull();
   });
-  it('keeps a fast launch visually stable and cancels its delayed progress indicator', async () => {
-    vi.mocked(api.play).mockResolvedValue({ ...game, play_status: 'PLAYING' });
-    render(<App />);
-    const play = await screen.findByRole('button', { name: `启动 ${game.display_title}` });
-    vi.useFakeTimers();
-    try {
-      fireEvent.click(play);
-      expect(play.textContent).toBe('启动');
-      expect((play as HTMLButtonElement).disabled).toBe(true);
-      expect(play.getAttribute('data-launch-pending')).toBe('true');
-      await act(async () => {});
-      expect((play as HTMLButtonElement).disabled).toBe(false);
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(500);
-      });
-      expect(play.textContent).toBe('启动');
-      expect(play.getAttribute('data-launch-pending')).toBe('false');
-      expect(api.play).toHaveBeenCalledTimes(1);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
+  it.each(['library', 'detail'] as const)(
+    'keeps a fast %s launch visually stable and cancels its delayed progress indicator',
+    async (surface) => {
+      vi.mocked(api.play).mockResolvedValue({ ...game, play_status: 'PLAYING' });
+      let play: HTMLElement;
+      if (surface === 'detail') {
+        const modal = await openDetail();
+        play = within(modal).getByRole('button', { name: '启动' });
+      } else {
+        render(<App />);
+        play = await screen.findByRole('button', { name: `启动 ${game.display_title}` });
+      }
+      vi.useFakeTimers();
+      try {
+        fireEvent.click(play);
+        expect(play.textContent).toBe('启动');
+        expect((play as HTMLButtonElement).disabled).toBe(true);
+        expect(play.getAttribute('data-launch-pending')).toBe('true');
+        fireEvent.click(play);
+        expect(api.play).toHaveBeenCalledTimes(1);
+        await act(async () => {});
+        expect((play as HTMLButtonElement).disabled).toBe(false);
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(500);
+        });
+        expect(play.textContent).toBe('启动');
+        expect(play.getAttribute('data-launch-pending')).toBe('false');
+        expect(api.play).toHaveBeenCalledTimes(1);
+        if (surface === 'detail') {
+          expect(within(screen.getByRole('dialog')).getByRole('button', { name: '启动' })).toBe(
+            play,
+          );
+          expect(api.saveGame).not.toHaveBeenCalled();
+        }
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
   it.each([
     { launch_type: 'DIRECT' as const, main_executable: null },
     {

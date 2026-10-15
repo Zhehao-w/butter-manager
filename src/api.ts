@@ -142,11 +142,14 @@ export const api = {
   launchHistory: (id: string) => invoke<string[]>('launch_history', { id }),
   clearLibrary: (confirmation: string) => invoke<ResetReport>('clear_library', { confirmation }),
   openFolder: (id: string) => invoke<void>('open_game_folder', { id }),
+  openDirectory: (path: string) => invoke<void>('open_directory', { path }),
   openSaveFolder: (id: string, path: string) => invoke<void>('open_save_folder', { id, path }),
   chooseSaveDirectory: (id: string, path: string | null) =>
     invoke<string | null>('choose_save_directory', { id, path }),
   debugBat: (id: string) => invoke<string>('preview_mtool_bat', { id }),
   chooseDirectory: () => invoke<string | null>('choose_directory'),
+  chooseWorkingDirectory: (root: string, current: string) =>
+    invoke<string | null>('choose_working_directory', { root, current }),
   chooseLaunchFile: (root: string) =>
     invoke<string | null>('choose_launch_file', { root, extension: null }),
   choosePlayerFile: (root: string, extension: 'exe' | 'qsp') =>

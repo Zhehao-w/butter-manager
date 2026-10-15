@@ -103,6 +103,57 @@ beforeEach(() => {
   vi.mocked(api.cancel).mockResolvedValue();
 });
 describe('batch import flow', () => {
+  it.each(['unassociated', 'associated', 'failure'] as const)(
+    'opens the source and only the selected associated game folder: %s',
+    async (mode) => {
+      const existing = makeGame({ id: 'linked-game', install_path: 'E:/Library/Existing' });
+      if (mode === 'associated')
+        vi.mocked(api.importMatches).mockResolvedValue({
+          [candidate.install_path]: [
+            {
+              id: existing.id,
+              title: existing.display_title,
+              version: 'v1.0',
+              path: existing.install_path,
+              reason: '名称一致',
+            },
+          ],
+        });
+      if (mode === 'failure') vi.mocked(api.openDirectory).mockRejectedValue('来源目录不存在');
+      const options = props();
+      renderNewImport({ ...options, games: [existing] });
+      const source = await screen.findByRole('button', { name: '打开源目录' });
+      await waitForEnabledButton('打开源目录');
+      fireEvent.click(source);
+      await waitFor(() =>
+        expect(api.openDirectory).toHaveBeenCalledExactlyOnceWith(candidate.install_path),
+      );
+      await waitForEnabledButton('打开源目录');
+      if (mode === 'failure')
+        await waitFor(() => expect(options.onError).toHaveBeenCalledWith('来源目录不存在'));
+      if (mode === 'associated') {
+        await expandSettings('基本信息');
+        expect(screen.queryByRole('button', { name: '打开关联目录' })).toBeNull();
+        await expandSettings('游戏关联');
+        const linked = await screen.findByRole('button', { name: '打开关联目录' });
+        const gameRow = linked.closest('.import-match-game-row')!;
+        expect(
+          within(gameRow as HTMLElement).getByRole('button', {
+            name: `已关联：${existing.display_title}`,
+          }),
+        ).toBeTruthy();
+        expect(linked.closest('.import-source-row')).toBeNull();
+        fireEvent.click(linked);
+        await waitFor(() => expect(api.openFolder).toHaveBeenCalledExactlyOnceWith(existing.id));
+      } else {
+        expect(screen.queryByRole('button', { name: '打开关联目录' })).toBeNull();
+        expect(api.openFolder).not.toHaveBeenCalled();
+      }
+      expect(api.importPlan).not.toHaveBeenCalled();
+      expect(api.importApply).not.toHaveBeenCalled();
+      expect(api.saveGame).not.toHaveBeenCalled();
+    },
+  );
   it.each([true, false])(
     'reviews bundled MTool with default cleanup and opt-out: %s',
     async (keepChecked) => {
@@ -800,7 +851,15 @@ describe('batch import flow', () => {
     );
     expect(api.importApply).not.toHaveBeenCalled();
   });
-  it.each(['inherit', 'override', 'automatic', 'reset'] as const)(
+  it.each([
+    'inherit',
+    'override',
+    'automatic',
+    'reset',
+    'browse',
+    'cancel-browse',
+    'failed-browse',
+  ] as const)(
     'passes only explicit launch configuration changes to update plans: %s',
     async (mode) => {
       const installed: Game = {
@@ -820,23 +879,51 @@ describe('batch import flow', () => {
           },
         ],
       });
-      renderNewImport({ games: [installed] });
+      const options = props();
+      renderNewImport({ ...options, games: [installed] });
       await expandSettings('游戏关联');
       await screen.findByRole('radiogroup', { name: '存档处理' });
       await expandSettings('启动配置');
       fireEvent.click(screen.getByRole('checkbox', { name: '公共 MTool' }));
-      expect(screen.getByText('更新启动配置').closest('details')?.open).toBe(true);
+      const launchDetails = screen.getByText('更新启动配置').closest('details')!;
+      expect(launchDetails.open).toBe(false);
+      fireEvent.click(screen.getByText('更新启动配置'));
+      expect(launchDetails.open).toBe(true);
       const working = screen.getByLabelText('工作目录（相对新版游戏目录）') as HTMLInputElement;
       const loader = screen.getByLabelText(
         'MTool loader（相对公共 MTool 目录）',
       ) as HTMLInputElement;
       expect(working.value).toBe('manual-cwd');
       expect(loader.value).toBe('loaders/custom.dll');
-      if (mode !== 'inherit') {
+      if (['override', 'automatic', 'reset'].includes(mode)) {
         fireEvent.change(working, { target: { value: 'new-cwd' } });
         fireEvent.change(loader, {
           target: { value: mode === 'automatic' ? '' : 'loaders/new.dll' },
         });
+      }
+      if (mode.includes('browse')) {
+        if (mode === 'failed-browse')
+          vi.mocked(api.chooseWorkingDirectory).mockRejectedValue('请选择游戏目录内的工作目录');
+        else
+          vi.mocked(api.chooseWorkingDirectory).mockResolvedValue(
+            mode === 'browse' ? '包装/新版' : null,
+          );
+        fireEvent.click(screen.getByRole('button', { name: '浏览文件夹…' }));
+        await waitFor(() =>
+          expect(api.chooseWorkingDirectory).toHaveBeenCalledExactlyOnceWith(
+            candidate.install_path,
+            'manual-cwd',
+          ),
+        );
+        await waitForEnabledButton('浏览文件夹…');
+        if (mode === 'failed-browse')
+          await waitFor(() =>
+            expect(options.onError).toHaveBeenCalledWith('请选择游戏目录内的工作目录'),
+          );
+        expect(working.value).toBe(mode === 'browse' ? '包装/新版' : 'manual-cwd');
+        fireEvent.click(screen.getByText('更新启动配置'));
+        fireEvent.click(screen.getByText('更新启动配置'));
+        expect(working.value).toBe(mode === 'browse' ? '包装/新版' : 'manual-cwd');
       }
       if (mode === 'reset') {
         fireEvent.click(screen.getByRole('button', { name: '恢复继承旧配置' }));
@@ -847,10 +934,14 @@ describe('batch import flow', () => {
       await waitFor(() => expect(api.importPlan).toHaveBeenCalledOnce());
       const selected = vi.mocked(api.importPlan).mock.calls[0][1][0];
       expect(selected.working_directory).toBe(
-        mode === 'inherit' || mode === 'reset' ? undefined : 'new-cwd',
+        mode === 'browse'
+          ? '包装/新版'
+          : mode === 'override' || mode === 'automatic'
+            ? 'new-cwd'
+            : undefined,
       );
       expect(selected.mtool_loader).toBe(
-        mode === 'inherit' || mode === 'reset'
+        ['inherit', 'reset', 'browse', 'cancel-browse', 'failed-browse'].includes(mode)
           ? undefined
           : mode === 'automatic'
             ? ''

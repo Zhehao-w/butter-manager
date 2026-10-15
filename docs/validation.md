@@ -1,5 +1,13 @@
 # 验证记录
 
+## Visual Studio 2026 Build Tools 迁移（2026-10-14）
+
+通过微软签名的 Stable 安装器全局安装 Visual Studio Build Tools 2026 18.11.12306.390、MSVC 14.51.36231 与 Windows SDK 10.0.26100.0。保留现有 Rust 1.99.0 和依赖锁文件，`Use-Toolchain.ps1` 原有 vswhere 最新版本发现逻辑直接选中新工具，无须写死安装路径。CI 镜像同步为 `windows-2025-vs2026`，开发缓存仍在项目内；已有未提交业务 / UI 修改保留。
+
+核对生成目录归属后补齐 Cargo 的 CACHEDIR.TAG，只清理并重编 SQLite 的后端 / Release 原生产物，避免缓存旧 C++ 编译结果。独立 C 程序验证 MSVC 1951、Windows SDK 头文件和 kernel32 链接；完整前端 15 文件 / 220 项通过，完整 Rust 236 项通过、1 项既有原生回收测试默认忽略（21.82 秒）。Prettier、Rustfmt、TypeScript / Vite、严格所有目标 Clippy 和新工具链下的 Windows Release EXE 构建通过。测试不读取正式游戏、数据库或用户存档，不备份或导出资料。
+
+验证通过后使用微软安装器卸载旧 2022 实例，安装 / 卸载均退出 0，无需重启；vswhere 只剩完整可用的 2026。移除旧版本后再次完成原生编译 / 链接验证。新 EXE 已覆盖并打开根目录试用版，562 个游戏、schema 11、完整性及全部表不可恢复摘要一致。一切完成后移除本次下载的安装器、安装 / 卸载 helper、探针与临时日志；正式 data、游戏 / 存档以及原有未提交修改保留，未 Commit / Push。
+
 ## Code Review 修复：零匹配迁移、MTool 运行跟踪与手动清理（2026-10-13）
 
 预览没有可迁移游戏时显示“没有可迁移的游戏，请检查新旧根目录”，两层确认均禁用。Rust 命令、重新验证与数据库提交独立拒绝零匹配；即使公共 MTool 可迁移，也不写入 Game Root、MTool Root 或任何游戏 / 存档路径。隔离回归覆盖空库、错误旧根目录、缺失游戏子目录和全部启动文件缺失，核对设置、游戏资料与数据库 revision 完全不变。

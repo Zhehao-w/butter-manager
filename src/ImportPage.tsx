@@ -1050,9 +1050,20 @@ export function ImportPage({
                               : '新游戏'}
                       </span>
                     </div>
-                    <p className="path import-source-path" title={source}>
-                      来源：{source}
-                    </p>
+                    <div className="import-source-row">
+                      <p className="path import-source-path" title={source}>
+                        来源：{source}
+                      </p>
+                      <div className="import-folder-actions">
+                        <BrowseButton
+                          disabled={disabled}
+                          title={source}
+                          onClick={() => void action(() => api.openDirectory(source))}
+                        >
+                          打开源目录
+                        </BrowseButton>
+                      </div>
+                    </div>
                     <div className="import-choice-summary" aria-label="当前导入配置">
                       <span
                         className={
@@ -1340,22 +1351,44 @@ export function ImportPage({
                             </div>
                           )}
                           {existing && (
-                            <details className="import-launch-update" open>
+                            <details className="import-launch-update">
                               <summary>更新启动配置</summary>
                               <p className="muted">
                                 默认继承旧配置；新版目录或游戏位数改变时，可在此调整。
                               </p>
                               <div className="form-grid">
-                                <label>
-                                  工作目录（相对新版游戏目录）
-                                  <input
-                                    value={choice.working_directory ?? existing.working_directory}
-                                    disabled={disabled}
-                                    onChange={(e) =>
-                                      update(source, { working_directory: e.target.value })
-                                    }
-                                  />
-                                </label>
+                                <div className="import-working-directory">
+                                  <label
+                                    htmlFor={`import-working-directory-${encodeURIComponent(source)}`}
+                                  >
+                                    工作目录（相对新版游戏目录）
+                                  </label>
+                                  <div className="import-working-directory-input">
+                                    <input
+                                      id={`import-working-directory-${encodeURIComponent(source)}`}
+                                      value={choice.working_directory ?? existing.working_directory}
+                                      disabled={disabled}
+                                      onChange={(e) =>
+                                        update(source, { working_directory: e.target.value })
+                                      }
+                                    />
+                                    <BrowseButton
+                                      disabled={disabled}
+                                      onClick={() =>
+                                        void action(async () => {
+                                          const directory = await api.chooseWorkingDirectory(
+                                            source,
+                                            choice.working_directory ?? existing.working_directory,
+                                          );
+                                          if (directory !== null)
+                                            update(source, { working_directory: directory });
+                                        })
+                                      }
+                                    >
+                                      浏览文件夹…
+                                    </BrowseButton>
+                                  </div>
+                                </div>
                                 {choice.mtool && (
                                   <label>
                                     MTool loader（相对公共 MTool 目录）
@@ -1417,34 +1450,48 @@ export function ImportPage({
                                 </div>
                                 {associations.map((match) => (
                                   <div className="import-match-option" key={match.id}>
-                                    <button
-                                      aria-label={
-                                        (choice.existing_id === match.id ? '已关联：' : '关联：') +
-                                        match.title
-                                      }
-                                      className={
-                                        choice.existing_id === match.id
-                                          ? 'import-match-selected'
-                                          : 'import-match-candidate'
-                                      }
-                                      disabled={disabled || choice.existing_id === match.id}
-                                      onClick={() =>
-                                        update(source, {
-                                          existing_id: match.id,
-                                          new_override: false,
-                                          saves_confirmed: false,
-                                          preserve_saves: true,
-                                        })
-                                      }
-                                    >
-                                      <span
-                                        className="import-association-title"
-                                        title={match.title}
+                                    <div className="import-match-game-row">
+                                      <button
+                                        aria-label={
+                                          (choice.existing_id === match.id
+                                            ? '已关联：'
+                                            : '关联：') + match.title
+                                        }
+                                        className={
+                                          choice.existing_id === match.id
+                                            ? 'import-match-selected'
+                                            : 'import-match-candidate'
+                                        }
+                                        disabled={disabled || choice.existing_id === match.id}
+                                        onClick={() =>
+                                          update(source, {
+                                            existing_id: match.id,
+                                            new_override: false,
+                                            saves_confirmed: false,
+                                            preserve_saves: true,
+                                          })
+                                        }
                                       >
-                                        {choice.existing_id === match.id ? '已关联：' : '关联：'}
-                                        {match.title}
-                                      </span>
-                                    </button>
+                                        <span
+                                          className="import-association-title"
+                                          title={match.title}
+                                        >
+                                          {choice.existing_id === match.id ? '已关联：' : '关联：'}
+                                          {match.title}
+                                        </span>
+                                      </button>
+                                      {choice.existing_id === match.id && (
+                                        <BrowseButton
+                                          disabled={disabled || !existing}
+                                          title={existing?.install_path}
+                                          onClick={() =>
+                                            void action(() => api.openFolder(match.id))
+                                          }
+                                        >
+                                          打开关联目录
+                                        </BrowseButton>
+                                      )}
+                                    </div>
                                     <div className="import-match-explanation">
                                       <span className="import-match-kind">
                                         {choice.existing_id === match.id

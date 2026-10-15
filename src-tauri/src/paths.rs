@@ -108,9 +108,66 @@ pub fn executable_directory(executable: Option<&str>) -> Result<String> {
     parent.map(path_text).unwrap_or_else(|| Ok(".".into()))
 }
 
+/// Folder picks are stored relative to the source package, so they survive importing it.
+pub fn relative_working_directory(root: &Path, selected: &Path) -> Result<String> {
+    let root = dunce::canonicalize(root)?;
+    let selected = dunce::canonicalize(selected)?;
+    let relative = selected
+        .strip_prefix(&root)
+        .map_err(|_| Error::Validation("请选择这个游戏目录内的工作目录".into()))?;
+    let value = if relative.as_os_str().is_empty() {
+        ".".into()
+    } else {
+        path_text(relative)?
+    };
+    working_directory(&root, &value)?;
+    Ok(value)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn working_directory_picker_keeps_root_and_nested_folders_relative_and_rejects_escape() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("ゲーム 新版");
+        let nested = root.join("Game Data/资源");
+        let outside = temp.path().join("outside");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::create_dir(&outside).unwrap();
+        std::fs::write(root.join("Game.exe"), b"unchanged").unwrap();
+        assert_eq!(relative_working_directory(&root, &root).unwrap(), ".");
+        let relative = relative_working_directory(&root, &nested).unwrap();
+        assert!(!Path::new(&relative).is_absolute());
+        assert_eq!(
+            working_directory(&root, &relative).unwrap(),
+            dunce::canonicalize(&nested).unwrap()
+        );
+        for selected in [&outside, &root.join("missing"), &root.join("Game.exe")] {
+            assert!(relative_working_directory(&root, selected).is_err());
+        }
+        assert_eq!(std::fs::read(root.join("Game.exe")).unwrap(), b"unchanged");
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            let junction = root.join("linked-outside");
+            let status = std::process::Command::new(std::env::var_os("ComSpec").unwrap())
+                .args(["/d", "/c", "mklink", "/J"])
+                .arg(&junction)
+                .arg(&outside)
+                .creation_flags(0x08000000)
+                .output()
+                .unwrap();
+            assert!(
+                status.status.success(),
+                "{}",
+                String::from_utf8_lossy(&status.stderr)
+            );
+            assert!(relative_working_directory(&root, &junction).is_err());
+            std::fs::remove_dir(&junction).unwrap();
+            assert!(outside.is_dir());
+        }
+    }
     #[test]
     fn selected_documents_accept_unicode_and_reject_escape_directories_and_scripts() {
         let temp = tempfile::tempdir().unwrap();

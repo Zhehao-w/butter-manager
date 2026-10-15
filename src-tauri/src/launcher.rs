@@ -250,13 +250,22 @@ pub fn debug_bat(game: &Game, settings: &Settings) -> Result<String> {
 }
 
 pub fn open_folder(game: &Game) -> Result<()> {
+    open_directory(Path::new(&game.install_path))
+}
+
+fn directory_path(path: &Path) -> Result<std::path::PathBuf> {
+    let path = dunce::canonicalize(path)?;
+    if !path.is_dir() {
+        return Err(Error::Validation("目录不存在或不是文件夹".into()));
+    }
+    Ok(path)
+}
+
+pub fn open_directory(path: &Path) -> Result<()> {
     if !cfg!(windows) {
         return Err(Error::Validation("打开文件夹仅支持 Windows".into()));
     }
-    let root = dunce::canonicalize(&game.install_path)?;
-    if !root.is_dir() {
-        return Err(Error::Validation("游戏目录不存在".into()));
-    }
+    let root = directory_path(path)?;
     Command::new("explorer.exe").arg(root).spawn()?;
     Ok(())
 }
@@ -292,6 +301,21 @@ pub fn open_save_folder(game: &Game, configured: &str) -> Result<()> {
 mod tests {
     use super::*;
     use crate::{db::Database, scanner::analyze_directory};
+    #[test]
+    fn directory_browsing_accepts_only_existing_folders_without_modifying_contents() {
+        let temp = tempfile::tempdir().unwrap();
+        let folder = temp.path().join("ゲーム 中文 spaces");
+        std::fs::create_dir(&folder).unwrap();
+        let file = folder.join("fixture.exe");
+        std::fs::write(&file, b"never executed").unwrap();
+        assert_eq!(
+            directory_path(&folder).unwrap(),
+            dunce::canonicalize(&folder).unwrap()
+        );
+        assert!(directory_path(&file).is_err());
+        assert!(directory_path(&temp.path().join("missing")).is_err());
+        assert_eq!(std::fs::read(&file).unwrap(), b"never executed");
+    }
     #[cfg(windows)]
     #[test]
     fn mtool_tracks_runtime_and_injector_descendants_including_partial_launch_failures() {

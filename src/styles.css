@@ -77,11 +77,13 @@ button.primary {
   color: #fff;
   box-shadow: 0 4px 12px #1677ff20;
 }
-button.primary:hover:not(:disabled) {
+button.primary:hover:not(:disabled),
+button.primary[data-launch-pending='true']:hover {
   background-color: #086ce9;
   border-color: #006de5;
 }
-button.primary:active:not(:disabled) {
+button.primary:active:not(:disabled),
+button.primary[data-launch-pending='true']:active {
   background-color: #075fcf;
 }
 button.danger {
@@ -1912,11 +1914,45 @@ button {
   padding: 12px 16px;
   margin-bottom: 8px;
 }
-.import-source-path {
+.import-source-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
   margin: 4px 0 8px;
+}
+.import-source-path {
+  flex: 1;
+  min-width: min(160px, 100%);
+  margin: 0;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+.import-folder-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.import-folder-actions button {
+  min-height: 30px;
+  padding: 4px 10px;
+  font-size: 12px;
+}
+.import-working-directory {
+  min-width: 0;
+}
+.import-working-directory-input {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+.import-working-directory-input input {
+  min-width: 0;
+  flex: 1;
+}
+.import-working-directory-input button {
+  flex: none;
 }
 .import-choice-summary {
   display: flex;
@@ -2245,7 +2281,20 @@ button {
   flex-wrap: wrap;
   gap: 8px 16px;
 }
-.import-match-option > button {
+.import-match-game-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+.import-match-game-row > .browse-button {
+  flex: none;
+  min-height: 32px;
+  padding: 5px 10px;
+  font-size: 12px;
+}
+.import-match-game-row > :is(.import-match-selected, .import-match-candidate) {
   justify-content: flex-start;
   text-align: left;
   height: auto;
@@ -2265,7 +2314,7 @@ button {
   background: #f8f7f4;
   color: #57544c;
 }
-.import-match-option > .import-match-candidate:hover:not(:disabled) {
+.import-match-game-row > .import-match-candidate:hover:not(:disabled) {
   border-color: #bdb8ac;
   background: #eeece6;
 }
@@ -2276,7 +2325,7 @@ button {
   -webkit-line-clamp: 2;
   overflow: hidden;
 }
-.import-match-option > .import-match-selected:disabled {
+.import-match-game-row > .import-match-selected:disabled {
   opacity: 1;
   color: #4f6156;
   background: #f0f2ee;

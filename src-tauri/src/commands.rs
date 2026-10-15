@@ -1262,6 +1262,14 @@ fn open_game_folder(state: State<'_, AppState>, id: String) -> CommandResult<()>
     with_db(&state, |db| launcher::open_folder(&db.game(&id)?))
 }
 #[tauri::command]
+async fn open_directory(path: String) -> CommandResult<()> {
+    tauri::async_runtime::spawn_blocking(move || {
+        launcher::open_directory(Path::new(&path)).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+#[tauri::command]
 async fn list_editable_saves(
     state: State<'_, AppState>,
     game_id: String,
@@ -1516,6 +1524,32 @@ async fn choose_launch_file(
     .await
     .map_err(|e| e.to_string())?
 }
+#[tauri::command]
+async fn choose_working_directory(
+    app: tauri::AppHandle,
+    root: String,
+    current: String,
+) -> CommandResult<Option<String>> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let root = paths::working_directory(Path::new(&root), ".").map_err(|e| e.to_string())?;
+        let initial = paths::working_directory(&root, &current).unwrap_or_else(|_| root.clone());
+        let Some(selected) = app
+            .dialog()
+            .file()
+            .set_title("选择游戏目录内的工作目录")
+            .set_directory(initial)
+            .blocking_pick_folder()
+        else {
+            return Ok(None);
+        };
+        let selected = selected.into_path().map_err(|e| e.to_string())?;
+        paths::relative_working_directory(&root, &selected)
+            .map(Some)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
 fn initialize(app: &tauri::AppHandle) -> std::result::Result<(), Box<dyn std::error::Error>> {
     let data = app.path().app_local_data_dir()?;
     crate::data_directory::ensure_writable(&data)?;
@@ -1640,6 +1674,7 @@ pub fn run() {
             launch_history,
             clear_library,
             open_game_folder,
+            open_directory,
             open_save_folder,
             list_editable_saves,
             read_editable_save,
@@ -1651,6 +1686,7 @@ pub fn run() {
             preview_mtool_bat,
             choose_directory,
             choose_launch_file,
+            choose_working_directory,
             suggest_version
         ])
         .run(context)

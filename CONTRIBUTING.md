@@ -20,7 +20,7 @@ PR 执行完整前端 / Rust 回归、Prettier / Rustfmt、TypeScript / Vite 和
 
 CI 调用 `scripts/Build-PortableRelease.ps1 -SkipFrontendBuild` 复用已检查的前端，使用独立 x64 Cargo target 和 `tauri/custom-protocol`；本地默认脚本会先构建前端，只输出 EXE。正式发布加 `-PortableZip`。`scripts/Test-PortableRelease.ps1`（ZIP 白名单、哈希及失败清理）和 `scripts/Test-Portable.ps1`（数据目录与移动后读取）保留为手动专项回归，首次验证或对应逻辑改变时执行，不进入常规 CI。最终产物在忽略提交的 `artifacts/windows/`，不会打包任何正式用户资料。详见 [Portable 说明](docs/portable.md)。
 
-本机仓库已放在 `E:\butter-manager\dev\`，日常程序和完整正式 `data\` 留在父目录。Windows 本地可先执行 `. ./scripts/Use-Toolchain.ps1`，使用全局 Rust / C++ 工具和项目内缓存；工具无需逐项目安装，缓存可随仓库清理。构建与测试不要读取父目录正式资料，升级只替换父目录 EXE。
+本机仓库已放在 `E:\butter-manager\dev\`，日常程序和完整正式 `data\` 留在父目录。Windows 本地可先执行 `. ./scripts/Use-Toolchain.ps1`，使用全局 Rust / Visual Studio 2026 C++ Build Tools 和项目内缓存；脚本通过 vswhere 选择最新可用编译工具。工具无需逐项目安装，缓存可随仓库清理。CI 固定使用 `windows-2025-vs2026` 镜像。构建与测试不要读取父目录正式资料，升级只替换父目录 EXE。
 
 局部修改优先运行相关测试；发布或整合较大功能时再执行上面的完整检查。例如：
 

@@ -44,7 +44,7 @@ butter-manager/
 
 当前本机正式程序位于 `E:\butter-manager\butter-manager.exe`，完整正式资料位于 `E:\butter-manager\data\`；开发仓库（包括 `.git`、源码及未提交修改）位于 `E:\butter-manager\dev\`。日常从根目录 EXE 或指向它的快捷方式启动。构建输出旁首次启动会建立独立空库，因此不能以输出目录的新 `data/` 覆盖正式资料。
 
-开发命令在 `dev/` 中执行。Rust 工具链和 Windows C++ Build Tools 全局共享；`scripts/Use-Toolchain.ps1` 发现已安装的编译工具，将 Cargo registry、pnpm、临时文件缓存保留在项目 `.tools/`，`node_modules/` 和 Rust target 也留在仓库内。后续将源码及未提交修改完整转移到云端后，可清理整个 `dev/`，根目录 EXE 与 `data/` 可继续使用；全局编译工具按系统安装方式管理。
+开发命令在 `dev/` 中执行。Rust 工具链和 Visual Studio 2026 C++ Build Tools 全局共享；`scripts/Use-Toolchain.ps1` 发现已安装的最新编译工具，将 Cargo registry、pnpm、临时文件缓存保留在项目 `.tools/`，`node_modules/` 和 Rust target 也留在仓库内。CI 使用 Windows Server 2025 / Visual Studio 2026 镜像。后续将源码及未提交修改完整转移到云端后，可清理整个 `dev/`，根目录 EXE 与 `data/` 可继续使用；全局编译工具按系统安装方式管理。
 
 本机升级先完成构建，关闭根目录管理器，只将 `dev/artifacts/windows/butter-manager.exe` 替换到根目录，再从根目录重新启动。构建脚本本身不覆盖正式程序；无需为这种单纯替换 EXE 的升级每次执行 Portable 专项测试，不移动或备份正式数据库。
 

@@ -121,7 +121,7 @@ Ren’Py 字段显示实际类型，容器可以展开，搜索也能找到折�
 
 ## 构建与参与开发
 
-项目使用 Tauri / Rust / React / SQLite，不需要单独部署服务。准备 Windows C++ Build Tools（桌面 C++ 工作负载及 Windows SDK）、WebView2、Node.js、pnpm 与 Rust MSVC 工具链；系统依赖见 [Tauri Windows 环境说明](https://v2.tauri.app/start/prerequisites/#windows)。
+项目使用 Tauri / Rust / React / SQLite，不需要单独部署服务。准备 Visual Studio 2026 Build Tools（C++ 编译工具及 Windows SDK）、WebView2、Node.js、pnpm 与 Rust MSVC 工具链；系统依赖见 [Tauri Windows 环境说明](https://v2.tauri.app/start/prerequisites/#windows)。Build Tools 与 Rust 全局安装，`scripts/Use-Toolchain.ps1` 自动选择已安装的最新 C++ 工具链；CI 使用 `windows-2025-vs2026`，缓存仍留在开发目录。
 
 仓库固定 Node.js **24.19.0**、pnpm **11.25.0**、Rust **1.99.0**，依赖由锁文件固定。
 

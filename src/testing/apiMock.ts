@@ -33,6 +33,7 @@ export function resetApiMock(mocked: Api) {
     mocks.openDataDirectory,
     mocks.openImportRecords,
     mocks.openFolder,
+    mocks.openDirectory,
     mocks.openSaveFolder,
     mocks.releaseExternalSaves,
     mocks.cancel,

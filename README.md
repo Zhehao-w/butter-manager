@@ -7,153 +7,128 @@
 <p align="center">把本地游戏、版本更新和存档管理放在一起。</p>
 
 <p align="center">
-  <strong>Windows · v0.3.1 · 本地管理 · MIT</strong>
+  <a href="package.json"><img src="https://img.shields.io/github/package-json/v/Zhehao-w/butter-manager?label=source&amp;color=5b8def" alt="源码版本" /></a>
+  <a href="https://github.com/Zhehao-w/butter-manager/actions/workflows/check.yml"><img src="https://github.com/Zhehao-w/butter-manager/actions/workflows/check.yml/badge.svg?branch=main" alt="Linux / Windows CI" /></a>
+  <a href="https://github.com/Zhehao-w/butter-manager/releases/latest"><img src="https://img.shields.io/github/v/release/Zhehao-w/butter-manager?label=release&amp;color=ed91b2" alt="最新正式发布" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/Zhehao-w/butter-manager?color=5b8def" alt="开源许可" /></a>
 </p>
 
 <p align="center">
   <a href="#开始使用">开始使用</a> ·
-  <a href="docs/library-duplicates.md">游戏整理</a> ·
-  <a href="docs/save-editor-lite.md">存档编辑</a> ·
+  <a href="https://github.com/Zhehao-w/butter-manager/releases">下载程序</a> ·
+  <a href="CHANGELOG.md">更新记录</a> ·
   <a href="docs/roadmap.md">路线图</a> ·
   <a href="https://github.com/Zhehao-w/butter-manager/issues">反馈问题</a>
 </p>
 
-butter-manager 是一个轻量的 Windows 本地游戏库与启动器。扫描已有游戏，一键启动；导入新版本时选择如何处理存档，在同一个地方查看版本、别名和游玩记录。浅蓝色 Light 界面配合柔和粉色点缀，让日常整理更轻松。
+轻量的 **Windows x64 本地游戏库与启动器**。扫描已有游戏，搜索并启动；导入新版时预览文件与存档处理；在同一个地方整理重复游戏、游玩进度和版本记录。现有游戏扫描入库后保持原位，管理资料保存在程序旁的 `data/`。
 
-现有游戏扫描入库后保持原位，应用资料保存在本地。**当前配置版本为 0.3.1，按源码构建运行**；源码已包含 v0.4 随包 MTool 清理和 v0.5 游戏库查重，尚未单独发布这两个版本。真实游戏读档与干净 Windows 环境的分发验收仍在推进，进度见 [路线图](docs/roadmap.md)。
+**当前源码版本：1.0.0**。正式安装包以 [Releases](https://github.com/Zhehao-w/butter-manager/releases) 为准；真实游戏读档与干净 Windows 环境的验收进度见 [路线图](docs/roadmap.md)。
 
-## 你的游戏库，一个入口
+## 能做什么
 
-| 想做什么       | butter-manager 可以帮你                                  |
-| -------------- | -------------------------------------------------------- |
-| 找到并启动游戏 | 列表 / 卡片视图，名称、别名与路径搜索，直接启动游戏      |
-| 整理游玩进度   | 未启动、正在玩、已通关；快捷筛选与引擎、启动方式组合筛选 |
-| 管理不同引擎   | 识别常见引擎，提供统一颜色标签，允许手动修正             |
-| 更新游戏版本   | 批量导入、关联已有游戏，预览新旧版本与存档处理后执行     |
-| 找出重复游戏   | 对比已入库游戏，确认或排除重复，选择一份移入回收站       |
-| 清理随包工具   | 导入成功后回收确认的整个 MTool 目录，改用公共 MTool 启动 |
-| 查看和修改存档 | 打开关联存档位置，编辑受支持的 RPG Maker / Ren’Py 存档   |
-| 找回旧版本     | 从仍存在于回收站的最近旧版本回退，并带回当前内部存档     |
+| 功能               | 用法                                                                 |
+| ------------------ | -------------------------------------------------------------------- |
+| 游戏库与启动       | 列表 / 卡片视图，名称、别名与路径搜索，状态、引擎及启动方式组合筛选  |
+| 批量导入与更新     | 预览关联、名称、启动配置与存档处理，确认后执行，保留原游戏标识和历史 |
+| 中断恢复与版本回退 | 继续或撤回未完成任务，从仍在回收站中的原旧版本回退                   |
+| 查重与整理         | 查看匹配理由，确认 / 排除 / 撤销，选择保留或回收哪一份               |
+| 随包 MTool 清理    | 导入后回收确认的工具包装目录，切换公共 MTool；失败可重试             |
+| 存档编辑           | 在详情中编辑受支持的 RPG Maker / Ren’Py 存档，按字段或值搜索         |
+| 路径与资料管理     | 目录重命名、整库路径重新关联、Ren’Py AppData 专属存档目录手动回收    |
 
-游戏详情集中展示名称、版本、引擎、启动配置、别名与存档位置。游玩状态直接点选；底部显示目录与资料保存状态。列表和详情使用一致的状态颜色，“正在玩”为浅粉色。视图与排序会在本机记住。
-
-启动支持直接 EXE、Windows 默认应用、共享 MTool 和本地 QSP 播放器。多启动文件或未识别的游戏可以手动配置；详情中的启动按钮也能试运行尚未保存的启动配置。
+启动支持直接 EXE、Windows 默认应用、共享 MTool 和本地 QSP 播放器。未识别或多启动文件的游戏可手动配置；“详情 → 分析启动配置”将建议填入草稿，由你检查并保存。别名仅由用户维护，不自动累积版本名称。
 
 ## 开始使用
 
-1. **准备程序**：正式发布后，从 [Releases](https://github.com/Zhehao-w/butter-manager/releases) 下载 `butter-manager-vX.Y.Z-windows-x64-portable.zip`，解压到可写的专用目录，运行其中的 `butter-manager.exe`；首次启动自动建立旁边的 `data/`。也可按下方步骤从源码构建。目前本轮只准备发布流程，没有创建新的 Release。
-2. **选择游戏库**：在“设置”中选择游戏库根目录并保存；扫描线程可选低占用、均衡或性能。
-3. **扫描并登记**：点击游戏库的“扫描目录”，或进入“游戏整理 → 目录扫描”，从结果中选择要入库的游戏。扫描同时检查已有记录的目录与启动文件；失效记录由你决定如何处理。
-4. **开始游玩**：从游戏库直接启动，或打开详情调整资料。成功启动后自动标记为“正在玩”，“已通关”状态保留。
+1. **下载并解压**：从 [Releases](https://github.com/Zhehao-w/butter-manager/releases) 选择已发布版本，下载 `butter-manager-v1.0.0-windows-x64-portable.zip`，解压到可写的专用目录。1.0.0 尚未发布时，可从成功的 [GitHub Actions](https://github.com/Zhehao-w/butter-manager/actions/workflows/check.yml) 运行中下载对应提交的 EXE artifact 进行验收。
+2. **打开程序**：运行 `butter-manager.exe`，首次启动自动创建旁边的 `data/`。在“设置”中选择游戏库根目录并保存。
+3. **登记已有游戏**：点击“扫描目录”，或进入“游戏整理 → 目录扫描”，选择要入库的游戏。扫描不搬动现有游戏。
+4. **开始游玩**：从游戏库启动，或打开详情调整启动配置。成功提交启动请求后自动标记为“正在玩”；手动设置的“已通关”保留。
 
-Windows 需要 [WebView2 Runtime](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution)，ZIP 不包含浏览器运行时。未签名程序可能显示 [SmartScreen 提示](https://learn.microsoft.com/en-us/windows/security/operating-system-security/virus-and-threat-protection/microsoft-defender-smartscreen/)；请核对下载来源与同一发布页的 `SHA256SUMS.txt` 校验值。
+Windows 需要 [WebView2 Runtime](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution)。正式发布同时提供独立 EXE 和 `SHA256SUMS.txt`；ZIP 内只有程序。未签名 EXE 可能显示 [SmartScreen 提示](https://learn.microsoft.com/en-us/windows/security/operating-system-security/virus-and-threat-protection/microsoft-defender-smartscreen/)，请核对下载来源与同一发布页的校验值。
 
-**升级**：关闭管理器，下载新版，只替换 EXE，保留整个现有 `data/`。发布 ZIP 只包含程序，不包含用户资料。
+```text
+butter-manager/
+├── butter-manager.exe
+└── data/                 # 游戏库、设置、恢复记录与 WebView2 用户资料
+```
 
-**迁移到新电脑**：先完成或撤回未结束的文件任务，关闭管理器，将整个 Portable 程序文件夹（含 `data/`）和游戏文件复制到新电脑。在“设置 → 高级维护 → 批量迁移游戏库路径”填写旧根目录、选择已复制好的新根目录，预览后确认。按原相对目录重新关联已有 UUID；同时检查位于旧根目录内的公共 MTool，失效项保留原记录供你手动处理。此功能不搬动文件、不重新扫描或修改游戏名称。最后核对游戏启动及存档；依赖原电脑回收站的历史版本可能无法继续回退，历史导入记录保持原样。详见 [Portable 说明](docs/portable.md)。
+**升级**：关闭管理器，只替换 `butter-manager.exe`，保留整个现有 `data/`。不要在下载目录启动后，用新建的空 `data/` 替换原有资料。可在“设置 → 关于应用”核对版本和构建提交。
 
-### 已有游戏与新下载的游戏
+**迁移到新电脑**：先完成或撤回文件任务，关闭程序，复制整个程序文件夹及游戏目录，再在“设置 → 高级维护 → 批量迁移游戏库路径”预览并确认新旧根目录。迁移按相对路径重新关联已有记录，不搬动文件；失败项保留原记录。原电脑回收站中的版本不会随之迁移。详见 [Portable 与迁移说明](docs/portable.md)。
 
-- **游戏整理 → 目录扫描**用于登记已经放好的游戏，不搬动文件，也不覆盖已有名称、版本或历史。
-- **导入**用于把新下载的游戏放进游戏库，或替换已有版本。选择一个或多个文件夹，在预览中确认关联、目标名称与启动配置，再生成计划执行。
+## 导入、更新与整理
 
-导入会按名称、目录名和别名推荐已有游戏。弱关联与多个候选需要你选择；可以手动关联，也可以改为新游戏。不会自动判断哪个版本更高或自动覆盖。
+**已有游戏用目录扫描，新下载的游戏用导入。** 导入支持一个或多个文件夹；先确认已有游戏关联、目标名称和启动方式，再选择“保留旧存档”或“使用新包存档”。弱关联和多个候选由你决定，不自动判断哪个版本更高。
 
-添加文件夹后，所有新识别的游戏默认勾选；需要关联确认或缺少启动文件的项目仍须处理后才能生成计划。每张卡片先显示关键信息和关联、存档、MTool 摘要；点击“展开设置”再通过小 Tab 修改基本信息、启动配置、游戏关联或随包 MTool。选择已有游戏后，存档处理直接出现在关联区域下方，修改会同步更新摘要。
+- 更新按计划同步新名称、目录与版本，保留 UUID、手动别名、状态和历史。成功更新会刷新入库时间；普通资料编辑、重试和回退不刷新。
+- 保留旧存档时，将已关联的内部存档带到新版相同相对位置；AppData 等外部存档在更新与回退时保持原位。
+- 任务按“新的导入 → 待确认 → 导入记录”流转。未完成项可继续或撤回，已经成功的项目保留；回退入口位于导入记录详情。
+- “游戏整理 → 重复检查”只比较已入库资料，不自动合并或删除。可确认、排除或撤销，再选择回收哪一份；删除前展示完整路径。
+- 随包 MTool 只清理可识别的标准包装目录与关联脚本，未知混合目录保留；BAT 优先作为启动标记，仅在无法确定启动文件时使用经验证的回退配置。
 
-导入按 **新的导入 → 待确认 → 导入记录** 流转。生成计划后，对应游戏离开“新的导入”；成功执行后进入记录，未完成项留在“待确认”。返回调整可恢复原来的选择和设置，未生成计划的其他游戏保持在新列表中。
+**回收站清空后无法回退，游戏自身决定存档能否兼容新旧版本。** 文件操作保留路径边界、共享存档、目录身份及任务互斥保护；回收失败不转为永久删除。
 
-## 找出重复游戏，自己决定保留哪一份
+详细规则：[更新与恢复](docs/v0.3-implementation.md) · [游戏库查重](docs/library-duplicates.md) · [随包 MTool 清理](docs/import-mtool-cleanup.md)。
 
-进入“游戏整理 → 重复检查”，手动点击“查找重复”。程序只比较已入库资料，不重新扫描游戏文件，也不会自动合并或删除。
+## 存档编辑与文件管理
 
-双列卡片展示名称、版本、引擎、路径、文件夹修改时间与 MTool 启动方式，附匹配理由。可查看详情、打开目录，再选择“不是同一游戏”或“确认重复”。确认后，点击要回收的一份：**移入回收站**和**保留**用不同颜色明确区分；删除前再次展示完整路径，沿用详情页的删除与存档保护。
+在游戏详情点击粉色 **编辑存档**，选择槽位，按字段名称、路径、类型或变量值搜索，修改后统一保存。
 
-默认查看“全部”，也可筛选待确认、已确认或已排除。确认和排除会跨重启保存，支持撤销；不操作就保留确认状态，方便以后继续整理。续作、外传和 DLC 冲突会保守处理，不同译名缺少共同证据时可能无法推荐。详见 [游戏库查重说明](docs/library-duplicates.md)。
+| 格式                          | 支持范围                                                               |
+| ----------------------------- | ---------------------------------------------------------------------- |
+| RPG Maker MV / MZ             | 标准存档的简单变量、开关、金钱、道具 / 武器 / 防具数量；角色信息只读   |
+| Ren’Py `.save` / `persistent` | 受支持的简单字段、已知字典 / 列表 / 元组子字段、明确类型的 None 初始化 |
+| Ren’Py 标准 `RevertableSet`   | 受支持结构的字符串成员查看、增加与删除                                 |
 
-## 更新版本，保留游玩记录
+未知自定义对象、不支持的共享或循环引用保持只读。Ren’Py 支持使用目标游戏的本机密钥重签；外来或原签名不可信的文件，首次写入前需确认来源。保存前检查文件变化；保存后回游戏重新读档，`persistent` 可能需要重启游戏。**合成样本验证不替代真实游戏写回与读档验收**，格式限制见 [存档编辑器说明](docs/save-editor-lite.md)。
 
-更新时可以选择 **保留旧存档**（默认）或 **使用新包存档**。新版本的目录名称、显示名称、标准名称与版本号按导入计划更新，目标名称可手动修改；原游戏标识、别名、游玩状态和运行历史保留。成功更新会刷新入库时间，与新游戏一起按最近入库排序；重复执行同一导入、资料编辑和版本回退不会刷新入库时间。
+| 操作                    | 影响                                                           |
+| ----------------------- | -------------------------------------------------------------- |
+| 从库中移除              | 只移除记录，游戏和存档文件保持原位                             |
+| 移入回收站              | 回收游戏目录及已关联存档，包含外部关联存档                     |
+| 重命名目录              | 同父目录改名，同步名称与内部绝对存档路径，保留原记录           |
+| Ren’Py AppData 手动清理 | 一次确认后回收已明确识别的专属目录，保持游戏目录存档与资料关联 |
+| 高级维护 → 清空游戏库   | 清空管理记录与库设置，游戏和存档文件保持原位                   |
 
-别名仅保存用户手动填写的内容；扫描、新导入、更新和普通资料保存都不会自动把名称追加为别名，已有别名仍保留，只有用户明确要求时才清空。名称和目录名仍直接参与搜索与关联推荐。关闭整个窗口时，未保存的设置或游戏资料会提示保存、放弃或取消关闭；正在执行任务时需等待任务结束。
-
-- 保留旧存档时，将已关联的内部存档带到新版相同的相对位置；AppData 等外部存档在更新与回退中保持原位。
-- 旧版本完成替换后进入 Windows 回收站。回退入口位于“导入记录”的详情，只能恢复回收站中仍存在的原旧版本。
-- 中断的任务可在“待确认”中继续或撤回；已经成功的项目保留。导入记录可搜索，并查看来源、目标、版本和存档处理。
-
-回收站清空后无法回退；游戏自身决定新旧版本的存档兼容性。更多操作边界见 [更新与恢复说明](docs/v0.3-implementation.md)。
-
-## 存档编辑，直接在详情中完成
-
-点击游戏详情顶部或“存档位置”中的粉色 **编辑存档** 按钮，选择槽位，按变量名称、值或字段路径搜索，修改后统一保存。未保存的修改值也可搜索，编辑期间保留原值匹配，避免输入框因筛选突然消失。
-
-| 格式                          | 当前可编辑内容                                                                |
-| ----------------------------- | ----------------------------------------------------------------------------- |
-| RPG Maker MV / MZ             | 标准存档中的简单变量、开关、金钱、道具 / 武器 / 防具数量；角色信息只读        |
-| Ren’Py `.save` / `persistent` | 公开简单字段、受支持字典 / 列表 / 元组的已有子字段，明确选择类型后初始化 None |
-| Ren’Py 标准 `RevertableSet`   | 受支持结构中的字符串成员，可查看、增加与删除；不提供一键全部解锁              |
-
-Ren’Py 字段显示实际类型，容器可以展开，搜索也能找到折叠内容。未知自定义对象、共享或循环引用等不支持的结构保持只读，并说明原因。支持使用目标游戏的本机密钥重新签名标准 Ren’Py 存档；外来或原签名不可信的文件在首次写入前需要确认来源。
-
-保存前检查文件是否变化，避免覆盖游戏刚写入的同一槽位。保存后需要回游戏重新读档，`persistent` 可能需要重启游戏。当前已完成自动化与合成样本往返验证，以及《A Ninja’s Return v1.08 忍者归来》persistent 的只读兼容检查；**真实游戏写回后的读档验收仍待完成**。格式限制与签名条件见 [存档编辑器说明](docs/save-editor-lite.md)。
-
-## 本地资料与文件管理
-
-游戏内部文件挪动后，可在详情点击 **分析启动配置** 重新寻找启动文件。结果先填入可检查的草稿，点击“保存资料”后保存。MTool BAT 优先只作为启动方式标记；只有无法确定启动文件时才回退到经目录验证的 BAT 配置，公共工具路径仍使用管理器设置。
-
-在 **游戏详情 → 记录与管理 → 重命名目录** 中修改文件夹名称，同时同步显示名称、标准名称和内部绝对存档路径；新名称有明确版本号时也更新版本。游戏 ID、别名、游玩状态、入库时间和运行记录保留，不创建新的库记录。旧导入记录按原路径进行回退，手动改名后其回退可能被安全校验阻止。
-
-程序旁的 `data/` 保存游戏库、配置、导入恢复记录与 WebView2 用户资料。“设置 → 关于应用 → 打开数据目录”可以查看实际位置；版本下的构建提交短号方便确认正在验收的源码版本，本地未提交构建附带“本地修改”。换位置时先关闭程序，再一起移动 EXE 与整个 `data/`；游戏和存档的绝对路径需要在变化后重新关联。详见 [Portable 说明](docs/portable.md)。
-
-文件管理提供不同操作，确认时会说明范围：
-
-| 操作                  | 影响                                         |
-| --------------------- | -------------------------------------------- |
-| 从库中移除            | 只移除游戏记录，游戏和存档文件保持原位       |
-| 移入回收站            | 回收游戏目录及已关联存档，包含外部关联存档   |
-| 高级维护 → 清空游戏库 | 清空管理记录与库设置，游戏和存档文件保持原位 |
-
-目录失效时可关联新目录。文件回收失败会保留库记录并提示已完成的部分；回收站不可用时不会改为永久删除。
-
-导入可识别随包 MTool，包括工具再嵌套一层、使用 `inject.bin` 的标准发行包及已知中英文修复脚本。确认后默认选择成功时将整个一级工具目录与关联 BAT 移入回收站，并切换为公共 MTool 启动。未知混合目录会保留，不只凭文件夹名称删除。可取消清理；失败会保留已导入游戏并提供重试。详见 [随包 MTool 清理](docs/import-mtool-cleanup.md)。
+手动改名后，依赖原路径的历史回退可能被安全校验阻止。未保存资料在关闭时提供保存、放弃或取消；文件任务运行期间需等待完成。
 
 目前不包含压缩包解压、游戏自动下载或云同步。
 
 ## 构建与参与开发
 
-项目使用 Tauri / Rust / React / SQLite，不需要单独部署服务。默认采用 **Linux 云端开发 + Windows CI 构建 EXE + 本机使用验收**，完整流程见 [云端开发说明](docs/cloud-development.md)。Linux 配好下述固定版本及基础 C 编译工具后，运行 `bash scripts/Check-Cloud.sh` 即可安装锁定依赖并检查前端与 Rust 核心，无需桌面 GTK/WebKit。
+技术栈：**Tauri · Rust · React · SQLite**。默认采用 **Codex Cloud Linux 开发 → GitHub Windows CI 构建 → 本机下载 EXE 使用和验收**。固定工具链为 Node.js **24.19.0**、pnpm **11.25.0**、Rust **1.99.0**，依赖由锁文件固定，SQLite 使用 bundled C 源码。
 
-Windows 本地开发另需 Visual Studio 2026 Build Tools（C++ 编译工具及 Windows SDK）、WebView2 与 Rust MSVC 工具链；系统依赖见 [Tauri Windows 环境说明](https://v2.tauri.app/start/prerequisites/#windows)。Build Tools 与 Rust 全局安装，`scripts/Use-Toolchain.ps1` 自动选择已安装的最新 C++ 工具链；CI 使用 `windows-2025-vs2026`，本地缓存仍留在开发目录。
+Linux 安装上述工具链、rustfmt / clippy 和基础 C 编译工具后，在仓库根目录执行：
 
-仓库固定 Node.js **24.19.0**、pnpm **11.25.0**、Rust **1.99.0**，依赖由锁文件固定。
-
-```powershell
-git clone https://github.com/Zhehao-w/butter-manager.git
-Set-Location butter-manager
-npm install --global pnpm@11.25.0
-pnpm install --frozen-lockfile
-pnpm tauri dev
+```bash
+bash scripts/Check-Cloud.sh
 ```
 
-构建 Windows EXE：
+入口安装锁定依赖，执行格式、完整前端测试、TypeScript / Vite 和 Rust 核心回归，无需 GTK / WebKit。Windows CI 另保留全部桌面目标 Clippy、原生回归与 Release EXE 构建；Linux 结果不能替代 Windows 检查。
+
+Windows 本地开发另需 Visual Studio 2026 C++ Build Tools、Windows SDK、WebView2 和 Rust MSVC 工具链。安装锁定依赖后，可用 `pnpm tauri dev` 开发，构建命令为：
 
 ```powershell
 . ./scripts/Use-Toolchain.ps1
 ./scripts/Build-PortableRelease.ps1
+# 准备正式发布包及 SHA-256：
+./scripts/Build-PortableRelease.ps1 -PortableZip -ExpectedTag v1.0.0
 ```
 
-默认只生成 `artifacts/windows/butter-manager.exe`。未来发布时加 `-PortableZip`，另生成版本化 ZIP 和 `SHA256SUMS.txt`；ZIP 中仅有 `butter-manager/butter-manager.exe`。脚本核对三处版本、构建前端及带 `tauri/custom-protocol` 的 x64 EXE，用独立的 `src-tauri/target/portable-release/` 缓存，不覆盖正在使用的正式程序，也不自动启动 GUI。现有 `pnpm tauri build --no-bundle -- --locked` 仍可用于常规本地构建，产物在 `src-tauri/target/release/`；普通 `cargo build --release` 缺少生产资源协议。开发模式使用独立 `data-dev/`；Vite 浏览器页面不能执行桌面文件操作。
+输出位于 `artifacts/windows/`；打包脚本检查 package、Cargo、Tauri 三处版本一致，EXE 文件名始终为 `butter-manager.exe`。开发模式使用独立 `data-dev/`，浏览器前端不能执行桌面文件操作。
 
-本机使用布局：`E:\butter-manager\` 放日常 EXE 和完整 `data\`，仓库放在 `dev\`。升级只将构建好的 EXE 替换到父目录，保留资料；Rust / Windows 编译工具共享全局安装，项目依赖、下载缓存和构建产物留在 `dev\`。详见 [本机使用与开发分开](docs/portable.md#本机使用与开发分开)。
+PR、main 和普通手动 CI 均保留 EXE artifact **14 天**，下载前应确认整轮运行成功。**推送与源码版本一致的 `v1.0.0` Tag 会自动发布 Release**：Linux / Windows 完整检查通过后，校验 EXE、Portable ZIP 与 SHA-256，创建草稿、上传并复核资产，再公开发布；失败保持草稿供重跑继续。`v1.0.0-rc.1` 这类 Tag 按预发布处理，也须与源码版本一致。工作流不创建 Tag 或自动修改版本。
 
-已有本地工具链可使用 `. ./scripts/Use-Toolchain.ps1`；新环境直接使用已安装的系统工具链。开发依赖、缓存及临时文件位于忽略提交的 `.tools/`，构建产物位于 `src-tauri/target/`。
+发布前先提交并推送包含版本号及工作流的源码，再在目标提交创建、推送 Tag；只在本机创建 Tag 不会触发。已有 Release 的 published 事件和显式手动上传入口仍保留。详见 [Tag 自动发布流程](docs/cloud-development.md#tag-自动发布)。
 
-贡献约定、增量测试命令和隔离测试见 [CONTRIBUTING](CONTRIBUTING.md)。GitHub CI 并行检查 Linux 前端 / 核心与 Windows 完整目标，保留格式、前后端测试、TypeScript / Vite、Windows Clippy 与 EXE 构建。PR、main 和普通手动构建均上传 EXE artifact（14 天）；下载对应提交且整个运行成功的产物，替换本机 EXE、保留完整 `data/` 即可。仅明确的 Release published 事件，或指定已有 Tag 且主动勾选发布的手动流程，才另打 ZIP、校验版本 / SHA-256，等待两端通过后上传已有 Release；不创建 Tag 或 Release。Portable 专项测试仍为手动命令，不随每次构建或 CI 执行。开发与升级不备份正式数据库或导出可恢复记录，测试只使用独立夹具。
+开发及升级不备份正式数据库、WAL、SHM，也不导出可恢复记录；测试仅使用隔离临时数据库、目录与合成存档。真实游戏、存档、数据库和私钥不要上传到仓库或 CI。
+
+[云端开发与下载](docs/cloud-development.md) · [贡献约定与测试](CONTRIBUTING.md) · [验证记录](docs/validation.md) · [Tauri Windows 环境](https://v2.tauri.app/start/prerequisites/#windows)。
 
 ## 项目与许可
 
-由 **Zhehao-w** 开发，使用 [MIT 许可](LICENSE)。通用图标来自 Lucide；应用图标与插画由 Zhehao-w 使用 GPT 生成并授权随项目发布，第三方许可见 [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES.md)。当前界面采用新版应用图标与侧栏立绘。
+由 **Zhehao-w** 开发，使用 [MIT 许可](LICENSE)。通用图标来自 Lucide；应用图标与插画由 Zhehao-w 使用 GPT 生成并授权随项目发布，第三方许可见 [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES.md)。
 
-[路线图](docs/roadmap.md) · [验证记录](docs/validation.md) · [存档识别](docs/save-detection.md) · [QSP 支持](docs/qsp-support.md) · [图标资源](src-tauri/icons/README.md)
-
-反馈问题时请附版本、复现步骤与错误文字；不要提交真实数据库、游戏文件或私钥。
+反馈问题时请附应用版本、构建提交、复现步骤与脱敏错误信息；不要提交真实数据库、游戏文件、存档或私钥。

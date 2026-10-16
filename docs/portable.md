@@ -4,7 +4,7 @@ Windows Release 默认将应用资料放在 `butter-manager.exe` 旁的 `data/`�
 
 ## 安装、升级与迁移
 
-正式主资产为 `butter-manager-vX.Y.Z-windows-x64-portable.zip`，可同时下载独立 EXE 和 `SHA256SUMS.txt`。本轮只准备构建与发布流程，不实际创建 Release。
+1.0.0 的正式主资产为 `butter-manager-v1.0.0-windows-x64-portable.zip`，另提供独立的 `butter-manager.exe` 和 `SHA256SUMS.txt`。正式下载以 [Releases](https://github.com/Zhehao-w/butter-manager/releases) 中已发布的资产为准。
 
 首次安装：下载 ZIP，解压到可写的专用目录，运行 EXE。ZIP 内只有 `butter-manager/butter-manager.exe`；首次运行自动建立 `data/`，不携带别人的数据库、导入记录、WebView2 资料、缓存或游戏存档。
 
@@ -65,7 +65,9 @@ Windows 开发模式或 debug 构建在创建 Tauri 应用之前把覆盖根切�
 
 `-SkipFrontendBuild` 仅供已完成前端检查的 CI / 本地流程复用资源，普通打包不要跳过。`-ExpectedTag vX.Y.Z` 要求 Tag 与源码版本完全一致，不自动改版。输出目录只能是本仓库 `artifacts/` 下的专用子目录；`-CargoExecutable` 用于隔离的构建失败回归，不用于正常发布。
 
-现有 `check.yml` 并行验证 Linux 前端 / 核心和 Windows 完整目标。PR、普通 Push 与手动构建均保留 EXE artifact（14 天），普通构建不发布。Release published 事件或手动选择已有 Tag 并显式启用发布时才加 `-PortableZip`，两端检查通过后由独立上传 job 发布资产；只有该 job 有 `contents: write`。上传前复核 SHA-256、已有 Release 和版本化文件名，失败明确报错；不创建 Tag / Release、不签名 EXE。手动发布请确认所选 Tag 已存在且版本一致，取消勾选时只检查、构建和保留 artifact。云端准备及下载步骤见 [云端开发说明](cloud-development.md)。
+现有 `check.yml` 并行验证 Linux 前端 / 核心和 Windows 完整目标。PR、普通 Push 与手动构建均保留 EXE artifact（14 天），普通构建不发布。推送与源码版本一致的 `vX.Y.Z` Tag 后，Windows 加 `-PortableZip`，两端检查通过后由独立发布 job 校验 ZIP、EXE 及 SHA-256，自动创建 Release 草稿、上传并复核远端大小和摘要，再公开发布；预发布后缀 Tag 标记 prerelease。上传失败保持草稿，重跑可继续；已公开且内容不同的同名资产不会自动覆盖。只有发布 job 有 `contents: write`，不创建 Tag、不自动改版、不签名 EXE。
+
+已有 Release 的 published 事件或显式手动上传入口仍保留；手动上传需已有 Tag / Release 且版本一致，取消勾选时只检查、构建和保留 artifact。云端准备、Tag 发布与重跑步骤见 [云端开发说明](cloud-development.md#tag-自动发布)。
 
 发布时复制 EXE 到专用文件夹，已有资料需连同整个 `data/` 一起移动。关闭程序后移动整个文件夹，配置与库记录仍在；游戏库、存档和公共工具的绝对路径保持原值。跨用户/机器移动时，原游戏路径可能需重新关联；Windows 加密的浏览器秘密不保证跨用户可读。
 

@@ -20,13 +20,13 @@ bash scripts/Check-Cloud.sh
 
 ## CI 与下载
 
-现有 `check.yml` 内 Linux 和 Windows 两个 job 并行执行，PR、main（兼容 master）、手动构建和正式 Release 均保留检查：
+现有 `check.yml` 内 Linux 和 Windows 两个 job 并行执行，PR、main（兼容 master）、版本 Tag、手动构建和正式 Release 均保留检查：
 
 | job     | 检查与交付                                                                                         |
 | ------- | -------------------------------------------------------------------------------------------------- |
 | Linux   | 使用上述入口验证前端与可移植 Rust 核心，不构建桌面程序                                             |
 | Windows | 完整前端 / Rust 核心测试、格式、TypeScript / Vite、所有桌面目标 Clippy，并构建 Windows Release EXE |
-| Publish | 仅正式 Release 或显式手动发布；等待两端成功，核对资产后上传到已有 Release                          |
+| Publish | Tag 推送自动发布；也支持已有 Release / 显式手动上传。等待两端成功后校验、上传并复核资产            |
 
 所有 Windows 构建都上传 `butter-manager-windows-<完整提交 SHA>` artifact；PR 名称为 `butter-manager-windows-pr-<编号>`，保存 14 天。确认整个运行成功后下载与目标提交对应的 artifact，解压取得单 EXE。过期后可以对目标提交手动重跑构建，普通手动运行保持 `publish_release=false`，不会创建 Tag 或 Release。
 
@@ -41,6 +41,19 @@ gh run download <run-id> --name butter-manager-windows-<完整提交SHA> --dir .
 正式发布另保留版本化 Portable ZIP 与 SHA-256，规则见 [Portable 说明](portable.md)。下载 GitHub artifact 得到的外层 ZIP 是 Actions 包装，不是应用需要的运行时依赖。
 
 CI 仅缓存前端下载、Cargo registry / git 和编译 target；不缓存用户资料或 `node_modules`。缓存按操作系统、架构、锁文件隔离；Rust 还按工具链和 runner 镜像版本隔离，跨提交恢复以减少重复编译。镜像或依赖变化时冷构建是预期行为，缓存命中仍执行全部检查。目前不承诺具体提速幅度。
+
+## Tag 自动发布
+
+先提交并推送包含工作流、版本配置及锁文件的目标源码，再推送该提交的版本 Tag。例如应用的 package、Tauri、Cargo 版本均为 `1.0.0` 时，使用 `v1.0.0`。只在本机创建 Tag 不触发远端 CI；推送 Tag 才是自动发布入口，**无需提前创建 Release**。工作流不创建 Tag、不自动改版，普通 main / PR / 手动构建不会创建 Release。
+
+1. Linux 与 Windows 并行执行完整检查，Windows 额外生成版本化 Portable ZIP 和 `SHA256SUMS.txt`，同时保留通常的 EXE artifact。
+2. 只有两端成功，发布 job 才在 Ubuntu 上运行；核对两端实际检出提交一致，并解析远端轻量 / 附注 Tag，确认仍指向该提交。Windows 仍负责全部 EXE 编译及原生回归。
+3. 校验分发目录只包含 EXE、ZIP、SHA-256，ZIP 内只有与独立 EXE 内容一致的程序。创建带 GitHub 自动生成说明的 Release 草稿，上传后复核远端三项资产的大小和 SHA-256，再公开发布。Tag 含预发布后缀时使用 prerelease。
+4. 上传或校验失败时保留草稿，不公开发布；可在 Actions 中重跑原失败运行，继续同一 Tag 的草稿。已经成功且资产一致的 Release 重跑不重复上传；发现已公开的同名资产内容不同会停止，不自动覆盖。
+
+发布运行不被同 Tag 的后续运行自动取消；分支 / PR 的重复检查仍可自动取消。发布期间 Tag 被移动会阻止旧构建公开发布，不要通过改指向同名 Tag 来替换正式版本。
+
+已有 Release 的 published 事件仍可执行检查并补齐资产。手动上传要求 `publish_release=true`、填写已有 `release_tag` 且 Release 已存在；手动入口不自动创建或公开草稿。发布写权限只提供给等待两端成功的发布 job。发布脚本的隔离测试在 Linux CI 执行，不接触真实 Release 或资料。
 
 ## 本机验收与后续清理
 

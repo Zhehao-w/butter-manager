@@ -18,7 +18,9 @@ cargo test --locked --manifest-path src-tauri/Cargo.toml --no-default-features -
 cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 ```
 
-PR、Push main（兼容 master）、手动构建和 Release 均执行 Linux 前端 / 核心回归与 Windows 完整检查，保留所有目标 Clippy 和 Windows Release EXE。每次 Windows 构建都上传可下载 EXE artifact（保留 14 天）；正式 Release 或手动显式启用发布且指定已有 Tag 时额外打 ZIP，等待两端检查成功后将 EXE / ZIP / SHA-256 上传到已有 Release；不创建 Tag、Release 或自动修改版本。仅上传 job 有 `contents: write`。下载方式、环境范围与缓存策略见云端说明。
+PR、Push main（兼容 master）、版本 Tag、手动构建和 Release 均执行 Linux 前端 / 核心回归与 Windows 完整检查，保留所有目标 Clippy 和 Windows Release EXE。每次 Windows 构建都上传可下载 EXE artifact（保留 14 天）；推送与源码版本一致的 `vX.Y.Z` Tag 后，等待两端检查通过，校验 EXE / ZIP / SHA-256，自动创建草稿、上传复核并公开发布 Release。预发布 Tag 使用对应源码版本并标记 prerelease。已有 Release 或显式手动上传仍可补齐资产，不创建 Tag 或自动修改版本。只有发布 job 有 `contents: write`。下载方式、重跑及保护规则见云端说明。
+
+Linux CI 额外执行 `python3 -B -m unittest discover -s scripts -p 'test_publish_release.py' -v`，用隔离合成资产和模拟 GitHub 验证发布与失败边界，不使用真实凭据或执行远端写入。发布脚本使用 Ubuntu 24.04 自带的 Python 标准库与 GitHub CLI；Windows EXE 仍由 Windows job 构建。
 
 CI 调用 `scripts/Build-PortableRelease.ps1 -SkipFrontendBuild` 复用已检查的前端，使用独立 x64 Cargo target 和 `tauri/custom-protocol`；本地默认脚本会先构建前端，只输出 EXE。正式发布加 `-PortableZip`。`scripts/Test-PortableRelease.ps1`（ZIP 白名单、哈希及失败清理）和 `scripts/Test-Portable.ps1`（数据目录与移动后读取）保留为手动专项回归，首次验证或对应逻辑改变时执行，不进入常规 CI。最终产物在忽略提交的 `artifacts/windows/`，不会打包任何正式用户资料。详见 [Portable 说明](docs/portable.md)。
 

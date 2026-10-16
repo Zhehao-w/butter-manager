@@ -2,6 +2,7 @@ import { createElement, useEffect, useId, useLayoutEffect, useMemo, useRef, useS
 import type { CSSProperties, RefObject } from 'react';
 import { isTauri } from '@tauri-apps/api/core';
 import { useVirtualizer } from '@tanstack/react-virtual';
+import { version as appVersion } from '../package.json';
 import { useStableVirtualizer } from './useStableVirtualizer';
 import { api } from './api';
 import { useNotifications, NotificationToast } from './notifications';
@@ -792,7 +793,7 @@ export default function App() {
             <Icon name="settings" />
             设置
             <span className="sidebar-version" aria-hidden="true">
-              v0.3.1
+              v{appVersion}
             </span>
           </button>
         </div>
@@ -2269,7 +2270,7 @@ function SettingsPage({
               关于应用
             </CardTitle>
             <div className="settings-build-info">
-              <span className="mode">v0.3.1</span>
+              <span className="mode">v{appVersion}</span>
               <small className="muted" title="构建提交">
                 构建 {typeof __BUILD_COMMIT__ === 'string' ? __BUILD_COMMIT__ : '未知'}
               </small>

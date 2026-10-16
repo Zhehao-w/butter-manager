@@ -3,13 +3,14 @@ name: Project checks
 on:
   push:
     branches: [main, master]
+    tags: ['v[0-9]*']
   pull_request:
   release:
     types: [published]
   workflow_dispatch:
     inputs:
       publish_release:
-        description: Upload assets to an existing Release (never creates a tag or Release)
+        description: Upload assets to an existing Release (tag pushes publish automatically)
         type: boolean
         default: false
       release_tag:
@@ -21,14 +22,16 @@ permissions:
   contents: read
 
 concurrency:
-  group: checks-${{ github.workflow }}-${{ inputs.release_tag || github.ref }}
-  cancel-in-progress: ${{ github.event_name != 'release' && !inputs.publish_release }}
+  group: checks-${{ github.workflow }}-${{ inputs.release_tag && format('refs/tags/{0}', inputs.release_tag) || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'release' && !startsWith(github.ref, 'refs/tags/') && !inputs.publish_release }}
 
 jobs:
   linux:
     name: Linux frontend and core
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    outputs:
+      commit: ${{ steps.image.outputs.commit }}
     env:
       CARGO_HOME: ${{ github.workspace }}/.tools/cargo-cache
       CARGO_INCREMENTAL: '0'
@@ -85,9 +88,14 @@ jobs:
       - name: Check Linux frontend and core
         run: bash scripts/Check-Cloud.sh
 
+      - name: Test release publishing with isolated fixtures
+        run: python3 -B -m unittest discover -s scripts -p 'test_publish_release.py' -v
+
   windows:
     runs-on: windows-2025-vs2026
     timeout-minutes: 30
+    outputs:
+      commit: ${{ steps.image.outputs.commit }}
     env:
       CARGO_HOME: ${{ github.workspace }}/.tools/cargo-cache
       CARGO_INCREMENTAL: '0'
@@ -169,10 +177,10 @@ jobs:
 
       - name: Build Windows app
         env:
-          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || (inputs.publish_release && inputs.release_tag) || '' }}
+          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') && github.ref_name) || (inputs.publish_release && inputs.release_tag) || '' }}
           PUBLISH_RELEASE: ${{ inputs.publish_release || false }}
           EVENT_NAME: ${{ github.event_name }}
-          PREPARE_RELEASE: ${{ github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.publish_release) }}
+          PREPARE_RELEASE: ${{ github.event_name == 'release' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || (github.event_name == 'workflow_dispatch' && inputs.publish_release) }}
         run: |
           if ($env:EVENT_NAME -eq 'workflow_dispatch' -and $env:PUBLISH_RELEASE -eq 'true' -and -not $env:RELEASE_TAG) { throw 'Publishing requires an existing release tag.' }
           # Reuse the frontend already checked/built above.
@@ -187,7 +195,7 @@ jobs:
           retention-days: 14
 
       - name: Preserve verified Release assets
-        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.publish_release)
+        if: github.event_name == 'release' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || (github.event_name == 'workflow_dispatch' && inputs.publish_release)
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: windows-release-assets
@@ -199,40 +207,30 @@ jobs:
 
   publish:
     needs: [linux, windows]
-    if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.publish_release)
-    runs-on: windows-2025-vs2026
+    if: github.event_name == 'release' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || (github.event_name == 'workflow_dispatch' && inputs.publish_release)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     permissions:
       contents: write
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
-      RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.release_tag }}
-    defaults:
-      run:
-        shell: pwsh
+      RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') && github.ref_name) || inputs.release_tag }}
+      EXPECTED_COMMIT: ${{ needs.windows.outputs.commit }}
+      LINUX_COMMIT: ${{ needs.linux.outputs.commit }}
+      CREATE_RELEASE: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
     steps:
+      - name: Check out verified publishing code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          ref: ${{ needs.windows.outputs.commit }}
+
       - name: Download verified assets
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: windows-release-assets
           path: artifacts/windows
 
-      - name: Verify checksums and upload to existing Release
-        run: |
-          if ($env:RELEASE_TAG -notmatch '^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$') { throw 'Invalid release tag.' }
-          $assets = @('butter-manager.exe', "butter-manager-$env:RELEASE_TAG-windows-x64-portable.zip")
-          $checksums = @(Get-Content -LiteralPath artifacts/windows/SHA256SUMS.txt)
-          if ($checksums.Count -ne 2) { throw 'Expected two checksums.' }
-          $names = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-          foreach ($line in $checksums) {
-            if ($line -notmatch '^([a-f0-9]{64})  (.+)$') { throw 'Invalid checksum line.' }
-            $expected = $Matches[1]
-            $name = $Matches[2]
-            if (-not $names.Add($name)) { throw 'Duplicate checksum entry.' }
-            if ($assets -cnotcontains $name) { throw 'Unexpected release asset.' }
-            if ((Get-FileHash -LiteralPath (Join-Path artifacts/windows $name) -Algorithm SHA256).Hash.ToLowerInvariant() -cne $expected) { throw 'Asset checksum mismatch.' }
-          }
-          gh release view $env:RELEASE_TAG --repo $env:GH_REPO
-          if ($LASTEXITCODE -ne 0) { throw 'The Release must already exist; nothing will be created.' }
-          gh release upload $env:RELEASE_TAG artifacts/windows/butter-manager.exe "artifacts/windows/butter-manager-$env:RELEASE_TAG-windows-x64-portable.zip" artifacts/windows/SHA256SUMS.txt --clobber --repo $env:GH_REPO
-          if ($LASTEXITCODE -ne 0) { throw 'Release asset upload failed.' }
+      - name: Verify assets and publish Release
+        run: python3 -B scripts/publish_release.py

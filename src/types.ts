@@ -148,6 +148,13 @@ export interface MToolRecipe {
   observed_root: string;
 }
 
+export interface SaveDetectionRequest {
+  expected_install_path: string;
+  engine: string;
+  working_directory: string;
+  executable: string | null;
+}
+
 export interface LibraryPathCheck {
   id: string;
   install_path: string;

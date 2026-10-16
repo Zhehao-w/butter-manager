@@ -1023,6 +1023,50 @@ describe('iteration interactions', () => {
     expect(api.saveGame).not.toHaveBeenCalled();
     expect((paths as HTMLTextAreaElement).value).toBe('<GAME>/www/save\n%APPDATA%/RenPy/彼女');
   });
+  it('detects from draft launch settings and saves selected paths only through Save details', async () => {
+    vi.mocked(api.previewSavePaths).mockResolvedValue(['<GAME>/SaveData']);
+    vi.mocked(api.saveGame).mockImplementation(async (edit) => ({ ...game, ...edit }));
+    const detail = await openDetail();
+    fireEvent.change(within(detail).getByRole('combobox', { name: /游戏引擎/ }), {
+      target: { value: 'Unity' },
+    });
+    showDetailTab('启动配置');
+    fireEvent.change(within(detail).getByRole('combobox', { name: /启动文件（相对游戏目录）/ }), {
+      target: { value: 'Wrapper/Selected.exe' },
+    });
+    showDetailTab('存档位置');
+    fireEvent.click(within(detail).getByRole('button', { name: '重新检测' }));
+    fireEvent.click(await within(detail).findByRole('checkbox', { name: '<GAME>/SaveData' }));
+    expect(api.previewSavePaths).toHaveBeenCalledWith(game.id, {
+      expected_install_path: game.install_path,
+      engine: 'Unity',
+      working_directory: 'Wrapper',
+      executable: 'Wrapper/Selected.exe',
+    });
+    fireEvent.click(within(detail).getByRole('button', { name: '应用到草稿' }));
+    await within(detail).findByText('已填入存档路径草稿，请保存资料。');
+    expect(api.saveGame).not.toHaveBeenCalled();
+    fireEvent.click(within(detail).getByRole('button', { name: '关闭弹窗' }));
+    const guard = screen.getByRole('dialog', { name: '放弃未保存修改？' });
+    fireEvent.click(within(guard).getByRole('button', { name: '继续编辑' }));
+    vi.mocked(api.saveGame).mockRejectedValueOnce('保存失败，重试');
+    fireEvent.click(within(detail).getByRole('button', { name: '保存资料' }));
+    await within(detail).findByText('保存失败，重试');
+    expect(
+      (within(detail).getByRole('textbox', { name: /存档位置/ }) as HTMLTextAreaElement).value,
+    ).toBe('<GAME>/SaveData');
+    fireEvent.click(within(detail).getByRole('button', { name: '保存资料' }));
+    await within(detail).findByText('游戏资料已保存。');
+    expect(api.saveGame).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        engine: 'Unity',
+        main_executable: 'Wrapper/Selected.exe',
+        save_paths: ['<GAME>/SaveData'],
+      }),
+    );
+    fireEvent.click(within(detail).getByRole('button', { name: '关闭弹窗' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
   it('integrates bulk path relocation in advanced settings and refreshes the existing library', async () => {
     const migrated = { ...game, install_path: 'D:/Games/已登记游戏' };
     const savedSettings = { ...config, game_root: 'D:/Games' };

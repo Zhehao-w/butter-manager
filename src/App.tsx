@@ -5,6 +5,7 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { version as appVersion } from '../package.json';
 import { useStableVirtualizer } from './useStableVirtualizer';
 import { api } from './api';
+import { SavePathDetection } from './SavePathDetection';
 import { useNotifications, NotificationToast } from './notifications';
 import { appIcon, sidebarCharacter } from './appearance';
 import {
@@ -3207,7 +3208,22 @@ function GameDetail({
               </div>
             </section>
             <section className="panel detail-card" {...panelProps('saves')}>
-              <CardTitle icon="save">存档位置</CardTitle>
+              <SavePathDetection
+                game={game}
+                request={{
+                  expected_install_path: game.install_path,
+                  engine: draft.engine,
+                  working_directory: draft.working_directory,
+                  executable:
+                    draft.launch_type === 'MTOOL'
+                      ? draft.mtool_target_exe || draft.main_executable
+                      : draft.main_executable,
+                }}
+                value={saves}
+                onChange={setSaves}
+                locked={busy || launching || analysisLocked || analyzing || confirmClose}
+                active={detailTab === 'saves'}
+              />
               <div className="form-grid">
                 <label className="full">
                   存档位置（每行一个）

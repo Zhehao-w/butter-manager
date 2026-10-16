@@ -1094,6 +1094,32 @@ fn start_registration(
     Ok(id)
 }
 #[tauri::command]
+async fn preview_save_paths(
+    state: State<'_, AppState>,
+    id: String,
+    request: crate::save_redetection::Request,
+) -> CommandResult<Vec<String>> {
+    let db = state.db.clone();
+    let activity = state.activity.clone();
+    let tasks = state.tasks.clone();
+    let imports = state.imports.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let count = activity.lock().map_err(|_| "操作锁不可用")?;
+        if *count > 0 || tasks.active() || imports.has_pending_files() {
+            return Err("请先完成或恢复当前文件操作，再检测存档位置".into());
+        }
+        imports.ensure_recovery_clear().map_err(|e| e.to_string())?;
+        let game = db
+            .lock()
+            .map_err(|_| "数据库锁不可用")?
+            .game(&id)
+            .map_err(|e| e.to_string())?;
+        crate::save_redetection::preview(&game, &request).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+#[tauri::command]
 fn save_game(state: State<'_, AppState>, edit: GameEdit) -> CommandResult<Game> {
     let _gate = state.activity.lock().map_err(|_| "操作锁不可用")?;
     if state.tasks.active()
@@ -1671,6 +1697,7 @@ pub fn run() {
             skip_game,
             start_registration,
             save_game,
+            preview_save_paths,
             start_game_analysis,
             start_deep_analysis,
             play_game,

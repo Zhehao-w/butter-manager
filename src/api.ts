@@ -13,6 +13,7 @@ import type {
   DeletePlan,
   DeleteReport,
   GameEdit,
+  SaveDetectionRequest,
   LaunchConfiguration,
   Settings,
   ResetReport,
@@ -136,6 +137,8 @@ export const api = {
   deepAnalyze: (scanId: string, path: string) =>
     invoke<string>('start_deep_analysis', { scanId, path }),
   saveGame: (edit: GameEdit) => invoke<Game>('save_game', { edit }),
+  previewSavePaths: (id: string, request: SaveDetectionRequest) =>
+    invoke<string[]>('preview_save_paths', { id, request }),
   startGameAnalysis: (id: string) => invoke<string>('start_game_analysis', { id }),
   play: (id: string, configuration?: LaunchConfiguration) =>
     invoke<Game>('play_game', { id, configuration }),

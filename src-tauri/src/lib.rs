@@ -22,6 +22,7 @@ pub mod registration;
 pub mod runtime;
 pub mod save_detection;
 pub mod save_editor;
+pub mod save_redetection;
 pub mod scanner;
 pub mod version;
 mod window_placement;

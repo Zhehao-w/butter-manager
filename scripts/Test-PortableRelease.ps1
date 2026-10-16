@@ -24,13 +24,11 @@ try {
     if ($taskHash -ne (Get-FileHash -LiteralPath (Join-Path $taskOutput 'butter-manager.exe') -Algorithm SHA256).Hash.ToLowerInvariant()) { throw 'ZIP executable differs from the standalone EXE.' }
 } finally { $taskArchive.Dispose() }
 $taskChecksumLines = @(Get-Content -LiteralPath (Join-Path $taskOutput 'SHA256SUMS.txt'))
-if ($taskChecksumLines.Count -ne 2) { throw 'Expected an EXE and a ZIP checksum.' }
-$taskNames = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-foreach ($taskLine in $taskChecksumLines) {
-    if ($taskLine -notmatch '^([a-f0-9]{64})  (butter-manager\.exe|butter-manager-v[0-9A-Za-z.+-]+-windows-x64-portable\.zip)$') { throw 'Invalid checksum entry.' }
-    if (-not $taskNames.Add($Matches[2])) { throw 'Duplicate checksum entry.' }
-    if ((Get-FileHash -LiteralPath (Join-Path $taskOutput $Matches[2]) -Algorithm SHA256).Hash.ToLowerInvariant() -ne $Matches[1]) { throw 'Checksum mismatch.' }
-}
+if ($taskChecksumLines.Count -ne 1) { throw 'Expected exactly one Portable ZIP checksum.' }
+if ($taskChecksumLines[0] -cnotmatch '^([a-f0-9]{64})  (.+)$') { throw 'Invalid checksum entry.' }
+$taskExpectedHash = $Matches[1]
+if ($Matches[2] -cne (Split-Path -Leaf $taskZip)) { throw 'Checksum must reference only the Portable ZIP.' }
+if ((Get-FileHash -LiteralPath $taskZip -Algorithm SHA256).Hash.ToLowerInvariant() -cne $taskExpectedHash) { throw 'Checksum mismatch.' }
 # Failed validation/build attempts must clear previous success assets in their own output.
 $taskFixture = Join-Path $taskRoot ('artifacts/portable-release-test-' + [guid]::NewGuid())
 New-Item -ItemType Directory -Path $taskFixture | Out-Null
@@ -74,6 +72,6 @@ try {
     if (-not $taskResolved.StartsWith($taskArtifactRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) -or (Split-Path -Leaf $taskResolved) -notlike 'portable-release-test-*') { throw 'Cleanup escaped fixture.' }
     Remove-Item -LiteralPath $taskResolved -Recurse -Force
 }
-Write-Output 'Portable ZIP structure, executable hash, checksums and failure cleanup passed.'
+Write-Output 'Portable ZIP structure, executable hash, ZIP-only checksum and failure cleanup passed.'
 # The expected fake Cargo failure above must not leak exit 42 into the caller/CI.
 $global:LASTEXITCODE = 0

@@ -39,7 +39,7 @@
 3. **登记已有游戏**：点击“扫描目录”，选择需要入库的游戏。扫描登记保持游戏原位；新下载的游戏从“导入”添加。
 4. **开始游玩**：从游戏库启动，或在详情中调整资料与启动配置。“正在玩”随成功提交的启动请求更新，手动设置的“已通关”保留。
 
-Windows 需要 [WebView2 Runtime](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution)。发布页也提供独立 EXE 和 `SHA256SUMS.txt`；未签名程序可能出现 SmartScreen 提示，请核对来源与校验值。
+Windows 需要 [WebView2 Runtime](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution)。发布页提供 Portable ZIP 和 `SHA256SUMS.txt`；独立 EXE 仅保留在 CI artifact 中。未签名程序可能出现 SmartScreen 提示，请核对来源与校验值。
 
 ```text
 butter-manager/
@@ -47,7 +47,7 @@ butter-manager/
 └── data/                 # 游戏库、设置、恢复记录与 WebView2 用户资料
 ```
 
-**升级**：关闭管理器，只替换 EXE，保留整个现有 `data/`；不要用下载目录中新建的空资料覆盖原库。“设置 → 关于应用”可查看应用版本与构建提交。
+**升级**：关闭管理器，从新版 ZIP 提取 EXE 并替换旧 EXE，保留整个现有 `data/`；不要用下载目录中新建的空资料覆盖原库。“设置 → 关于应用”可查看应用版本与构建提交。
 
 **迁移**：先完成或撤回文件任务，关闭程序，再复制整个程序文件夹和游戏目录。路径变化后，在“设置 → 高级维护”预览并确认新旧根目录映射；此功能重新关联记录，不搬动文件。
 

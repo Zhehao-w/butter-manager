@@ -24,40 +24,39 @@ def file_digest(path):
 
 
 def validate_assets(directory, tag):
-    names = ["butter-manager.exe", f"butter-manager-{tag}-windows-x64-portable.zip"]
-    if {p.name for p in directory.iterdir()} != {*names, "SHA256SUMS.txt"}:
-        raise ValueError("Expected only EXE, Portable ZIP and SHA256SUMS.txt.")
-    assets = {}
-    for name in [*names, "SHA256SUMS.txt"]:
+    exe_name = "butter-manager.exe"
+    zip_name = f"butter-manager-{tag}-windows-x64-portable.zip"
+    release_names = [zip_name, "SHA256SUMS.txt"]
+    # The EXE is required for CI's byte-for-byte verification, but never uploaded.
+    if {p.name for p in directory.iterdir()} != {exe_name, *release_names}:
+        raise ValueError("Expected a build EXE, Portable ZIP and SHA256SUMS.txt.")
+    built = {}
+    for name in [exe_name, *release_names]:
         path = directory / name
         if path.is_symlink() or not path.is_file() or path.stat().st_size == 0:
-            raise ValueError(f"Invalid release asset: {name}")
-        assets[name] = {"digest": "sha256:" + file_digest(path), "size": path.stat().st_size}
+            raise ValueError(f"Invalid build/release asset: {name}")
+        built[name] = {"digest": "sha256:" + file_digest(path), "size": path.stat().st_size}
     lines = (directory / "SHA256SUMS.txt").read_text(encoding="utf-8-sig").splitlines()
-    checksums = {}
-    for line in lines:
-        match = re.fullmatch(r"([a-f0-9]{64})  (.+)", line)
-        if not match or match[2] not in names or match[2] in checksums:
-            raise ValueError("Invalid or duplicate checksum entry.")
-        checksums[match[2]] = "sha256:" + match[1]
-    if set(checksums) != set(names):
-        raise ValueError("Expected exactly the EXE and ZIP checksums.")
-    if any(checksums[name] != assets[name]["digest"] for name in names):
-        raise ValueError("Asset checksum mismatch.")
-    with zipfile.ZipFile(directory / names[1]) as archive:
+    if len(lines) != 1:
+        raise ValueError("Expected exactly one ZIP checksum.")
+    match = re.fullmatch(r"([a-f0-9]{64})  (.+)", lines[0])
+    if not match or match[2] != zip_name:
+        raise ValueError("Invalid checksum entry; only the Portable ZIP may be listed.")
+    if "sha256:" + match[1] != built[zip_name]["digest"]:
+        raise ValueError("ZIP checksum mismatch.")
+    with zipfile.ZipFile(directory / zip_name) as archive:
         entries = archive.infolist()
         if (
             len(entries) != 1
             or entries[0].filename != "butter-manager/butter-manager.exe"
-            or entries[0].file_size != assets[names[0]]["size"]
+            or entries[0].file_size != built[exe_name]["size"]
         ):
             raise ValueError("ZIP must contain only the matching executable.")
         with archive.open(entries[0]) as stream:
             digest = "sha256:" + hashlib.file_digest(stream, "sha256").hexdigest()
-        if digest != assets[names[0]]["digest"]:
-            raise ValueError("ZIP executable differs from the standalone EXE.")
-    return assets
-
+        if digest != built[exe_name]["digest"]:
+            raise ValueError("ZIP executable differs from the build EXE.")
+    return {name: built[name] for name in release_names}
 
 def publish_release(directory, tag, version, repository, commit, linux_commit, create=False, gh=run_gh, sleep=time.sleep):
     if not re.fullmatch(r"v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?", tag):

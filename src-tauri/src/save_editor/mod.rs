@@ -670,7 +670,7 @@ fn write_document(
             }
         }
     }
-    if output == original {
+    if unity::supports(&slot.format) && output == original {
         return document_with_password(game, slot, path, &original, password);
     }
     // A complete, validated sibling temporary file; never a backup of the source.

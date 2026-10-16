@@ -10,6 +10,8 @@
 
 额外 Linux 核心 Clippy `--no-default-features --lib --tests -- -D clippy::all` 通过；现有非测试 Linux 库构建仍报告 updater 的不可达 / 未用变量和 maintenance 的未用函数共三项编译器警告，不将此结果描述为桌面所有目标 `-D warnings` 已通过。完整桌面严格 Clippy、Windows 原生回归和 EXE 构建由本功能 PR 的 GitHub Windows CI 检查，实际状态以对应提交检查页面为准。
 
+Windows 首轮回归发现通用的无变化快速返回影响 Ren’Py 重签占用文件时的错误反馈（246 通过、1 失败、1 项既有原生回收往返忽略）；快速返回已限定为本期新增 Unity 格式，恢复 Ren’Py 原有替换及占用保护。保留原断言，不跳过或放宽测试；修复后的结果以 PR 最新提交 CI 为准。
+
 实机待验收：ES3 明文 / GZip 与已知密码 AES 各改一个简单字段，回游戏重读同槽位；Naninovel 普通槽位修改后重读、Global 修改后重启；确认其他槽位、场景与回滚仍正常，以及游戏再次存档后的文件变化提示。真实游戏读档、界面与分发验收由用户在 Windows 完成。
 
 ## v1.0.0 首次 Tag 交付及草稿可见性重试（2026-10-15）

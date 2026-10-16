@@ -121,7 +121,9 @@ Ren’Py 字段显示实际类型，容器可以展开，搜索也能找到折�
 
 ## 构建与参与开发
 
-项目使用 Tauri / Rust / React / SQLite，不需要单独部署服务。准备 Visual Studio 2026 Build Tools（C++ 编译工具及 Windows SDK）、WebView2、Node.js、pnpm 与 Rust MSVC 工具链；系统依赖见 [Tauri Windows 环境说明](https://v2.tauri.app/start/prerequisites/#windows)。Build Tools 与 Rust 全局安装，`scripts/Use-Toolchain.ps1` 自动选择已安装的最新 C++ 工具链；CI 使用 `windows-2025-vs2026`，缓存仍留在开发目录。
+项目使用 Tauri / Rust / React / SQLite，不需要单独部署服务。默认采用 **Linux 云端开发 + Windows CI 构建 EXE + 本机使用验收**，完整流程见 [云端开发说明](docs/cloud-development.md)。Linux 配好下述固定版本及基础 C 编译工具后，运行 `bash scripts/Check-Cloud.sh` 即可安装锁定依赖并检查前端与 Rust 核心，无需桌面 GTK/WebKit。
+
+Windows 本地开发另需 Visual Studio 2026 Build Tools（C++ 编译工具及 Windows SDK）、WebView2 与 Rust MSVC 工具链；系统依赖见 [Tauri Windows 环境说明](https://v2.tauri.app/start/prerequisites/#windows)。Build Tools 与 Rust 全局安装，`scripts/Use-Toolchain.ps1` 自动选择已安装的最新 C++ 工具链；CI 使用 `windows-2025-vs2026`，本地缓存仍留在开发目录。
 
 仓库固定 Node.js **24.19.0**、pnpm **11.25.0**、Rust **1.99.0**，依赖由锁文件固定。
 
@@ -146,7 +148,7 @@ pnpm tauri dev
 
 已有本地工具链可使用 `. ./scripts/Use-Toolchain.ps1`；新环境直接使用已安装的系统工具链。开发依赖、缓存及临时文件位于忽略提交的 `.tools/`，构建产物位于 `src-tauri/target/`。
 
-贡献约定、增量测试命令和隔离测试见 [CONTRIBUTING](CONTRIBUTING.md)。GitHub Windows CI 完整检查格式、前后端测试、TypeScript / Vite 与 Clippy，普通 Push / PR 只构建 EXE，PR 保留 EXE artifact。仅明确的 Release published 事件，或指定已有 Tag 且主动勾选发布的手动流程，才另打 ZIP、校验版本 / SHA-256 并上传已有 Release 的资产；不创建 Tag 或 Release。检查和构建只执行一套，Portable 专项测试保留为手动命令，不随每次构建或 CI 执行。开发与升级不备份正式数据库或导出可恢复记录，测试只使用独立夹具。
+贡献约定、增量测试命令和隔离测试见 [CONTRIBUTING](CONTRIBUTING.md)。GitHub CI 并行检查 Linux 前端 / 核心与 Windows 完整目标，保留格式、前后端测试、TypeScript / Vite、Windows Clippy 与 EXE 构建。PR、main 和普通手动构建均上传 EXE artifact（14 天）；下载对应提交且整个运行成功的产物，替换本机 EXE、保留完整 `data/` 即可。仅明确的 Release published 事件，或指定已有 Tag 且主动勾选发布的手动流程，才另打 ZIP、校验版本 / SHA-256，等待两端通过后上传已有 Release；不创建 Tag 或 Release。Portable 专项测试仍为手动命令，不随每次构建或 CI 执行。开发与升级不备份正式数据库或导出可恢复记录，测试只使用独立夹具。
 
 ## 项目与许可
 

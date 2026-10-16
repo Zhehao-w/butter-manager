@@ -1,10 +1,12 @@
 # 参与开发
 
-当前主要支持 Windows；开发环境与构建步骤见 [README](README.md)。
+应用面向 Windows；默认在 Linux 云端开发，由 Windows CI 构建 EXE，本机使用和验收。先读 [云端开发说明](docs/cloud-development.md)。
 
 ## 验证
 
 使用仓库指定的 Node.js、pnpm 和 Rust 版本，提交 pnpm-lock.yaml 与 src-tauri/Cargo.lock。
+
+Linux 云端使用 `bash scripts/Check-Cloud.sh`，安装锁定依赖并运行前端 / Rust 核心完整回归及格式、TypeScript / Vite；不需要桌面 GTK/WebKit。Windows 本地完整检查如下：
 
 ```powershell
 pnpm install --frozen-lockfile
@@ -16,7 +18,7 @@ cargo test --locked --manifest-path src-tauri/Cargo.toml --no-default-features -
 cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 ```
 
-PR 执行完整前端 / Rust 回归、Prettier / Rustfmt、TypeScript / Vite 和所有目标 Clippy，只构建 Windows Release EXE，并上传 PR EXE artifact。Push main（兼容 master）执行相同检查和 EXE 构建。Release published 或手动显式启用发布且指定已有 Tag 时，复用这一套构建，额外打 ZIP 并将 EXE / ZIP / SHA-256 上传到已有 Release；不创建 Tag、Release 或自动修改版本。仅上传 job 有 `contents: write`。
+PR、Push main（兼容 master）、手动构建和 Release 均执行 Linux 前端 / 核心回归与 Windows 完整检查，保留所有目标 Clippy 和 Windows Release EXE。每次 Windows 构建都上传可下载 EXE artifact（保留 14 天）；正式 Release 或手动显式启用发布且指定已有 Tag 时额外打 ZIP，等待两端检查成功后将 EXE / ZIP / SHA-256 上传到已有 Release；不创建 Tag、Release 或自动修改版本。仅上传 job 有 `contents: write`。下载方式、环境范围与缓存策略见云端说明。
 
 CI 调用 `scripts/Build-PortableRelease.ps1 -SkipFrontendBuild` 复用已检查的前端，使用独立 x64 Cargo target 和 `tauri/custom-protocol`；本地默认脚本会先构建前端，只输出 EXE。正式发布加 `-PortableZip`。`scripts/Test-PortableRelease.ps1`（ZIP 白名单、哈希及失败清理）和 `scripts/Test-Portable.ps1`（数据目录与移动后读取）保留为手动专项回归，首次验证或对应逻辑改变时执行，不进入常规 CI。最终产物在忽略提交的 `artifacts/windows/`，不会打包任何正式用户资料。详见 [Portable 说明](docs/portable.md)。
 

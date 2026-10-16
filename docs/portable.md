@@ -65,7 +65,7 @@ Windows 开发模式或 debug 构建在创建 Tauri 应用之前把覆盖根切�
 
 `-SkipFrontendBuild` 仅供已完成前端检查的 CI / 本地流程复用资源，普通打包不要跳过。`-ExpectedTag vX.Y.Z` 要求 Tag 与源码版本完全一致，不自动改版。输出目录只能是本仓库 `artifacts/` 下的专用子目录；`-CargoExecutable` 用于隔离的构建失败回归，不用于正常发布。
 
-现有 `check.yml` 保留 PR EXE artifact，普通 Push / PR 只构建 EXE，不发布。Release published 事件或手动选择已有 Tag 并显式启用发布时才加 `-PortableZip`，同一套完整检查 / 构建结果交给独立上传 job；只有该 job 有 `contents: write`。上传前复核 SHA-256、已有 Release 和版本化文件名，失败明确报错；不创建 Tag / Release、不签名 EXE。手动发布请确认所选 Tag 已存在且版本一致，取消勾选时只检查与构建。
+现有 `check.yml` 并行验证 Linux 前端 / 核心和 Windows 完整目标。PR、普通 Push 与手动构建均保留 EXE artifact（14 天），普通构建不发布。Release published 事件或手动选择已有 Tag 并显式启用发布时才加 `-PortableZip`，两端检查通过后由独立上传 job 发布资产；只有该 job 有 `contents: write`。上传前复核 SHA-256、已有 Release 和版本化文件名，失败明确报错；不创建 Tag / Release、不签名 EXE。手动发布请确认所选 Tag 已存在且版本一致，取消勾选时只检查、构建和保留 artifact。云端准备及下载步骤见 [云端开发说明](cloud-development.md)。
 
 发布时复制 EXE 到专用文件夹，已有资料需连同整个 `data/` 一起移动。关闭程序后移动整个文件夹，配置与库记录仍在；游戏库、存档和公共工具的绝对路径保持原值。跨用户/机器移动时，原游戏路径可能需重新关联；Windows 加密的浏览器秘密不保证跨用户可读。
 

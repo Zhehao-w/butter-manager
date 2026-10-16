@@ -1619,7 +1619,9 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
+            // CloseRequested may be prevented by the frontend (dirty forms or active tasks).
+            // Cancel only after the guarded window has actually been destroyed.
+            if matches!(event, tauri::WindowEvent::Destroyed) {
                 window.state::<AppState>().tasks.cancel_all();
             }
         })

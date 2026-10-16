@@ -1,0 +1,49 @@
+# Linux 云端开发与 Windows 交付
+
+日常修改、前端和核心 Rust 验证在 Linux 完成；Windows CI 负责桌面原生检查和 EXE。本机保留 `butter-manager.exe` 与完整 `data/`，用于实际使用和验收。真实游戏、数据库、存档及私钥不上传云端，不复制到测试或 CI。
+
+## 准备环境
+
+使用仓库 `.node-version`（Node.js 24.19.0）、`package.json`（pnpm 11.25.0）与 `rust-toolchain.toml`（Rust 1.99.0）固定版本。环境需要 Bash、Git、rustup、Node.js、pnpm，以及 C 编译器、make 等基础编译工具（SQLite 使用 bundled C 源码）。全局工具由云端环境提供，项目依赖按锁文件安装。
+
+在仓库根目录运行：
+
+```bash
+bash scripts/Check-Cloud.sh
+```
+
+此入口安装锁定的前端依赖，依次运行 Prettier、Rustfmt、完整前端测试、TypeScript / Vite 和无桌面依赖的完整 Rust 核心测试。它把 Cargo、pnpm 与临时文件放在项目 `.tools/`，Rust target 留在 `src-tauri/target/`，不使用本机 Windows 路径。不要将 `.tools/`、`node_modules/`、target 或真实 `data/` 提交到 Git。
+
+无需为了核心检查安装 WebKit/GTK 或尝试 Linux 编译 Windows EXE。`pnpm dev` 可用于浏览器前端开发，但目前没有完整演示数据，浏览器不能执行桌面文件操作。默认的 `pnpm check` 包含桌面目标，应由 Windows CI 执行；Linux 入口不将无原生保护的结果冒充 Windows 验证。
+
+增量测试使用 [CONTRIBUTING](../CONTRIBUTING.md) 中的 `test:ui:changed`、`test:ui:related` 与 `pnpm test <过滤词>`。涉及数据库、路径、导入或存档的共享逻辑时执行完整入口；测试只使用隔离临时夹具。
+
+## CI 与下载
+
+现有 `check.yml` 内 Linux 和 Windows 两个 job 并行执行，PR、main（兼容 master）、手动构建和正式 Release 均保留检查：
+
+| job     | 检查与交付                                                                                         |
+| ------- | -------------------------------------------------------------------------------------------------- |
+| Linux   | 使用上述入口验证前端与可移植 Rust 核心，不构建桌面程序                                             |
+| Windows | 完整前端 / Rust 核心测试、格式、TypeScript / Vite、所有桌面目标 Clippy，并构建 Windows Release EXE |
+| Publish | 仅正式 Release 或显式手动发布；等待两端成功，核对资产后上传到已有 Release                          |
+
+所有 Windows 构建都上传 `butter-manager-windows-<完整提交 SHA>` artifact；PR 名称为 `butter-manager-windows-pr-<编号>`，保存 14 天。确认整个运行成功后下载与目标提交对应的 artifact，解压取得单 EXE。过期后可以对目标提交手动重跑构建，普通手动运行保持 `publish_release=false`，不会创建 Tag 或 Release。
+
+下载也可通过 GitHub CLI 完成：
+
+```bash
+gh run list --workflow check.yml --branch main
+gh run view <run-id>
+gh run download <run-id> --name butter-manager-windows-<完整提交SHA> --dir ./download
+```
+
+正式发布另保留版本化 Portable ZIP 与 SHA-256，规则见 [Portable 说明](portable.md)。下载 GitHub artifact 得到的外层 ZIP 是 Actions 包装，不是应用需要的运行时依赖。
+
+CI 仅缓存前端下载、Cargo registry / git 和编译 target；不缓存用户资料或 `node_modules`。缓存按操作系统、架构、锁文件隔离；Rust 还按工具链和 runner 镜像版本隔离，跨提交恢复以减少重复编译。镜像或依赖变化时冷构建是预期行为，缓存命中仍执行全部检查。目前不承诺具体提速幅度。
+
+## 本机验收与后续清理
+
+关闭管理器，只替换本机 `E:\butter-manager\butter-manager.exe`，保留旁边完整 `data/` 后重开。不要在下载目录启动后用新建的空 `data/` 替换正式资料。GUI 验收由用户操作，包括运行任务时系统关闭不会取消任务、未保存资料的保存 / 放弃 / 取消，以及真实游戏启动和读档。
+
+只有所需提交及未提交工作全部转移、首次 Linux / Windows CI 和下载 EXE 验收通过后，才安排清理本机 `dev/`；这轮准备不删除开发目录或全局工具。构建标识 / 诊断导出和浏览器演示夹具为后续候选，不在本轮实现。

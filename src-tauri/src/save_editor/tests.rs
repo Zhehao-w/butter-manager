@@ -184,6 +184,10 @@ fn unity_naninovel_refuses_ambiguous_maps_and_unsupported_values_without_editing
     let mut outer: Value = serde_json::from_slice(&bytes).unwrap();
     outer["objectJsonMap"]["keys"][1] = outer["objectJsonMap"]["keys"][0].clone();
     assert!(unity::decode(&serde_json::to_vec(&outer).unwrap(), unity::NANI, None).is_err());
+    outer["objectJsonMap"]["keys"][1] =
+        "Naninovel.CustomVariableManager+GameState, Different.Assembly".into();
+    outer["objectJsonMap"]["values"][1] = outer["objectJsonMap"]["values"][0].clone();
+    assert!(unity::decode(&serde_json::to_vec(&outer).unwrap(), unity::NANI, None).is_err());
     let mut outer: Value = serde_json::from_slice(&bytes).unwrap();
     let mut service: Value =
         serde_json::from_str(outer["objectJsonMap"]["values"][0].as_str().unwrap()).unwrap();

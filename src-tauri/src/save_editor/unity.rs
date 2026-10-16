@@ -293,6 +293,7 @@ impl Decoded {
                 return Err(invalid("Naninovel 服务键值数量不一致"));
             }
             let mut seen = HashSet::new();
+            let mut variable_services = HashSet::new();
             for ((_, key), (_, value)) in keys.children.iter().zip(&values.children) {
                 let key = key
                     .value
@@ -308,6 +309,10 @@ impl Decoded {
                         | "Naninovel.CustomVariableManager+GlobalState"
                 ) {
                     continue;
+                }
+                // Assembly-qualified aliases of the same state type are ambiguous too.
+                if !variable_services.insert(class) {
+                    return Err(invalid("Naninovel 变量服务类型重复，无法确定对应状态"));
                 }
                 let bytes = value
                     .value

@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import Mock
 import zipfile
 
 from publish_release import publish_release
@@ -28,6 +29,7 @@ class FakeGitHub:
         self.draft_hidden_by_tag = False
         self.edit_error = False
         self.list_error = False
+        self.new_draft_hidden_reads = 0
 
     def __call__(self, args):
         self.calls.append(args)
@@ -35,6 +37,9 @@ class FakeGitHub:
             if "--paginate" in args:
                 if self.list_error:
                     raise subprocess.CalledProcessError(1, args, stderr="gh: Forbidden (HTTP 403)")
+                if self.current and self.new_draft_hidden_reads:
+                    self.new_draft_hidden_reads -= 1
+                    return "[]"
                 # gh --paginate writes consecutive page arrays, not a nested array.
                 return '[]\n' + json.dumps([self.current] if self.current else [])
             path = args[1]
@@ -110,7 +115,7 @@ class PublishReleaseTests(unittest.TestCase):
         options = dict(
             directory=self.directory, tag=self.tag, version=self.version,
             repository=REPOSITORY, commit=COMMIT, linux_commit=COMMIT,
-            create=True, gh=self.github,
+            create=True, gh=self.github, sleep=Mock(),
         )
         options.update(changes)
         publish_release(**options)
@@ -135,6 +140,25 @@ class PublishReleaseTests(unittest.TestCase):
         self.publish()
         self.assertEqual(self.github.mutations(), ["upload", "edit"])
         self.assertFalse(self.github.current["draft"])
+
+    def test_new_draft_visibility_delay_retries_reads_without_recreating(self):
+        self.github.draft_hidden_by_tag = True
+        self.github.new_draft_hidden_reads = 2
+        sleep = Mock()
+        self.publish(sleep=sleep)
+        self.assertEqual(sleep.call_count, 2)
+        sleep.assert_called_with(2)
+        self.assertEqual(self.github.mutations(), ["create", "upload", "edit"])
+
+    def test_new_draft_visibility_retry_is_bounded_and_never_publishes(self):
+        self.github.draft_hidden_by_tag = True
+        self.github.new_draft_hidden_reads = 100
+        sleep = Mock()
+        with self.assertRaisesRegex(ValueError, "newly created Release"):
+            self.publish(sleep=sleep)
+        self.assertEqual(sleep.call_count, 5)
+        self.assertEqual(self.github.mutations(), ["create"])
+        self.assertTrue(self.github.current["draft"])
 
     def test_publication_failure_keeps_verified_draft_for_retry(self):
         self.github.edit_error = True

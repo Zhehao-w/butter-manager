@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import time
 from urllib.parse import quote
 import zipfile
 
@@ -58,7 +59,7 @@ def validate_assets(directory, tag):
     return assets
 
 
-def publish_release(directory, tag, version, repository, commit, linux_commit, create=False, gh=run_gh):
+def publish_release(directory, tag, version, repository, commit, linux_commit, create=False, gh=run_gh, sleep=time.sleep):
     if not re.fullmatch(r"v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?", tag):
         raise ValueError("Expected a v-prefixed version tag, such as v1.0.0.")
     if tag != f"v{version}":
@@ -112,7 +113,14 @@ def publish_release(directory, tag, version, repository, commit, linux_commit, c
         if "-" in tag.split("+", 1)[0]:
             args.append("--prerelease")
         gh(args)
-        current = release()
+        # A newly created draft can take a few seconds to appear in the list.
+        # Retry reads only; never repeat creation or publish an unverified draft.
+        for attempt in range(6):
+            current = release()
+            if current is not None:
+                break
+            if attempt < 5:
+                sleep(2)
         if current is None or not current["draft"]:
             raise ValueError("Expected the newly created Release to be a draft.")
     release_id = current["id"]

@@ -77,11 +77,10 @@ try {
         try {
             if ($taskArchive.Entries.Count -ne 1 -or $taskArchive.Entries[0].FullName -cne 'butter-manager/butter-manager.exe' -or $taskArchive.Entries[0].Length -ne (Get-Item -LiteralPath $taskOutputExe).Length) { throw 'Unexpected Portable ZIP contents.' }
         } finally { $taskArchive.Dispose() }
-        $taskChecksums = foreach ($taskAsset in @($taskOutputExe, $taskZip)) {
-            '{0}  {1}' -f (Get-FileHash -LiteralPath $taskAsset -Algorithm SHA256).Hash.ToLowerInvariant(), (Split-Path -Leaf $taskAsset)
-        }
+        # The standalone EXE remains a CI artifact; only the ZIP is distributed in Releases.
+        $taskChecksums = '{0}  {1}' -f (Get-FileHash -LiteralPath $taskZip -Algorithm SHA256).Hash.ToLowerInvariant(), (Split-Path -Leaf $taskZip)
         Set-Content -LiteralPath (Join-Path $taskOutput 'SHA256SUMS.txt') -Value $taskChecksums -Encoding ascii
-        Write-Output "Optional Portable ZIP and checksums ready: $taskOutput"
+        Write-Output "Portable ZIP and ZIP checksum ready: $taskOutput"
     }
     Write-Output "Windows EXE v$taskVersion ready: $taskOutputExe"
 } catch {

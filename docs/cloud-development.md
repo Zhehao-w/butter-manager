@@ -48,7 +48,7 @@ CI 仅缓存前端下载、Cargo registry / git 和编译 target；不缓存用�
 
 1. Linux 与 Windows 并行执行完整检查，Windows 额外生成版本化 Portable ZIP 和 `SHA256SUMS.txt`，同时保留通常的 EXE artifact。
 2. 只有两端成功，发布 job 才在 Ubuntu 上运行；核对两端实际检出提交一致，并解析远端轻量 / 附注 Tag，确认仍指向该提交。Windows 仍负责全部 EXE 编译及原生回归。
-3. 校验分发目录只包含 EXE、ZIP、SHA-256，ZIP 内只有与独立 EXE 内容一致的程序。创建带 GitHub 自动生成说明的 Release 草稿，上传后复核远端三项资产的大小和 SHA-256，再公开发布。Tag 含预发布后缀时使用 prerelease。
+3. 校验中间产物只包含构建 EXE、ZIP 和 SHA-256，ZIP 内只有与构建 EXE 内容一致的程序；校验文件仅列 ZIP。创建带 GitHub 自动生成说明的 Release 草稿，**只上传 ZIP 和 SHA256SUMS.txt**，上传后复核远端两项资产的大小和 SHA-256，再公开发布。独立 EXE 继续作为 CI artifact 提供下载，不作为 Release 附件。Tag 含预发布后缀时使用 prerelease。
 4. 上传或校验失败时保留草稿，不公开发布；可在 Actions 中重跑原失败运行，继续同一 Tag 的草稿。已经成功且资产一致的 Release 重跑不重复上传；发现已公开的同名资产内容不同会停止，不自动覆盖。
 
 发布运行不被同 Tag 的后续运行自动取消；分支 / PR 的重复检查仍可自动取消。发布期间 Tag 被移动会阻止旧构建公开发布，不要通过改指向同名 Tag 来替换正式版本。
@@ -61,4 +61,4 @@ CI 仅缓存前端下载、Cargo registry / git 和编译 target；不缓存用�
 
 设置 → 关于应用的版本下显示构建提交短号，来自实际检出的 Git HEAD；本地未提交构建附带“本地修改”，缺少 Git 元数据时显示“未知”。标识在构建时嵌入，不在运行时读取 Git；EXE 文件名仍为 `butter-manager.exe`。
 
-只有所需提交及未提交工作全部转移、首次 Linux / Windows CI 和下载 EXE 验收通过后，才安排清理本机 `dev/`；这轮准备不删除开发目录或全局工具。诊断导出和浏览器演示夹具为后续候选。
+只有所需提交及未提交工作全部转移、首次 Linux / Windows CI 和下载 EXE 验收通过后，才安排清理本机 `dev/`；这轮准备不删除开发目录或全局工具。

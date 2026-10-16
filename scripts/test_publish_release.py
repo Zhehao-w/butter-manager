@@ -108,7 +108,7 @@ class PublishReleaseTests(unittest.TestCase):
     def write_checksums(self):
         self.checksums = self.directory / "SHA256SUMS.txt"
         self.checksums.write_text("".join(
-            f"{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}\n" for p in (self.exe, self.zip)
+            f"{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}\n" for p in (self.zip,)
         ))
 
     def publish(self, **changes):
@@ -124,8 +124,20 @@ class PublishReleaseTests(unittest.TestCase):
         self.publish()
         self.assertEqual(self.github.mutations(), ["create", "upload", "edit"])
         self.assertFalse(self.github.current["draft"])
-        self.assertEqual(len(self.github.current["assets"]), 3)
+        self.assertEqual(len(self.github.current["assets"]), 2)
         self.assertIn("--generate-notes", next(a for a in self.github.calls if a[:2] == ["release", "create"]))
+
+    def test_only_zip_and_checksum_are_uploaded_not_standalone_exe(self):
+        self.publish()
+        self.assertEqual(
+            {asset["name"] for asset in self.github.current["assets"]},
+            {self.zip.name, "SHA256SUMS.txt"},
+        )
+        upload = next(a for a in self.github.calls if a[:2] == ["release", "upload"])
+        self.assertEqual(
+            {Path(name).name for name in upload[3:upload.index("--repo")]},
+            {self.zip.name, "SHA256SUMS.txt"},
+        )
 
     def test_prerelease_tag_does_not_publish_as_stable(self):
         self.zip.unlink()
@@ -165,7 +177,7 @@ class PublishReleaseTests(unittest.TestCase):
         with self.assertRaises(subprocess.CalledProcessError):
             self.publish()
         self.assertTrue(self.github.current["draft"])
-        self.assertEqual(len(self.github.current["assets"]), 3)
+        self.assertEqual(len(self.github.current["assets"]), 2)
         self.github.edit_error = False
         self.publish()
         self.assertEqual(self.github.mutations().count("create"), 1)
@@ -192,6 +204,15 @@ class PublishReleaseTests(unittest.TestCase):
         self.github.calls.clear()
         self.publish()
         self.assertEqual(self.github.mutations(), [])
+
+    def test_legacy_published_exe_is_not_removed_or_reuploaded(self):
+        self.publish()
+        legacy_exe = {"name": "butter-manager.exe", "size": 10, "digest": "sha256:" + "f" * 64}
+        self.github.current["assets"].append(legacy_exe)
+        self.github.calls.clear()
+        self.publish()
+        self.assertEqual(self.github.mutations(), [])
+        self.assertIn(legacy_exe, self.github.current["assets"])
 
     def test_different_published_assets_are_not_overwritten(self):
         self.publish()
@@ -268,13 +289,25 @@ class PublishReleaseTests(unittest.TestCase):
         self.assertNotIn("edit", self.github.mutations())
 
     def test_tampered_file_or_duplicate_checksums_fail_before_github(self):
-        self.exe.write_bytes(b"changed fixture")
+        self.zip.write_bytes(b"changed fixture")
         with self.assertRaisesRegex(ValueError, "checksum mismatch"):
             self.publish()
-        self.write_checksums()
+        self.make_assets()
         lines = self.checksums.read_text().splitlines()
         self.checksums.write_text(lines[0] + "\n" + lines[0] + "\n")
-        with self.assertRaisesRegex(ValueError, "duplicate checksum"):
+        with self.assertRaisesRegex(ValueError, "exactly one ZIP checksum"):
+            self.publish()
+        self.make_assets()
+        self.exe.write_bytes(b"changed fixture")
+        with self.assertRaisesRegex(ValueError, "matching executable|differs from the build EXE"):
+            self.publish()
+        self.assertEqual(self.github.calls, [])
+
+    def test_checksum_must_reference_only_the_zip(self):
+        self.checksums.write_text(
+            f"{hashlib.sha256(self.exe.read_bytes()).hexdigest()}  {self.exe.name}\n"
+        )
+        with self.assertRaisesRegex(ValueError, "only the Portable ZIP"):
             self.publish()
         self.assertEqual(self.github.calls, [])
 

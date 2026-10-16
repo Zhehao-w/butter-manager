@@ -61,11 +61,11 @@ pnpm tauri dev
 
 Windows 开发模式或 debug 构建在创建 Tauri 应用之前把覆盖根切为 `./data-dev`。`pnpm tauri dev` 使用 `src-tauri/target/debug/data-dev/`，数据库、恢复记录和浏览器数据全部与正式 Release 隔离，也不读取旧正式资料。`tauri dev --release` 也按开发模式使用 `data-dev/`。所有正式 EXE 的 `data/` 均相对于自身位置，与构建缓存或启动工作目录无关；非 Windows 行为不变。
 
-脚本检查 `package.json`、Cargo package 与 Tauri 配置版本一致，构建生产前端及 Windows x64 `tauri/custom-protocol` EXE。独立缓存位于 `src-tauri/target/portable-release/`，默认只输出 `artifacts/windows/butter-manager.exe`；未来正式发布加 `-PortableZip`，另生成版本化 ZIP 与 SHA-256。只打包明确的一份 EXE，不遍历或复制旁边的资料；拒绝覆盖正在使用的构建 / 输出 EXE，不关闭程序或启动 GUI。每轮先清除自身旧分发产物，失败后也清理，不能拿旧成功包冒充新结果；构建缓存可继续复用。
+脚本检查 `package.json`、Cargo package 与 Tauri 配置版本一致，构建生产前端及 Windows x64 `tauri/custom-protocol` EXE。独立缓存位于 `src-tauri/target/portable-release/`，默认只输出 `artifacts/windows/butter-manager.exe`；正式发布加 `-PortableZip`，另生成版本化 ZIP 及仅包含 ZIP 条目的 SHA-256 校验文件。只打包明确的一份 EXE，不遍历或复制旁边的资料；拒绝覆盖正在使用的构建 / 输出 EXE，不关闭程序或启动 GUI。每轮先清除自身旧分发产物，失败后也清理，不能拿旧成功包冒充新结果；构建缓存可继续复用。
 
 `-SkipFrontendBuild` 仅供已完成前端检查的 CI / 本地流程复用资源，普通打包不要跳过。`-ExpectedTag vX.Y.Z` 要求 Tag 与源码版本完全一致，不自动改版。输出目录只能是本仓库 `artifacts/` 下的专用子目录；`-CargoExecutable` 用于隔离的构建失败回归，不用于正常发布。
 
-现有 `check.yml` 并行验证 Linux 前端 / 核心和 Windows 完整目标。PR、普通 Push 与手动构建均保留 EXE artifact（14 天），普通构建不发布。推送与源码版本一致的 `vX.Y.Z` Tag 后，Windows 加 `-PortableZip`，两端检查通过后由独立发布 job 校验 ZIP、EXE 及 SHA-256，自动创建 Release 草稿、上传并复核远端大小和摘要，再公开发布；预发布后缀 Tag 标记 prerelease。上传失败保持草稿，重跑可继续；已公开且内容不同的同名资产不会自动覆盖。只有发布 job 有 `contents: write`，不创建 Tag、不自动改版、不签名 EXE。
+现有 `check.yml` 并行验证 Linux 前端 / 核心和 Windows 完整目标。PR、普通 Push 与手动构建均保留 EXE artifact（14 天），普通构建不发布。推送与源码版本一致的 `vX.Y.Z` Tag 后，Windows 加 `-PortableZip`，两端检查通过后由独立发布 job 校验 ZIP 与构建 EXE 内容一致、ZIP SHA-256 正确，自动创建 Release 草稿，仅上传 ZIP 和校验文件并复核远端大小和摘要，再公开发布；预发布后缀 Tag 标记 prerelease。上传失败保持草稿，重跑可继续；已公开且内容不同的同名资产不会自动覆盖。只有发布 job 有 `contents: write`，不创建 Tag、不自动改版、不签名 EXE。
 
 已有 Release 的 published 事件或显式手动上传入口仍保留；手动上传需已有 Tag / Release 且版本一致，取消勾选时只检查、构建和保留 artifact。云端准备、Tag 发布与重跑步骤见 [云端开发说明](cloud-development.md#tag-自动发布)。
 

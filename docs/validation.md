@@ -1,5 +1,17 @@
 # 验证记录
 
+## v1.1 开发分支：Unity ES3 / Naninovel（2026-10-16）
+
+本轮范围为 ES3 与 Naninovel；NRBF、注册表和通用 JSON 不纳入。当前正式版本仍为 1.0.0，不创建 Tag / Release。Naninovel `.json` / `.nson` 保留原封装且按独立槽位写回，只开放标准自定义变量；ES3 复杂条目只读，已知密码的标准 AES 仅在当前编辑会话中解锁，不持久化密码。详情见 [编辑器说明](save-editor-lite.md)。
+
+`bash scripts/Check-Cloud.sh` 完成锁定依赖安装、Prettier / Rustfmt、完整前端 **227 项**、TypeScript / Vite、Linux Rust 核心 **225 项**及 **8 组合成 Unity 夹具的独立 Node crypto / zlib 核验**。包括原有 Import、Journal 恢复与撤回、迁移、回退、路径身份等回归。第一次全量前端检查的项目 227 项均通过，但 Vitest 还错误收集 `.tools` 中两份上游调研测试并报缺少原项目依赖；保留默认排除列表并增加工具缓存目录排除后，全量入口通过，不减少项目测试。
+
+新增回归覆盖明文 / GZip / 已知密码 AES / AES 内 GZip / raw DEFLATE、新旧 Naninovel 变量结构、本地与全局槽位、未修改原字节、未知条目 / 非活动值 / 其他服务保留、其他槽位不变、密码错误、数值类型边界、重复键 / 变量名、截断 / 尾部、跨解压块、随机 IV 与明文魔数冲突、关联范围、一层 Saves 与链接拒绝、revision 冲突和无备份。测试只使用本仓库脚本生成的人工数据与隔离目录；用户附件仅在先前讨论中只读查看，未改写、复制到项目或提交。
+
+额外 Linux 核心 Clippy `--no-default-features --lib --tests -- -D clippy::all` 通过；现有非测试 Linux 库构建仍报告 updater 的不可达 / 未用变量和 maintenance 的未用函数共三项编译器警告，不将此结果描述为桌面所有目标 `-D warnings` 已通过。完整桌面严格 Clippy、Windows 原生回归和 EXE 构建由本功能 PR 的 GitHub Windows CI 检查，实际状态以对应提交检查页面为准。
+
+实机待验收：ES3 明文 / GZip 与已知密码 AES 各改一个简单字段，回游戏重读同槽位；Naninovel 普通槽位修改后重读、Global 修改后重启；确认其他槽位、场景与回滚仍正常，以及游戏再次存档后的文件变化提示。真实游戏读档、界面与分发验收由用户在 Windows 完成。
+
 ## v1.0.0 首次 Tag 交付及草稿可见性重试（2026-10-15）
 
 用户授权提交、推送及 Tag 后，发布提交 `db108bc` 已推送到 main，附注 Tag `v1.0.0` 指向同一提交。main CI `38834859495` 成功；Tag CI `38834859620` 的 Linux 前端 225 / Rust 核心 219 / 发布逻辑 20 项通过，Windows 前端 225 / Rust 241 项通过、既有原生回收站测试 1 项忽略，全部桌面目标严格 Clippy 和 1.0.0 EXE / Portable ZIP 构建成功。

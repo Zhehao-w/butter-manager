@@ -28,6 +28,7 @@ export type SaveDocument = {
   metadata: string[];
   screenshot: string | null;
   warnings: string[];
+  password_required?: boolean;
   signature?: {
     status: 'local' | 'foreign' | 'unsigned' | 'invalid' | 'unknown';
     can_resign: boolean;

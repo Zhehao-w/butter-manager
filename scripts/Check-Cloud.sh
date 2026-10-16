@@ -25,4 +25,7 @@ pnpm format:check
 cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
 pnpm test:ui
 pnpm build
-cargo test --locked --manifest-path src-tauri/Cargo.toml --no-default-features --lib
+unity_verify_dir=$(mktemp -d "$TMPDIR/unity-verify.XXXXXX")
+trap 'rm -rf -- "$unity_verify_dir"' EXIT
+BUTTER_SAVE_EDITOR_VERIFY_DIR="$unity_verify_dir" cargo test --locked --manifest-path src-tauri/Cargo.toml --no-default-features --lib
+node scripts/Generate-UnityEditorFixtures.mjs --verify-dir "$unity_verify_dir"

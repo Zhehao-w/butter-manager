@@ -1287,14 +1287,20 @@ async fn read_editable_save(
     state: State<'_, AppState>,
     game_id: String,
     save_id: String,
+    password: Option<String>,
 ) -> CommandResult<crate::save_editor::Document> {
     let game = with_db(&state, |db| db.game(&game_id))?;
     let external = state.external_saves.clone();
     tauri::async_runtime::spawn_blocking(move || {
+        let password = password.map(zeroize::Zeroizing::new);
         if save_id.starts_with("external-") {
             external.read(&game, &save_id)
         } else {
-            crate::save_editor::read(&game, &save_id)
+            crate::save_editor::read_with_password(
+                &game,
+                &save_id,
+                password.as_ref().map(|p| p.as_str()),
+            )
         }
         .map_err(|e| e.to_string())
     })
@@ -1309,11 +1315,13 @@ async fn apply_save_edits(
     revision: String,
     changes: Vec<crate::save_editor::Change>,
     source_trusted: Option<bool>,
+    password: Option<String>,
 ) -> CommandResult<crate::save_editor::Document> {
     let (game, permit) = save_write_permit(&state, &game_id)?;
     let external = state.external_saves.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let _permit = permit;
+        let password = password.map(zeroize::Zeroizing::new);
         if save_id.starts_with("external-") {
             external.write(
                 &game,
@@ -1323,12 +1331,13 @@ async fn apply_save_edits(
                 source_trusted.unwrap_or(false),
             )
         } else {
-            crate::save_editor::apply(
+            crate::save_editor::apply_with_password(
                 &game,
                 &save_id,
                 &revision,
                 &changes,
                 source_trusted.unwrap_or(false),
+                password.as_ref().map(|p| p.as_str()),
             )
         }
         .map_err(|e| e.to_string())

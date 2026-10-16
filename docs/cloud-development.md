@@ -12,7 +12,7 @@
 bash scripts/Check-Cloud.sh
 ```
 
-此入口安装锁定的前端依赖，依次运行 Prettier、Rustfmt、完整前端测试、TypeScript / Vite 和无桌面依赖的完整 Rust 核心测试。它把 Cargo、pnpm 与临时文件放在项目 `.tools/`，Rust target 留在 `src-tauri/target/`，不使用本机 Windows 路径。不要将 `.tools/`、`node_modules/`、target 或真实 `data/` 提交到 Git。
+此入口安装锁定的前端依赖，依次运行 Prettier、Rustfmt、完整前端测试、TypeScript / Vite 和无桌面依赖的完整 Rust 核心测试，并用 Node crypto / zlib 独立核验仅合成的 Unity 存档输出。它把 Cargo、pnpm 与临时文件放在项目 `.tools/`，Rust target 留在 `src-tauri/target/`，不使用本机 Windows 路径。不要将 `.tools/`、`node_modules/`、target 或真实 `data/` 提交到 Git。
 
 无需为了核心检查安装 WebKit/GTK 或尝试 Linux 编译 Windows EXE。`pnpm dev` 可用于浏览器前端开发，但目前没有完整演示数据，浏览器不能执行桌面文件操作。默认的 `pnpm check` 包含桌面目标，应由 Windows CI 执行；Linux 入口不将无原生保护的结果冒充 Windows 验证。
 

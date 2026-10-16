@@ -5449,6 +5449,30 @@ button.save-editor-entry:active:not(:disabled) {
   align-items: center;
   gap: 10px;
 }
+.save-editor-password {
+  display: grid;
+  grid-template-columns: auto minmax(80px, 1fr) auto;
+  gap: 8px 10px;
+  align-items: center;
+  margin-top: 12px;
+}
+.save-editor-password label {
+  margin: 0;
+  font-size: 12px;
+}
+.save-editor-password input {
+  min-width: 0;
+  height: 34px;
+}
+.save-editor-password button {
+  min-height: 34px;
+  padding: 5px 12px;
+}
+.save-editor-password p {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 12px;
+}
 .save-editor-signature {
   display: flex;
   align-items: center;

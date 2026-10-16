@@ -805,7 +805,9 @@ describe('iteration interactions', () => {
     const settingsPage = screen.getByRole('region', { name: '设置页面' });
     expect(within(settingsPage).getByRole('region', { name: '关于应用' })).toBeTruthy();
     expect(within(settingsPage).getByText('开源图标：Lucide · 许可说明')).toBeTruthy();
-    expect(within(settingsPage).getByText('虚拟列表：TanStack Virtual · 许可说明')).toBeTruthy();
+    expect(
+      within(settingsPage).getByText('依赖组件：TanStack Virtual / 存档编解码 · 许可说明'),
+    ).toBeTruthy();
     expect(screen.getByRole('button', { name: '设置' }).closest('.sidebar-bottom')).toBeTruthy();
     expect(
       within(screen.getByRole('navigation', { name: '主导航' })).queryByRole('button', {

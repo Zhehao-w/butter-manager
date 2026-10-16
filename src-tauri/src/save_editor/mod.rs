@@ -1,9 +1,11 @@
 //! Save Editor Lite: associated slots, explicit leaf paths and known string sets are writable.
+mod json_tree;
 mod pickle;
 mod renpy;
 mod rpg;
 #[cfg(test)]
 mod tests;
+mod unity;
 
 use crate::domain::{Error, Game, Result};
 use serde::{Deserialize, Serialize};
@@ -172,6 +174,8 @@ pub struct Document {
     pub screenshot: Option<String>,
     pub warnings: Vec<String>,
     pub signature: Option<renpy::SignatureInfo>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub password_required: bool,
 }
 #[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
@@ -245,7 +249,37 @@ fn discover_with(
                 root.display()
             ));
         }
+        // Naninovel commonly places slots one level below the associated Unity root.
+        // Only the named Saves directory is admitted; no recursive directory walk.
+        let mut expanded = Vec::new();
         for path in candidates {
+            let Some(info) = transient(fs::symlink_metadata(&path))? else {
+                continue;
+            };
+            if info.is_dir()
+                && !crate::scanner::is_link(&info)
+                && path
+                    .file_name()
+                    .is_some_and(|name| name.eq_ignore_ascii_case("Saves"))
+            {
+                plain(&path)?;
+                let mut nested = fs::read_dir(&path)?
+                    .take(2049)
+                    .map(|entry| entry.map(|e| e.path()))
+                    .collect::<std::io::Result<Vec<_>>>()?;
+                if nested.len() == 2049 {
+                    nested.pop();
+                    warnings.push(format!(
+                        "存档目录超过 2048 项，仅检查前 2048 项：{}",
+                        path.display()
+                    ));
+                }
+                expanded.extend(nested.into_iter().map(|file| (file, path.clone(), true)));
+            } else {
+                expanded.push((path, directory.clone(), false));
+            }
+        }
+        for (path, directory, nested) in expanded {
             before_file(&path);
             let Some(info) = transient(fs::symlink_metadata(&path))? else {
                 continue;
@@ -259,6 +293,13 @@ fn discover_with(
                 .to_string_lossy()
                 .into_owned();
             let lower = name.to_ascii_lowercase();
+            if nested
+                && !lower.ends_with(".es3")
+                && !lower.ends_with(".nson")
+                && !lower.ends_with(".json")
+            {
+                continue;
+            }
             let format = if lower.ends_with(".rpgsave") && lower.starts_with("file") {
                 "MV"
             } else if lower.ends_with(".rmmzsave") && lower.starts_with("file") {
@@ -267,6 +308,21 @@ fn discover_with(
                 "RenPy"
             } else if lower == "persistent" {
                 "Persistent"
+            } else if lower.ends_with(".es3") {
+                unity::ES3
+            } else if lower.ends_with(".nson") {
+                unity::NANI
+            } else if lower.ends_with(".json") && info.len() <= FILE_LIMIT as u64 {
+                if vanished(plain(&path))?.is_none() {
+                    continue;
+                }
+                let Some(bytes) = vanished(read_limited(&path, FILE_LIMIT))? else {
+                    continue;
+                };
+                if !unity::recognize_json(&bytes) {
+                    continue;
+                }
+                unity::NANI
             } else {
                 continue;
             };
@@ -339,28 +395,59 @@ fn revision(path: &Path, data: &[u8]) -> Result<String> {
     hash.update(format!("{:?}:{}", info.modified()?, info.len()));
     Ok(format!("{:x}", hash.finalize()))
 }
-fn document(game: &Game, mut slot: Slot, path: &Path, data: &[u8]) -> Result<Document> {
+fn document(game: &Game, slot: Slot, path: &Path, data: &[u8]) -> Result<Document> {
+    document_with_password(game, slot, path, data, None)
+}
+fn document_with_password(
+    game: &Game,
+    mut slot: Slot,
+    path: &Path,
+    data: &[u8],
+    password: Option<&str>,
+) -> Result<Document> {
     slot.modified = fs::metadata(path)?
         .modified()?
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    let (fields, metadata, screenshot, warnings, signature) =
-        if slot.format == "MV" || slot.format == "MZ" {
-            let decoded = rpg::decode(data, &slot.format)?;
-            let auxiliary = rpg::Auxiliary::load(game);
-            (
-                rpg::fields(&decoded.value, &auxiliary)?,
-                rpg::metadata(&decoded.value),
-                None,
-                auxiliary.warnings,
-                None,
-            )
-        } else {
-            let (fields, metadata, screenshot, warnings, signature) =
-                renpy::read(game, data, slot.format == "Persistent")?;
-            (fields, metadata, screenshot, warnings, Some(signature))
-        };
+    let (fields, metadata, screenshot, warnings, signature) = if slot.format == "MV"
+        || slot.format == "MZ"
+    {
+        let decoded = rpg::decode(data, &slot.format)?;
+        let auxiliary = rpg::Auxiliary::load(game);
+        (
+            rpg::fields(&decoded.value, &auxiliary)?,
+            rpg::metadata(&decoded.value),
+            None,
+            auxiliary.warnings,
+            None,
+        )
+    } else if unity::supports(&slot.format) {
+        if password.is_none() && unity::locked(data, &slot.format) {
+            return Ok(Document {
+                revision: revision(path, data)?,
+                slot,
+                fields: Vec::new(),
+                metadata: Vec::new(),
+                screenshot: None,
+                warnings: vec!["此 ES3 文件无法直接读取。若为标准 AES 加密，请输入已知密码；自定义封装暂不支持。".into()],
+                signature: None,
+                password_required: true,
+            });
+        }
+        let decoded = unity::decode(data, &slot.format, password)?;
+        (
+            decoded.fields(&slot.format)?,
+            decoded.metadata(&slot.format),
+            None,
+            Vec::new(),
+            None,
+        )
+    } else {
+        let (fields, metadata, screenshot, warnings, signature) =
+            renpy::read(game, data, slot.format == "Persistent")?;
+        (fields, metadata, screenshot, warnings, Some(signature))
+    };
     Ok(Document {
         slot,
         revision: revision(path, data)?,
@@ -369,12 +456,16 @@ fn document(game: &Game, mut slot: Slot, path: &Path, data: &[u8]) -> Result<Doc
         screenshot,
         warnings,
         signature,
+        password_required: false,
     })
 }
 pub fn read(game: &Game, id: &str) -> Result<Document> {
+    read_with_password(game, id, None)
+}
+pub fn read_with_password(game: &Game, id: &str, password: Option<&str>) -> Result<Document> {
     let (slot, path) = resolve(game, id)?;
     let data = read_limited(&path, FILE_LIMIT)?;
-    document(game, slot, &path, &data)
+    document_with_password(game, slot, &path, &data, password)
 }
 fn validate_changes(fields: &[Field], changes: &[Change]) -> Result<()> {
     if changes.is_empty() || changes.len() > 2000 {
@@ -466,14 +557,51 @@ pub fn apply(
     changes: &[Change],
     source_trusted: bool,
 ) -> Result<Document> {
+    apply_with_password(game, id, expected, changes, source_trusted, None)
+}
+pub fn apply_with_password(
+    game: &Game,
+    id: &str,
+    expected: &str,
+    changes: &[Change],
+    source_trusted: bool,
+    password: Option<&str>,
+) -> Result<Document> {
     let _guard = WRITES.lock().map_err(|_| invalid("存档写入锁不可用"))?;
     let (slot, path) = resolve(game, id)?;
-    write_document(game, slot, &path, expected, changes, false, source_trusted)
+    write_document(
+        game,
+        slot,
+        &path,
+        expected,
+        changes,
+        WriteOptions {
+            resign: false,
+            source_trusted,
+            password,
+        },
+    )
 }
 pub fn resign(game: &Game, id: &str, expected: &str, source_trusted: bool) -> Result<Document> {
     let _guard = WRITES.lock().map_err(|_| invalid("存档写入锁不可用"))?;
     let (slot, path) = resolve(game, id)?;
-    write_document(game, slot, &path, expected, &[], true, source_trusted)
+    write_document(
+        game,
+        slot,
+        &path,
+        expected,
+        &[],
+        WriteOptions {
+            resign: true,
+            source_trusted,
+            password: None,
+        },
+    )
+}
+struct WriteOptions<'a> {
+    resign: bool,
+    source_trusted: bool,
+    password: Option<&'a str>,
 }
 fn write_document(
     game: &Game,
@@ -481,9 +609,13 @@ fn write_document(
     path: &Path,
     expected: &str,
     changes: &[Change],
-    resign: bool,
-    source_trusted: bool,
+    options: WriteOptions<'_>,
 ) -> Result<Document> {
+    let WriteOptions {
+        resign,
+        source_trusted,
+        password,
+    } = options;
     plain(path)?;
     let original = read_limited(path, FILE_LIMIT)?;
     if revision(path, &original)? != expected {
@@ -498,7 +630,7 @@ fn write_document(
             return Err(invalid("仅支持重新签名 Ren’Py 存档"));
         }
     } else {
-        let before = document(game, slot.clone(), path, &original)?;
+        let before = document_with_password(game, slot.clone(), path, &original, password)?;
         validate_changes(&before.fields, changes)?;
     }
     let output = if slot.format == "MV" || slot.format == "MZ" {
@@ -509,6 +641,13 @@ fn write_document(
             return Err(invalid("存档往返校验失败"));
         }
         output
+    } else if unity::supports(&slot.format) {
+        unity::decode(&original, &slot.format, password)?.apply(
+            &original,
+            &slot.format,
+            changes,
+            password,
+        )?
     } else {
         renpy::apply(game, &original, slot.format == "Persistent", changes)?
     };
@@ -516,7 +655,7 @@ fn write_document(
         return Err(invalid("修改后的存档超过 32 MiB，未写入"));
     }
     if !changes.is_empty() {
-        let after = document(game, slot.clone(), path, &output)?;
+        let after = document_with_password(game, slot.clone(), path, &output, password)?;
         let by_id: std::collections::HashMap<_, _> = after
             .fields
             .iter()
@@ -530,6 +669,9 @@ fn write_document(
                 return Err(invalid("修改后的字段校验失败"));
             }
         }
+    }
+    if output == original {
+        return document_with_password(game, slot, path, &original, password);
     }
     // A complete, validated sibling temporary file; never a backup of the source.
     let temp = path.with_file_name(format!(".butter-save-{}.tmp", uuid::Uuid::new_v4()));
@@ -552,7 +694,7 @@ fn write_document(
         let _ = fs::remove_file(&temp);
     }
     result?;
-    document(game, slot, path, &read_limited(path, FILE_LIMIT)?)
+    document_with_password(game, slot, path, &read_limited(path, FILE_LIMIT)?, password)
 }
 #[cfg(not(windows))]
 fn replace(from: &Path, to: &Path) -> Result<()> {
@@ -684,8 +826,11 @@ impl ExternalSaves {
             &path,
             expected,
             changes.unwrap_or_default(),
-            changes.is_none(),
-            trusted,
+            WriteOptions {
+                resign: changes.is_none(),
+                source_trusted: trusted,
+                password: None,
+            },
         )?;
         if let Some(grant) = self
             .0

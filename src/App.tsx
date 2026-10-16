@@ -65,6 +65,8 @@ import {
 } from './gameStatus';
 import { isQspFile, localQsp, qspConfig, suggestedPlayer } from './qsp';
 
+declare const __BUILD_COMMIT__: string;
+
 const lines = (text: string) =>
   text
     .split(/\r?\n/)
@@ -2266,7 +2268,12 @@ function SettingsPage({
             <CardTitle icon="info" iconSize={22} description="本地游戏管理与存档工具。">
               关于应用
             </CardTitle>
-            <span className="mode">v0.3.1</span>
+            <div className="settings-build-info">
+              <span className="mode">v0.3.1</span>
+              <small className="muted" title="构建提交">
+                构建 {typeof __BUILD_COMMIT__ === 'string' ? __BUILD_COMMIT__ : '未知'}
+              </small>
+            </div>
           </div>
           <BrowseButton disabled={busy} onClick={() => void toolAction(api.openDataDirectory)}>
             打开数据目录

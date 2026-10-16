@@ -579,6 +579,18 @@ describe('iteration interactions', () => {
       }
     },
   );
+  it.each(['abc1234', 'abc1234（本地修改）', undefined])(
+    'shows the embedded build commit %s in About',
+    async (commit) => {
+      vi.stubGlobal('__BUILD_COMMIT__', commit);
+      render(<App />);
+      await screen.findByRole('button', { name: '扫描目录' });
+      openConfig('设置');
+      const about = within(screen.getByRole('region', { name: '关于应用' }));
+      expect(about.getByText('v0.3.1')).toBeTruthy();
+      expect(about.getByText(`构建 ${commit ?? '未知'}`)).toBeTruthy();
+    },
+  );
   it('opens the active data directory from About and reports errors without leaving Settings', async () => {
     render(<App />);
     await screen.findByRole('button', { name: '扫描目录' });

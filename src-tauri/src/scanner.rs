@@ -1162,9 +1162,9 @@ mod tests {
         assert_eq!(analyze_directory(&renpy).unwrap().engine, "Ren'Py");
         let godot = temp.path().join("godot-fixture");
         fs::create_dir(&godot).unwrap();
-        fs::write(godot.join("start.exe"), b"fixture").unwrap();
+        fs::write(godot.join("Start.exe"), b"fixture").unwrap();
         fs::write(
-            godot.join("start.pck"),
+            godot.join("Start.pck"),
             [
                 b"GDPC".as_slice(),
                 &2u32.to_le_bytes(),

@@ -247,15 +247,16 @@ pub(crate) fn for_executable(
     let stem = Path::new(filename)
         .file_stem()
         .unwrap_or_default()
-        .to_string_lossy()
-        .to_lowercase();
-    if names.contains(&format!("{stem}_data"))
+        .to_string_lossy();
+    // The scan index is normalized, but filesystem lookups must keep the actual spelling.
+    let normalized_stem = stem.to_lowercase();
+    if names.contains(&format!("{normalized_stem}_data"))
         && file(base, "UnityPlayer.dll")
         && dir(base, &format!("{stem}_Data"))
     {
         evidence.engines.insert("Unity");
     }
-    if names.contains(&format!("{stem}.pck"))
+    if names.contains(&format!("{normalized_stem}.pck"))
         && bytes(base, &format!("{stem}.pck"), 20, true).is_some_and(|b| pck_header(&b))
     {
         evidence.engines.insert("Godot");

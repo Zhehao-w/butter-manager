@@ -1,5 +1,13 @@
 # 验证记录
 
+## 首次 Linux CI 引擎识别大小写修复（2026-10-15）
+
+首次新增 Linux job 的前端、格式和构建通过，Rust 核心 218 项通过、1 项失败：扫描测试中的 `Game.exe` 被转换为小写后，以 `game_Data` 查找实际的 `Game_Data`。Windows 文件系统忽略大小写，因此此前本地回归未暴露该问题。
+
+引擎检测现在仅用小写名称查询扫描索引，Unity `_Data` 与 Godot `.pck` 的实际文件访问保留 EXE 名称大小写。保留已有 Unity 检测、弱标记和冲突断言，将同一回归中的 Godot 样本改为 `Start.exe` / `Start.pck`，同时覆盖两条路径。不跳过 Linux 测试、不降低断言或修改检测阈值。
+
+本地完整 Rust 241 项通过、1 项既有原生回收站测试忽略（21.65 秒），Rustfmt、所有目标严格 Clippy 和差异检查通过。Windows Release EXE 构建通过（45.10 秒），更新根目录试用版并重新打开，保留正式 data。前端未改，复用本轮 CI 已通过的结果；修复后的 Linux 实际结果以新提交 CI 为准。
+
 ## Linux 云端开发与 Windows 交付准备（2026-10-15）
 
 在原有工作流中增加 Linux 前端 / Rust 核心 job，与 Windows 完整检查并行；main、PR 和普通手动构建都上传 EXE artifact（14 天），正式发布等待两端通过。新增 `scripts/Check-Cloud.sh` 及云端环境 / 下载说明，调整 AGENTS、README、贡献指南和路线图；缓存只覆盖项目依赖下载及编译结果，按系统、架构、锁文件、Rust 工具链和镜像版本隔离。未创建新工作流、依赖或发布，也未删除本机开发目录。

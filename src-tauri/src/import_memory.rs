@@ -137,12 +137,10 @@ impl MemoryIndex {
 
     pub fn matches(&self, title: &str, identities: &[String]) -> Vec<(String, String)> {
         let name = Name::new(title);
-        let Some(key) = name.memory_key() else {
-            return vec![];
-        };
-        let mut positions: HashSet<_> = self
-            .names
-            .get(&key)
+        let key = name.memory_key();
+        let mut positions: HashSet<_> = key
+            .as_ref()
+            .and_then(|key| self.names.get(key))
             .into_iter()
             .flatten()
             .copied()
@@ -159,7 +157,8 @@ impl MemoryIndex {
             if name.memory_conflict(&Name::new(&memory.profile.title)) {
                 continue;
             }
-            let reason = if memory.profile.name_key == key {
+            let same_name = key.as_deref() == Some(memory.profile.name_key.as_str());
+            let reason = if same_name {
                 "来源名称一致"
             } else {
                 "静态项目标识一致"
@@ -167,7 +166,7 @@ impl MemoryIndex {
             results
                 .entry(memory.game_id.clone())
                 .and_modify(|value: &mut String| {
-                    if memory.profile.name_key == key {
+                    if same_name {
                         *value = format!("曾由你确认关联 · {reason}；请确认");
                     }
                 })
@@ -228,6 +227,32 @@ mod tests {
             "游戏资源 v1.0",
         ] {
             assert!(Name::new(generic).memory_key().is_none(), "{generic}");
+        }
+    }
+
+    #[test]
+    fn generic_incoming_titles_still_recall_existing_memories_through_valid_project_ids() {
+        for identity in [
+            "unity:fixture studio:moonlight garden",
+            "renpy:config.save_directory:moonlight garden",
+            "renpy:build.name:moonlight garden",
+            "godot:moonlight garden",
+        ] {
+            let index = MemoryIndex::new(&[memory("old", "Moonlight Garden v0.8", &[identity])]);
+            for title in ["Game v0.9", "Project v0.9", "Launcher v0.9"] {
+                assert!(Name::new(title).memory_key().is_none());
+                let results = index.matches(title, &[identity.into()]);
+                assert_eq!(results.len(), 1, "{title} / {identity}");
+                assert_eq!(results[0].0, "old");
+                assert!(results[0].1.contains("静态项目标识一致"));
+                assert!(index.matches(title, &[]).is_empty());
+                assert!(index
+                    .matches(title, &["godot:another journey".into()])
+                    .is_empty());
+                assert!(index
+                    .matches(title, &["unity:DefaultCompany:New Unity Project".into()])
+                    .is_empty());
+            }
         }
     }
 

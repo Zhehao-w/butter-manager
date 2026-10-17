@@ -604,6 +604,14 @@ mod tests {
         assert!(results.iter().all(|matched| matched.remembered
             && !matched.auto_associate
             && matched.reason.contains("多个候选")));
+        candidate.suggested_title = "Game v0.9".into();
+        assert!(super::super::MemoryProfile::from_candidate(&candidate, "Moonlight.exe").is_none());
+        let results = MatchIndex::with_memories(&games, &memories).matches(&candidate, &|| false);
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().all(|matched| matched.remembered
+            && !matched.auto_associate
+            && matched.reason.contains("静态项目标识一致")
+            && matched.reason.contains("多个候选")));
         fs::remove_file(root.join("Moonlight_Data/app.info")).unwrap();
         assert!(MatchIndex::with_memories(&games, &memories)
             .matches(&candidate, &|| false)

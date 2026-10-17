@@ -4,7 +4,7 @@ Windows Release 默认将应用资料放在 `butter-manager.exe` 旁的 `data/`�
 
 ## 安装、升级与迁移
 
-1.0.0 的正式主资产为 `butter-manager-v1.0.0-windows-x64-portable.zip`，另提供独立的 `butter-manager.exe` 和 `SHA256SUMS.txt`。正式下载以 [Releases](https://github.com/Zhehao-w/butter-manager/releases) 中已发布的资产为准。
+1.1.0 的正式主资产为 `butter-manager-v1.1.0-windows-x64-portable.zip` 和 `SHA256SUMS.txt`；独立 `butter-manager.exe` 通过 Actions artifact 下载，不作为本版本 Release 附件。正式下载以 [Releases](https://github.com/Zhehao-w/butter-manager/releases) 中已发布的资产为准。
 
 首次安装：下载 ZIP，解压到可写的专用目录，运行 EXE。ZIP 内只有 `butter-manager/butter-manager.exe`；首次运行自动建立 `data/`，不携带别人的数据库、导入记录、WebView2 资料、缓存或游戏存档。
 

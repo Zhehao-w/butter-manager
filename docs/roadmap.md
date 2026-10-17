@@ -1,8 +1,8 @@
 # butter-manager Roadmap
 
-更新：**2026-10-16** · 当前正式版本：**1.0.0**（已发布）。
+更新：**2026-10-16** · 当前版本：**1.1.0**（正式资产以 Release 页面为准）。
 
-本页区分已发布功能、实机验收与后续开发计划。v1.0.0 已发布 Windows Portable ZIP 和独立 EXE；后续版本的 Release 仅分发 ZIP 与 SHA256SUMS.txt，独立 EXE 继续通过 CI artifact 获取；早期实施文档保留历史过程，当前使用流程以 [README](../README.md) 和最新专项说明为准。
+本页区分正式交付与实机验收。1.1.0 在 1.0.0 基础上新增 ES3 / Naninovel 存档编辑；Release 提供 Portable ZIP 与 SHA256SUMS.txt，独立 EXE 继续通过 CI artifact 获取。v1.0.0 的独立 EXE 附件保留历史状态。当前流程以 [README](../README.md)和最新专项说明为准。
 
 1.0.0 汇总现有游戏库、导入更新、存档编辑、随包 MTool 清理、库内查重、Ren’Py AppData 手动清理及整库路径迁移。下文 v0.3.1、v0.4、v0.5、v0.6 保留为开发阶段名称，不代表分别发布过这些版本。发布范围见 [变更记录](../CHANGELOG.md)。
 
@@ -18,7 +18,7 @@
 | v0.5 游戏库查重 & Match 2.0    | 已实现，确认 / 排除及选择回收已集成      | 真实库误报、状态撤销与游戏整理交互       |
 | v0.6 Ren'Py AppData 手动清理   | 已实现，待实机验收                       | 一次确认、回收与目录状态刷新             |
 | 批量路径迁移                   | 已实现，保持 UUID 与全部非路径资料       | 新电脑整库、公共 MTool 与跳过项验收      |
-| Windows 分发                   | v1.0.0 已发布单 EXE / Portable ZIP       | 干净环境首次启动及升级验收               |
+| Windows 分发                   | 1.1.0 Portable ZIP / SHA-256，EXE 通过 CI | 干净环境首次启动及升级验收               |
 
 自动化与本地构建已有通过记录，详细检查见 [验证记录](validation.md)。这不替代真实游戏读档或分发验收，也不表示每个 GitHub CI 运行均已通过。
 
@@ -145,20 +145,20 @@
 - [x] MTool injector、runtime 及其子进程纳入既有游戏运行跟踪，部分启动失败仍保持文件操作保护；关闭管理器不终止游戏。
 - [x] 详情增加同父目录重命名，复用名称 / 路径事务及内部存档重定位；保留 UUID 与资料，并覆盖冲突、提交失败、中断恢复和目录替换保护。
 
-## 后续 Roadmap · v1.1–v1.3
+## 1.1.0 与后续 Roadmap
 
-优先保持轻量、离线和 Portable 定位。未来功能均以独立 PR 实施，Linux / Windows CI 通过并经人工验收后再决定发布；不为了版本号一次性加入多个功能。
+优先保持轻量、离线和 Portable 定位。后续功能以独立 PR 实施，结合 Linux / Windows CI 与实际游戏验收决定发布；不为了版本号一次性加入多个功能。
 
 | 里程碑 | 内容 | 优先级 | 状态 |
 | --- | --- | --- | --- |
 | v1.0.x | 真实游戏读档、导入更新 / 回退、Portable 与 MTool / QSP 的实机验收；必要 Bug Fix | 最高 | 进行中 |
-| v1.1 | Unity ES3 与 Naninovel 存档编辑 | 高 | 开发分支已实现，待 CI 和 Windows 实机读档验收；未发布 |
+| 1.1.0 | Unity ES3 与 Naninovel 存档编辑 | 高 | 已合并，进入正式交付；保留 Windows 真实游戏读档验收项 |
 | v1.2 | 记住人工确认的游戏关联，按真实漏配样本优化中日英名称匹配 | 中高 | 待评估与开发 |
 | v1.3 | 收藏夹、少量自定义标签、批量修改游玩状态 | 可选 | 未立项 |
 
-### v1.1 · 新增存档修改支持
+### 1.1.0 · 新增存档修改支持
 
-当前编辑支持 RPG Maker **MV / MZ** 及受控 Ren’Py 存档，不代表已支持 XP / VX / VX Ace 或所有同引擎游戏。用户已明确 Unity 游戏数量多、支持优先级高，因此 v1.1 优先按 Unity 保存方案推进。具体来源与投入见 [总体调研](save-format-research.md)及 [Unity 开源实现专项调研](unity-save-research.md)。
+编辑器在 MV / MZ 与受控 Ren’Py 基础上新增 Unity ES3 / Naninovel；不代表支持所有 Unity 游戏或旧版 RPG Maker。具体来源与投入见 [总体调研](save-format-research.md)及 [Unity 开源实现专项调研](unity-save-research.md)。
 
 - [x] 调研 QSP、TyranoScript、SugarCube、旧版 RPG Maker、Unity / Godot、KiriKiri / KAG 与 WOLF，区分可解码、可保真写回和可在游戏中读档。
 - [x] 对照 Unity 相关编辑器 / 解析库的实际源码、读写能力、许可证与运行依赖，区分 ES3、Naninovel、JSON、NRBF 与 PlayerPrefs。
@@ -167,10 +167,11 @@
 - [x] 保留未知内容、类型及非目标字段；Naninovel 游戏自定义服务、脚本位置、场景、缩略图与回滚历史不开放编辑，不增加一键解锁。
 - [x] 复用现有编辑入口、槽位选择、搜索、草稿和关闭确认。仅检查已关联目录及一层 `Saves`；不改变已保存路径、不增加启动扫描。
 - [x] 合成夹具与独立 Node 编解码核对，覆盖无操作原字节保留、目标字段修改、其他槽位保留、密码 / 损坏 / 类型 / 数量限制、链接和文件变化保护；不使用真实附件作为测试资料。
-- [ ] Linux / Windows 完整检查与 EXE 交付；用户完成 Windows 界面、实际 ES3 / Naninovel 读档后再决定发布。当前正式版本仍为 **1.0.0**。
+- [x] 功能 PR #3 的 Linux / Windows 完整检查、EXE 交付与 CI 缓存优化验证通过；按用户指令准备 1.1.0 Tag 自动发布。
+- [ ] 继续在 Windows 验收 ES3 / Naninovel 的实际读档、Global 重启与其他槽位保留；发布不视为这些实机项目已全部完成。
 
-NRBF / BinaryFormatter、通用 JSON 编辑、注册表 PlayerPrefs、Odin / MessagePack、QSP / TyranoScript / SugarCube 及旧版 RPG Maker 均留作后续候选，**不纳入 v1.1**。本轮范围以 ES3 和 Naninovel 为准，调研文档中的其他方案不代表已实现。
-原「详情手动重新检测存档路径」功能已取消，[Draft PR #2 已关闭且未合并](https://github.com/Zhehao-w/butter-manager/pull/2)，不纳入 v1.1。继续使用现有手动「扫描目录」补全空配置及手动关联目录，不增加启动时自动补全或自动替换已有路径。
+NRBF / BinaryFormatter、通用 JSON 编辑、注册表 PlayerPrefs、Odin / MessagePack、QSP / TyranoScript / SugarCube 及旧版 RPG Maker 均留作后续候选，**不纳入 1.1.0**。本轮范围以 ES3 和 Naninovel 为准，调研文档中的其他方案不代表已实现。
+原「详情手动重新检测存档路径」功能已取消，[Draft PR #2 已关闭且未合并](https://github.com/Zhehao-w/butter-manager/pull/2)，不纳入 1.1.0。继续使用现有手动「扫描目录」补全空配置及手动关联目录，不增加启动时自动补全或自动替换已有路径。
 
 ### v1.2 · 人工关联记忆与名称匹配改进
 

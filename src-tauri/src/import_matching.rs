@@ -622,10 +622,47 @@ impl Name {
     }
 
     pub(super) fn memory_key(&self) -> Option<String> {
+        let has_title = self.title.words.iter().any(|word| {
+            ![
+                "game",
+                "games",
+                "launcher",
+                "launch",
+                "start",
+                "application",
+                "project",
+                "mygame",
+                "newgame",
+                "testgame",
+                "myproject",
+                "newproject",
+                "new",
+                "my",
+                "test",
+                "sample",
+                "example",
+                "unity",
+                "renpy",
+                "visualnovel",
+                "untitled",
+                "unknown",
+                "setup",
+                "installer",
+                "uninstaller",
+                "data",
+                "save",
+                "saves",
+                "tools",
+                "mtool",
+            ]
+            .contains(&word.as_str())
+        }) || (!self.title.chinese.is_empty()
+            && !["游戏", "游戏资源", "游戏下载"].contains(&self.title.chinese.as_str()))
+            || !self.title.japanese.is_empty();
         let distinctive = self.title.words.iter().map(String::len).sum::<usize>() >= 6
             || self.title.chinese.chars().count() >= 3
             || self.title.japanese.concat().chars().count() >= 3;
-        (distinctive && self.useful_library_name()).then(|| {
+        (has_title && distinctive && self.useful_library_name()).then(|| {
             serde_json::to_string(&(
                 &self.title.words,
                 &self.title.chinese,

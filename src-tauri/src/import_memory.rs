@@ -85,6 +85,10 @@ fn useful_identity(value: &str) -> bool {
                 "template",
                 "visualnovel",
                 "untitled",
+                "unknown",
+                "untitledgame",
+                "untitledproject",
+                "defaultproject",
             ]
             .contains(&compact.as_str())
     })
@@ -217,6 +221,14 @@ mod tests {
         assert_eq!(index.profiles.len(), 1);
         assert!(Name::new("Game v1.0").memory_key().is_none());
         assert!(Name::new("汉化版 v1.0").memory_key().is_none());
+        for generic in [
+            "Project v1.0",
+            "Launcher v1.0",
+            "New Game v1.0",
+            "游戏资源 v1.0",
+        ] {
+            assert!(Name::new(generic).memory_key().is_none(), "{generic}");
+        }
     }
 
     #[test]

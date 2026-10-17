@@ -40,7 +40,13 @@ gh run download <run-id> --name butter-manager-windows-<完整提交SHA> --dir .
 
 正式发布另保留版本化 Portable ZIP 与 SHA-256，规则见 [Portable 说明](portable.md)。下载 GitHub artifact 得到的外层 ZIP 是 Actions 包装，不是应用需要的运行时依赖。
 
-CI 仅缓存前端下载、Cargo registry / git 和编译 target；不缓存用户资料或 `node_modules`。缓存按操作系统、架构、锁文件隔离；Rust 还按工具链和 runner 镜像版本隔离，跨提交恢复以减少重复编译。镜像或依赖变化时冷构建是预期行为，缓存命中仍执行全部检查。目前不承诺具体提速幅度。
+CI 仅缓存前端下载、Cargo registry / git 和编译 target；不缓存用户资料或 `node_modules`。前端按系统、架构与锁定工具配置隔离。Rust 另按固定工具链和 runner 镜像版本隔离，Windows Release 仍使用独立 `portable-release` target，保留完整测试、默认桌面所有目标严格 Clippy 和 Release EXE 构建。
+
+Rust 完整缓存按 Cargo manifest / lock 的依赖集合保存，**不再每个提交保存一份约 800 MB 的相同依赖副本**。优先恢复相同依赖的完整缓存，其次恢复同依赖的失败部分缓存，再回退到同系统 / 架构 / 镜像 / 工具链的其他完整依赖缓存；Cargo 继续按锁文件、源码、特性和构建模式校验并补编译，缓存命中不跳过任何检查。过渡期也可恢复旧格式的相同依赖缓存。镜像或 Rust 工具链改变时保持隔离，可能需要冷构建。
+
+还原与保存拆为两个步骤：整轮 job 成功后才写入完整缓存；检查失败时，可单独保存已完成的依赖编译供修复重跑使用，不覆盖完整缓存。不为取消的运行保存缓存。每个依赖集合的完整 / 部分键分别不可变，已有键不重复上传；失败部分缓存也不会阻止后续成功结果升级为完整缓存。
+
+实际耗时应区分冷构建与缓存命中。优化前本 PR 的 Windows 成功运行 `38962634723` 共约 **12 分 52 秒**：后端测试 2 分 45 秒、默认桌面 Clippy 2 分 23 秒、Release EXE 5 分 18 秒；该轮 Rust 缓存未命中。优化结果以本 PR 后续相同配置的实际 CI 记录为准，不承诺固定提速倍数。
 
 ## Tag 自动发布
 

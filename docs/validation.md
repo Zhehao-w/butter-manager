@@ -1,5 +1,11 @@
 # 验证记录
 
+## Draft PR #3：CI 缓存复用优化
+
+功能提交 `b2537fb` 的 [CI 38962634723](https://github.com/Zhehao-w/butter-manager/actions/runs/38962634723) 最终全部通过：Linux 前端 227 / 核心 225 / 独立 Node 核验 8 组，Windows 前端 227 / Rust 247 通过、1 项既有原生回收测试忽略，桌面所有目标严格 Clippy、Release EXE 与 artifact 上传成功；Ren’Py 占用回归恢复通过。Windows job 约 12 分 52 秒且 Rust 缓存未命中，主要耗时为后端 2:45、Clippy 2:23、Release EXE 5:18。
+
+用户授权在同一 PR 优化 CI。仅调整缓存键与还原 / 保存策略：每个依赖集合一份完整缓存，失败时保存独立部分缓存，同镜像 / 工具链允许依赖变化回退，保留旧键过渡。源码、测试、Clippy 默认模式、Release 独立 target、EXE artifact、Tag / Release 发布门槛及取消策略不变。配置经 actionlint 与现有发布脚本隔离回归校验；缓存实际命中与提速以 PR 最新运行日志为准。
+
 ## v1.1 开发分支：Unity ES3 / Naninovel（2026-10-16）
 
 本轮范围为 ES3 与 Naninovel；NRBF、注册表和通用 JSON 不纳入。当前正式版本仍为 1.0.0，不创建 Tag / Release。Naninovel `.json` / `.nson` 保留原封装且按独立槽位写回，只开放标准自定义变量；ES3 复杂条目只读，已知密码的标准 AES 仅在当前编辑会话中解锁，不持久化密码。详情见 [编辑器说明](save-editor-lite.md)。

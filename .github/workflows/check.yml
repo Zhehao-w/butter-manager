@@ -73,16 +73,21 @@ jobs:
           echo "version=${ImageVersion:?}" >> "$GITHUB_OUTPUT"
           commit=$(git rev-parse HEAD)
           echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "cache-prefix=${{ runner.os }}-${{ runner.arch }}-${ImageVersion}-rust-v2-${{ hashFiles('rust-toolchain.toml') }}" >> "$GITHUB_OUTPUT"
 
       - name: Restore Rust build cache
-        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        id: rust_cache
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: |
             .tools/cargo-cache/registry
             .tools/cargo-cache/git
             src-tauri/target
-          key: ${{ runner.os }}-${{ runner.arch }}-${{ steps.image.outputs.version }}-rust-${{ hashFiles('rust-toolchain.toml', 'src-tauri/Cargo.toml', 'src-tauri/Cargo.lock') }}-${{ steps.image.outputs.commit }}
+          # One complete cache per dependency set, rather than ~800 MB per commit.
+          key: ${{ steps.image.outputs.cache-prefix }}-complete-${{ hashFiles('src-tauri/Cargo.toml', 'src-tauri/Cargo.lock') }}
           restore-keys: |
+            ${{ steps.image.outputs.cache-prefix }}-partial-${{ hashFiles('src-tauri/Cargo.toml', 'src-tauri/Cargo.lock') }}
+            ${{ steps.image.outputs.cache-prefix }}-complete-
             ${{ runner.os }}-${{ runner.arch }}-${{ steps.image.outputs.version }}-rust-${{ hashFiles('rust-toolchain.toml', 'src-tauri/Cargo.toml', 'src-tauri/Cargo.lock') }}-
 
       - name: Check Linux frontend and core
@@ -90,6 +95,26 @@ jobs:
 
       - name: Test release publishing with isolated fixtures
         run: python3 -B -m unittest discover -s scripts -p 'test_publish_release.py' -v
+
+      - name: Save complete Rust build cache
+        if: success() && steps.rust_cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: |
+            .tools/cargo-cache/registry
+            .tools/cargo-cache/git
+            src-tauri/target
+          key: ${{ steps.rust_cache.outputs.cache-primary-key }}
+
+      - name: Preserve partial Rust cache after failure
+        if: failure() && !cancelled() && steps.rust_cache.outcome == 'success' && steps.rust_cache.outputs.cache-hit != 'true' && !contains(steps.rust_cache.outputs.cache-matched-key, '-partial-')
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: |
+            .tools/cargo-cache/registry
+            .tools/cargo-cache/git
+            src-tauri/target
+          key: ${{ steps.image.outputs.cache-prefix }}-partial-${{ hashFiles('src-tauri/Cargo.toml', 'src-tauri/Cargo.lock') }}
 
   windows:
     runs-on: windows-2025-vs2026
@@ -142,16 +167,21 @@ jobs:
           $taskCommit = git rev-parse HEAD
           if ($LASTEXITCODE -ne 0) { throw 'Cannot identify checked out commit.' }
           "commit=$taskCommit" >> $env:GITHUB_OUTPUT
+          "cache-prefix=${{ runner.os }}-${{ runner.arch }}-$env:ImageVersion-rust-v2-${{ hashFiles('rust-toolchain.toml') }}" >> $env:GITHUB_OUTPUT
 
       - name: Restore Rust build cache
-        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        id: rust_cache
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: |
             .tools/cargo-cache/registry
             .tools/cargo-cache/git
             src-tauri/target
-          key: ${{ runner.os }}-${{ runner.arch }}-${{ steps.image.outputs.version }}-rust-${{ hashFiles('rust-toolchain.toml', 'src-tauri/Cargo.toml', 'src-tauri/Cargo.lock') }}-${{ steps.image.outputs.commit }}
+          # One complete cache per dependency set, rather than ~800 MB per commit.
+          key: ${{ steps.image.outputs.cache-prefix }}-complete-${{ hashFiles('src-tauri/Cargo.toml', 'src-tauri/Cargo.lock') }}
           restore-keys: |
+            ${{ steps.image.outputs.cache-prefix }}-partial-${{ hashFiles('src-tauri/Cargo.toml', 'src-tauri/Cargo.lock') }}
+            ${{ steps.image.outputs.cache-prefix }}-complete-
             ${{ runner.os }}-${{ runner.arch }}-${{ steps.image.outputs.version }}-rust-${{ hashFiles('rust-toolchain.toml', 'src-tauri/Cargo.toml', 'src-tauri/Cargo.lock') }}-
 
       - name: Install locked frontend dependencies
@@ -205,6 +235,26 @@ jobs:
             artifacts/windows/butter-manager-v*-windows-x64-portable.zip
             artifacts/windows/SHA256SUMS.txt
           if-no-files-found: error
+
+      - name: Save complete Rust build cache
+        if: success() && steps.rust_cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: |
+            .tools/cargo-cache/registry
+            .tools/cargo-cache/git
+            src-tauri/target
+          key: ${{ steps.rust_cache.outputs.cache-primary-key }}
+
+      - name: Preserve partial Rust cache after failure
+        if: failure() && !cancelled() && steps.rust_cache.outcome == 'success' && steps.rust_cache.outputs.cache-hit != 'true' && !contains(steps.rust_cache.outputs.cache-matched-key, '-partial-')
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: |
+            .tools/cargo-cache/registry
+            .tools/cargo-cache/git
+            src-tauri/target
+          key: ${{ steps.image.outputs.cache-prefix }}-partial-${{ hashFiles('src-tauri/Cargo.toml', 'src-tauri/Cargo.lock') }}
 
   publish:
     needs: [linux, windows]

@@ -1387,6 +1387,104 @@ fn withdrawing_uncommitted_update_restores_original_and_keeps_source() {
     }
 }
 
+fn single_file_save_fixture() -> Fixture {
+    let f = Fixture::new();
+    {
+        let mut db = f.db.lock().unwrap();
+        let mut edit: GameEdit =
+            serde_json::from_value(serde_json::to_value(db.game(&f.id).unwrap()).unwrap()).unwrap();
+        edit.save_paths[0] = "<GAME>/www/save/進行.sav".into();
+        db.edit_game(edit).unwrap();
+    }
+    f
+}
+
+#[test]
+fn cross_volume_update_preserves_file_and_directory_saves_and_finishes_cleanup() {
+    for (single_file, incoming_save) in [(true, true), (true, false), (false, true)] {
+        let f = if single_file {
+            single_file_save_fixture()
+        } else {
+            Fixture::new()
+        };
+        if !incoming_save {
+            fs::remove_file(f.source.join("www/save/進行.sav")).unwrap();
+        }
+        let id = f.plan(true, true);
+        let mut plan = f.store.get(&id).unwrap();
+        assert!(plan.items[0].blockers.is_empty());
+        // Exercise the copy/cleanup path on every host, including a single-volume runner.
+        plan.items[0].cross_volume = true;
+        f.store.save(&plan).unwrap();
+        f.apply(&id).unwrap();
+        assert!(!f.source.exists());
+        assert!(!stage_path(&plan, 0).exists());
+        assert!(!f.store.has_pending_files());
+        assert_eq!(f.store.get(&id).unwrap().items[0].state, "completed");
+        assert_eq!(
+            fs::read(f.old().join("www/save/進行.sav")).unwrap(),
+            b"old progress"
+        );
+        assert_eq!(
+            fs::read(f.external.join("global.sav")).unwrap(),
+            b"external progress"
+        );
+        let updated = f.db.lock().unwrap().game(&f.id).unwrap();
+        assert_eq!(updated.current_version, "v2");
+        f.apply(&id).unwrap();
+        let db = f.db.lock().unwrap();
+        assert_eq!(db.game(&f.id).unwrap().created_at, updated.created_at);
+        assert_eq!(db.version_history(&f.id).unwrap().len(), 1);
+    }
+}
+
+#[test]
+fn cross_volume_single_file_update_resumes_committed_cleanup_after_restart() {
+    for withdraw in [false, true] {
+        let mut f = single_file_save_fixture();
+        let id = f.plan(true, true);
+        let mut plan = f.store.get(&id).unwrap();
+        assert!(plan.items[0].blockers.is_empty());
+        plan.items[0].cross_volume = true;
+        f.store.save(&plan).unwrap();
+        FAIL_CHECKPOINT.with(|failure| *failure.borrow_mut() = Some("update_cleanup".into()));
+        assert!(f.apply(&id).is_err());
+        let stage = stage_path(&plan, 0);
+        assert_eq!(
+            fs::read(stage.join("bundled-saves/0")).unwrap(),
+            b"bundled sample"
+        );
+        let updated = f.db.lock().unwrap().game(&f.id).unwrap();
+        assert_eq!(updated.current_version, "v2");
+        f.store = ImportStore::open(f.store.directory.clone()).unwrap();
+        assert!(f.store.recovery_issues().is_empty());
+        assert_eq!(f.store.get(&id).unwrap().items[0].state, "update_cleanup");
+        if withdraw {
+            let job = f.tasks.begin("import_withdraw", plan.root.clone()).unwrap();
+            f.store.withdraw(&id, &job, &f.db).unwrap();
+            job.finish(Ok(vec![]));
+        } else {
+            f.apply(&id).unwrap();
+        }
+        assert_eq!(f.store.get(&id).unwrap().items[0].state, "completed");
+        assert!(!f.store.has_pending_files());
+        assert!(!f.source.exists());
+        assert!(!stage.exists());
+        assert_eq!(
+            fs::read(f.old().join("www/save/進行.sav")).unwrap(),
+            b"old progress"
+        );
+        assert_eq!(fs::read(f.old().join("游戏.html")).unwrap(), b"new game");
+        let db = f.db.lock().unwrap();
+        let game = db.game(&f.id).unwrap();
+        assert_eq!(game.current_version, "v2");
+        assert_eq!(game.created_at, updated.created_at);
+        let history = db.version_history(&f.id).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].status, "committed");
+    }
+}
+
 #[cfg(windows)]
 #[test]
 fn native_cross_volume_update_copies_once_and_preserves_saves_before_source_cleanup() {

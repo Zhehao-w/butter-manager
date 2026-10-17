@@ -462,10 +462,11 @@ pub(super) fn remove_source_basic(
             {
                 let saved = paths::relative_path(save.relative.as_deref().unwrap())?;
                 if let Ok(suffix) = relative.strip_prefix(&saved) {
-                    copy = container
-                        .join("bundled-saves")
-                        .join(i.to_string())
-                        .join(suffix);
+                    copy = container.join("bundled-saves").join(i.to_string());
+                    // A single-file save matches exactly; joining an empty suffix adds a separator.
+                    if !suffix.as_os_str().is_empty() {
+                        copy.push(suffix);
+                    }
                     break;
                 }
             }

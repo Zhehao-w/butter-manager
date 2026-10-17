@@ -6,7 +6,7 @@
 
 ## 支持范围
 
-正式版 1.0.0 支持 MV / MZ 与 Ren’Py。**v1.1 开发分支**新增下表 ES3 / Naninovel，两项尚未发布且真实游戏读档待验收；NRBF、通用 JSON 和注册表均不在本期。参考来源见 [Unity 专项调研](unity-save-research.md)和 [格式总体调研](save-format-research.md)。
+1.1.0 支持 MV / MZ、Ren’Py，以及下表 ES3 / Naninovel。自动化验证不等于所有真实游戏均已读档验收；NRBF、通用 JSON 和注册表不在本版本范围内。参考来源见 [Unity 专项调研](unity-save-research.md)和 [格式总体调研](save-format-research.md)。
 
 | 格式 | 支持 | 限制 |
 | --- | --- | --- |
@@ -14,11 +14,10 @@
 | RPG Maker MZ | 标准 `file*.rmmzsave`，pako zlib 的 UTF-8 二进制字符串，兼容原始 zlib 字节并保留原编码 | ZIP、加密或插件自定义封装拒绝写入 |
 | Ren’Py `.save` | ZIP 的 `log`、`signatures`；公开 `store.*` 简单字段、字典/列表/元组中的简单子字段、None 初始化；元信息与 PNG 截图 | 未知自定义对象、内建/私有状态、共享引用、重复名称只读；不增删字典键或列表元素 |
 | Ren’Py `persistent` | zlib pickle + 尾部签名；公开字段与容器子字段；同步所属顶层字段的 `_changed` 修改时间戳 | 无法安全维护时间戳时只读；不根据变量名推断字段含义 |
+| ES3（1.1.0 新增） | `.es3` 明文 / GZip；标准 AES-128-CBC + PKCS7、IV 前缀、PBKDF2-HMAC-SHA1 的已知密码容器，支持加密内的 GZip | 顶层 typed-entry 中明确类型的已有数值、布尔、文本；复杂对象、数组、引用与未知类型只读；不查找或猜测密码 |
+| Naninovel（1.1.0 新增） | raw DEFLATE `.nson` 与已识别结构的明文 `.json`；`CustomVariableManager` 的本地 / 全局简单变量，新版类型化变量与旧版字符串映射 | 保留原始封装；游戏自定义服务、脚本位置、场景和回滚历史不编辑；自定义加密 / handler 不支持 |
 
-| ES3（v1.1 开发中） | `.es3` 明文 / GZip；标准 AES-128-CBC + PKCS7、IV 前缀、PBKDF2-HMAC-SHA1 的已知密码容器，支持加密内的 GZip | 顶层 typed-entry 中明确类型的已有数值、布尔、文本；复杂对象、数组、引用与未知类型只读；不查找或猜测密码 |
-| Naninovel（v1.1 开发中） | raw DEFLATE `.nson` 与已识别结构的明文 `.json`；`CustomVariableManager` 的本地 / 全局简单变量，新版类型化变量与旧版字符串映射 | 保留原始封装；游戏自定义服务、脚本位置、场景和回滚历史不编辑；自定义加密 / handler 不支持 |
-
-## Unity 文件编辑（v1.1 开发中）
+## Unity 文件编辑（1.1.0 新增）
 
 在已保存的关联存档目录中发现 `.es3` / `.nson`；`.json` 须识别到 Naninovel 变量服务结构，普通 JSON 配置不会作为通用编辑入口。另检查已关联目录下的一层 `Saves`，不递归其他目录、不修改关联路径；单文件关联只读取该文件。候选文件仍绑定游戏和不透明槽位 ID，保留链接 / 重解析点、任务互斥及 revision 保护。
 

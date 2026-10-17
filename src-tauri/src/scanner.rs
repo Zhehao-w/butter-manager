@@ -1042,9 +1042,12 @@ mod tests {
     #[test]
     fn qsp_version_comes_from_game_not_player_runtime() {
         let temp = tempfile::tempdir().unwrap();
-        fs::write(temp.path().join("game-v1.2.qsp"), b"fixture").unwrap();
-        fs::write(temp.path().join("qspgui-v9.9.exe"), b"fixture").unwrap();
-        let candidate = analyze_directory(temp.path()).unwrap();
+        // The directory name is a version input too; random temp names can contain V<digit>.
+        let root = temp.path().join("QSP fixture");
+        fs::create_dir(&root).unwrap();
+        fs::write(root.join("game-v1.2.qsp"), b"fixture").unwrap();
+        fs::write(root.join("qspgui-v9.9.exe"), b"fixture").unwrap();
+        let candidate = analyze_directory(&root).unwrap();
         assert_eq!(candidate.engine, "QSP");
         assert_eq!(candidate.suggested_version, "v1.2");
         assert_eq!(candidate.version_source, "file_name");

@@ -1,5 +1,13 @@
 # 验证记录
 
+## 1.1.0 发布准备
+
+按用户要求将 package.json、Tauri、Cargo manifest / lock 的应用版本及前端版本断言统一为 **1.1.0**，Tag 使用 `v1.1.0`。README、Portable、路线图和编辑器说明同步正式功能范围：ES3 / Naninovel，单文件槽位写回与 Global 区别，已知密码要求、未知类型 / 自定义服务边界，以及只替换 EXE 并保留 data 的升级方式。历史 1.0.0 记录不改写为新版本。
+
+本地格式、前端 **227 项**、TypeScript / Vite 通过；首次 Rust 全量遇到 QSP 夹具随机目录名被识别为版本提示，保留原断言并改用固定名称子目录，随后完整核心 **225 项**与独立 Node **8 组**核验通过。发布脚本 **25 项**隔离回归通过。该调整只稳定测试输入，不改 QSP 识别规则或业务逻辑。
+
+Tag 推送仍由既有流水线执行 Linux / Windows 完整检查、EXE / ZIP / SHA-256 校验和自动发布；实际发布状态以 [v1.1.0 Release](https://github.com/Zhehao-w/butter-manager/releases/tag/v1.1.0)及对应 Actions 为准。真实游戏读档验收项保留，不将合成回归当成实机验收。
+
 ## Draft PR #3：CI 缓存复用优化
 
 功能提交 `b2537fb` 的 [CI 38962634723](https://github.com/Zhehao-w/butter-manager/actions/runs/38962634723) 最终全部通过：Linux 前端 227 / 核心 225 / 独立 Node 核验 8 组，Windows 前端 227 / Rust 247 通过、1 项既有原生回收测试忽略，桌面所有目标严格 Clippy、Release EXE 与 artifact 上传成功；Ren’Py 占用回归恢复通过。Windows job 约 12 分 52 秒且 Rust 缓存未命中，主要耗时为后端 2:45、Clippy 2:23、Release EXE 5:18。

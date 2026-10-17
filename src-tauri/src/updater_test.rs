@@ -1,6 +1,163 @@
 use super::*;
 use crate::{domain::GameEdit, jobs::TaskManager};
 
+#[test]
+fn explicit_import_memory_waits_for_commit_and_survives_retry_and_rollback() {
+    let f = Fixture::new();
+    let id = f.plan_with(true, true, |selection| {
+        selection.remember_association = true
+    });
+    assert!(f
+        .db
+        .lock()
+        .unwrap()
+        .import_memories(None)
+        .unwrap()
+        .is_empty());
+    f.db.lock().unwrap().fail_version_commit(true).unwrap();
+    assert!(f.apply(&id).is_err());
+    assert!(f
+        .db
+        .lock()
+        .unwrap()
+        .import_memories(None)
+        .unwrap()
+        .is_empty());
+    f.db.lock().unwrap().fail_version_commit(false).unwrap();
+    f.apply(&id).unwrap();
+    let memories = f.db.lock().unwrap().import_memories(None).unwrap();
+    assert_eq!(memories.len(), 1);
+    assert_eq!(memories[0].game_id, f.id);
+    assert_ne!(memories[0].profile.title, "incoming name"); // Backend uses the analyzed source.
+    f.apply(&id).unwrap();
+    assert_eq!(f.db.lock().unwrap().import_memories(None).unwrap().len(), 1);
+    f.rollback(&id).unwrap();
+    assert_eq!(f.db.lock().unwrap().import_memories(None).unwrap().len(), 1);
+    assert_eq!(
+        f.db.lock().unwrap().game(&f.id).unwrap().aliases,
+        vec!["my alias"]
+    );
+}
+
+#[test]
+fn remembered_import_recovers_across_commit_boundary_without_resurrecting_forgotten_memory() {
+    for checkpoint in ["update_commit", "update_cleanup", "update_recycle"] {
+        let mut f = Fixture::new();
+        let id = f.plan_with(true, true, |selection| {
+            selection.remember_association = true
+        });
+        let job = f
+            .tasks
+            .begin("import_apply", paths::path_text(&f.root).unwrap())
+            .unwrap();
+        let mut plan = f.store.get(&id).unwrap();
+        FAIL_CHECKPOINT.with(|failure| *failure.borrow_mut() = Some(checkpoint.into()));
+        assert!(f.store.update_one(&mut plan, 0, &job, &f.db).is_err());
+        job.finish(Err("synthetic interruption".into()));
+        let memories = f.db.lock().unwrap().import_memories(None).unwrap();
+        assert_eq!(memories.len(), usize::from(checkpoint != "update_commit"));
+        if let Some(memory) = memories.first() {
+            f.db.lock()
+                .unwrap()
+                .forget_import_memory(&f.id, &memory.id)
+                .unwrap();
+        }
+        f.store = ImportStore::open(f.store.directory.clone()).unwrap();
+        f.apply(&id).unwrap();
+        assert_eq!(
+            f.db.lock().unwrap().import_memories(None).unwrap().len(),
+            usize::from(checkpoint == "update_commit")
+        );
+    }
+}
+
+#[test]
+fn cancelled_preview_and_legacy_journals_do_not_learn_import_memory() {
+    let mut f = Fixture::new();
+    let preview = f.plan_with(true, true, |selection| {
+        selection.remember_association = true
+    });
+    f.store.discard_preview(&preview).unwrap();
+    assert!(f
+        .db
+        .lock()
+        .unwrap()
+        .import_memories(None)
+        .unwrap()
+        .is_empty());
+    let id = f.plan(true, true);
+    let path = f.store.directory.join(format!("{id}.json"));
+    let mut journal: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    for item in journal["items"].as_array_mut().unwrap() {
+        item.as_object_mut().unwrap().remove("association_memory");
+        item["selection"]
+            .as_object_mut()
+            .unwrap()
+            .remove("remember_association");
+    }
+    fs::write(path, serde_json::to_vec(&journal).unwrap()).unwrap();
+    f.store = ImportStore::open(f.store.directory.clone()).unwrap();
+    f.apply(&id).unwrap();
+    assert!(f
+        .db
+        .lock()
+        .unwrap()
+        .import_memories(None)
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn backend_preview_rechecks_memories_and_requires_association_or_explicit_new_override() {
+    let f = Fixture::new();
+    let preview = f.plan(true, true);
+    let mut selection = f.store.get(&preview).unwrap().items[0].selection.clone();
+    selection.existing_id = None;
+    selection.target_name = "全新的目标".into();
+    let candidate = scanner::analyze_directory(&f.source).unwrap();
+    let memory = ImportMemory {
+        id: "memory".into(),
+        game_id: f.id.clone(),
+        profile: MemoryProfile::from_candidate(&candidate, "游戏.html").unwrap(),
+        confirmed_at: String::new(),
+    };
+    let (settings, games) = {
+        let db = f.db.lock().unwrap();
+        (db.settings().unwrap(), db.games().unwrap())
+    };
+    for (override_new, remember, blocked) in [
+        (false, false, true),
+        (true, false, false),
+        (true, true, true),
+    ] {
+        selection.new_override = override_new;
+        selection.remember_association = remember;
+        let job = f.tasks.begin("import_plan", String::new()).unwrap();
+        f.store
+            .prepare_with_memories(
+                &job,
+                settings.clone(),
+                vec![candidate.clone()],
+                vec![selection.clone()],
+                &games,
+                std::slice::from_ref(&memory),
+            )
+            .unwrap();
+        job.finish(Ok(vec![]));
+        assert_eq!(
+            !f.store.get(&job.id).unwrap().items[0].blockers.is_empty(),
+            blocked
+        );
+    }
+    assert!(f
+        .db
+        .lock()
+        .unwrap()
+        .import_memories(None)
+        .unwrap()
+        .is_empty());
+}
+
 struct Fixture {
     _temp: tempfile::TempDir,
     store: ImportStore,
@@ -110,6 +267,7 @@ impl Fixture {
             mtool: false,
             existing_id: Some(self.id.clone()),
             new_override: false,
+            remember_association: false,
             preserve_saves: preserve,
             saves_confirmed: confirmed,
             cleanup_mtool: false,
@@ -1160,6 +1318,7 @@ fn source_containing_an_external_save_is_blocked_but_ordinary_payload_changes_ar
         mtool: false,
         existing_id: Some(f.id.clone()),
         new_override: false,
+        remember_association: false,
         preserve_saves: true,
         saves_confirmed: true,
         cleanup_mtool: false,

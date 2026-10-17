@@ -2330,6 +2330,64 @@ button {
   line-height: 20px;
   flex-basis: 100%;
 }
+.import-memory-choice {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid #dce8fb;
+  border-radius: 10px;
+  background: #f6f9ff;
+}
+.import-memory-choice > p {
+  margin: 5px 0 0 24px;
+  line-height: 1.6;
+}
+.import-memories {
+  margin-top: 16px;
+  border-top: 1px solid #e1eafb;
+  padding-top: 12px;
+}
+.import-memories > summary {
+  cursor: pointer;
+  color: #4b5f7c;
+  font-size: 12px;
+}
+.import-memories-body {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+.import-memories-body p {
+  margin: 0;
+  line-height: 1.6;
+}
+.import-memory-row,
+.import-memory-error {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.import-memory-row {
+  padding: 10px 12px;
+  border: 1px solid #dce8fb;
+  border-radius: 10px;
+  background: #f6f9ff;
+}
+.import-memory-source {
+  display: grid;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.import-memory-source strong {
+  font-size: 12px;
+  line-height: 1.6;
+}
+.import-memory-row > button,
+.import-memory-error > button {
+  flex: 0 0 auto;
+}
 .import-match-kind,
 .import-item .association-pending {
   padding: 2px 8px;

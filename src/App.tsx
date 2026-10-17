@@ -43,6 +43,7 @@ import type {
 import { GameMaintenance, PathBadge, RelocationEditor } from './maintenance';
 import { MToolConfiguration } from './MToolConfiguration';
 import { ImportPage } from './ImportPage';
+import { ImportMemories } from './ImportMemories';
 import { LibraryDuplicates } from './LibraryDuplicates';
 import { QspConfiguration } from './QspConfiguration';
 import { EngineSelect } from './EngineSelect';
@@ -2999,6 +3000,10 @@ function GameDetail({
                   </span>
                 </label>
               </div>
+              <ImportMemories
+                gameId={game.id}
+                disabled={busy || launching || analysisLocked || confirmClose}
+              />
             </section>
             <section className="panel detail-card" {...panelProps('launch')}>
               <CardTitle icon="play">启动配置</CardTitle>

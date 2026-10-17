@@ -23,6 +23,7 @@ import type {
   MToolLaunchPreview,
   ImportSelection,
   ImportMatch,
+  ImportMemory,
   ImportPlan,
   ImportSourceDiscovery,
   ImportRecoveryIssue,
@@ -81,6 +82,9 @@ export const api = {
   importAnalyze: (sources: string[]) => invoke<string>('start_import_analysis', { sources }),
   importMatches: (scanId: string) =>
     invoke<Record<string, ImportMatch[]>>('import_matches', { scanId }),
+  importMemories: (gameId: string) => invoke<ImportMemory[]>('import_memories', { gameId }),
+  forgetImportMemory: (gameId: string, memoryId: string) =>
+    invoke<void>('forget_import_memory', { gameId, memoryId }),
   previewImportDuplicate: (scanId: string, source: string, existingId: string, version: string) =>
     invoke<ImportDuplicatePlan>('preview_import_duplicate', {
       scanId,

@@ -103,6 +103,80 @@ beforeEach(() => {
   vi.mocked(api.cancel).mockResolvedValue();
 });
 describe('batch import flow', () => {
+  it.each([false, true])(
+    'requires choosing a remembered recommendation and remembers only on opt-in: %s',
+    async (remember) => {
+      const existing = makeGame({
+        id: 'old',
+        canonical_title: '月光庭院',
+        display_title: '月光庭院',
+      });
+      vi.mocked(api.importMatches).mockResolvedValue({
+        [candidate.install_path]: [
+          {
+            id: existing.id,
+            title: existing.display_title,
+            version: 'v0.7',
+            path: existing.install_path,
+            reason: '曾由你确认关联 · 来源名称一致；请确认',
+            auto_associate: false,
+            remembered: true,
+          },
+        ],
+      });
+      renderNewImport({ games: [existing] });
+      const associate = await screen.findByRole('button', { name: '关联：月光庭院' });
+      expect(screen.getByText('关联记忆')).toBeTruthy();
+      const generate = screen.getByRole('button', { name: '生成导入与更新计划（1）' });
+      expect((generate as HTMLButtonElement).disabled).toBe(true);
+      expect(screen.queryByRole('checkbox', { name: '记住本次关联' })).toBeNull();
+      fireEvent.click(associate);
+      await expandSettings('游戏关联');
+      const checkbox = screen.getByRole('checkbox', { name: '记住本次关联' }) as HTMLInputElement;
+      expect(checkbox.checked).toBe(false);
+      if (remember) fireEvent.click(checkbox);
+      expect(api.importMemories).not.toHaveBeenCalled();
+      fireEvent.click(generate);
+      await waitFor(() => expect(api.importPlan).toHaveBeenCalled());
+      const selection = vi.mocked(api.importPlan).mock.calls.at(-1)![1][0];
+      expect(selection.existing_id).toBe(existing.id);
+      expect(!!selection.remember_association).toBe(remember);
+      expect(api.importApply).not.toHaveBeenCalled();
+    },
+  );
+
+  it('resets the memory choice when changing the associated game or choosing a new game', async () => {
+    const games = [
+      makeGame({ id: 'a', display_title: '第一款游戏' }),
+      makeGame({ id: 'b', display_title: '第二款游戏' }),
+    ];
+    vi.mocked(api.importMatches).mockResolvedValue({
+      [candidate.install_path]: games.map((game) => ({
+        id: game.id,
+        title: game.display_title,
+        path: game.install_path,
+        version: 'v1',
+        reason: '需要选择',
+        auto_associate: false,
+      })),
+    });
+    renderNewImport({ games });
+    fireEvent.click(await screen.findByRole('button', { name: '关联：第一款游戏' }));
+    await expandSettings('游戏关联');
+    fireEvent.click(screen.getByRole('checkbox', { name: '记住本次关联' }));
+    fireEvent.click(screen.getByRole('button', { name: '关联：第二款游戏' }));
+    expect(
+      (screen.getByRole('checkbox', { name: '记住本次关联' }) as HTMLInputElement).checked,
+    ).toBe(false);
+    fireEvent.click(screen.getByRole('checkbox', { name: '记住本次关联' }));
+    fireEvent.click(screen.getByRole('button', { name: '改为新游戏' }));
+    expect(screen.queryByRole('checkbox', { name: '记住本次关联' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '关联：第一款游戏' }));
+    expect(
+      (screen.getByRole('checkbox', { name: '记住本次关联' }) as HTMLInputElement).checked,
+    ).toBe(false);
+  });
+
   it.each(['unassociated', 'associated', 'failure'] as const)(
     'opens the source and only the selected associated game folder: %s',
     async (mode) => {

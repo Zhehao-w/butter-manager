@@ -16,6 +16,9 @@ mod import_matching;
 #[path = "import_recommendations.rs"]
 mod import_recommendations;
 pub use import_recommendations::MatchIndex;
+#[path = "import_memory.rs"]
+mod import_memory;
+pub use import_memory::{ImportMemory, MemoryProfile};
 #[path = "mtool_cleanup.rs"]
 mod mtool_cleanup;
 #[path = "updater.rs"]
@@ -102,6 +105,7 @@ pub struct Match {
     pub path: String,
     pub reason: String,
     pub auto_associate: bool,
+    pub remembered: bool,
 }
 #[cfg(test)]
 pub fn matches(candidate: &ScanCandidate, games: &[Game]) -> Vec<Match> {
@@ -160,6 +164,8 @@ pub struct Selection {
     pub external_player: Option<crate::domain::ExternalPlayer>,
     pub mtool: bool,
     pub existing_id: Option<String>,
+    #[serde(default)]
+    pub remember_association: bool,
     #[serde(default)]
     pub new_override: bool,
     #[serde(default = "default_preserve")]
@@ -235,6 +241,8 @@ fn unchanged(root: &Path, expected: &[Entry], job: &Job) -> Result<()> {
 #[derive(Clone, Deserialize, Serialize)]
 pub struct Item {
     pub selection: Selection,
+    #[serde(default)]
+    association_memory: Option<MemoryProfile>,
     pub target: String,
     pub bytes: u64,
     pub files: usize,
@@ -623,6 +631,18 @@ impl ImportStore {
         selections: Vec<Selection>,
         games: &[Game],
     ) -> Result<()> {
+        self.prepare_with_memories(job, settings, candidates, selections, games, &[])
+    }
+
+    pub fn prepare_with_memories(
+        &self,
+        job: &Arc<Job>,
+        settings: Settings,
+        candidates: Vec<ScanCandidate>,
+        selections: Vec<Selection>,
+        games: &[Game],
+        memories: &[ImportMemory],
+    ) -> Result<()> {
         self.ensure_recovery_clear()?;
         let root = checked_dir(Path::new(&settings.game_root))?;
         let mut plan = Plan {
@@ -636,7 +656,7 @@ impl ImportStore {
         let mut sources: Vec<PathBuf> = vec![];
         let mut targets = HashSet::new();
         let mut updating = HashSet::new();
-        let mut matching = MatchIndex::new(games);
+        let mut matching = MatchIndex::with_memories(games, memories);
         job.stage("检查文件与生成导入更新计划", selections.len());
         for (mut selection, mut candidate) in selections.into_iter().zip(candidates) {
             stopped(job)?;
@@ -821,7 +841,21 @@ impl ImportStore {
             } else {
                 None
             };
+            let association_memory = if selection.remember_association {
+                let profile = MemoryProfile::from_candidate(&candidate, &selection.executable);
+                if existing.is_none() || selection.new_override {
+                    blockers.push("只能记住已选择的已有游戏关联；新游戏请取消记住关联".into());
+                }
+                if profile.is_none() {
+                    blockers
+                        .push("来源名称过于通用或信息不足，无法记住；请取消记住本次关联".into());
+                }
+                profile
+            } else {
+                None
+            };
             plan.items.push(Item {
+                association_memory,
                 basic_transfer: true,
                 selection,
                 target: existing.map_or_else(
@@ -1848,6 +1882,7 @@ mod tests {
             mtool: false,
             existing_id: None,
             new_override: false,
+            remember_association: false,
             preserve_saves: true,
             saves_confirmed: false,
             cleanup_mtool: false,
@@ -1940,6 +1975,7 @@ mod tests {
                 mtool: false,
                 existing_id: None,
                 new_override: false,
+                remember_association: false,
                 preserve_saves: true,
                 saves_confirmed: false,
                 cleanup_mtool: false,
@@ -2053,6 +2089,7 @@ mod tests {
                     mtool: false,
                     existing_id: None,
                     new_override: false,
+                    remember_association: false,
                     preserve_saves: true,
                     saves_confirmed: false,
                     cleanup_mtool: false,

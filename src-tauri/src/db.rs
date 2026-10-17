@@ -90,6 +90,17 @@ impl Database {
         old: &crate::importer::VersionConfig,
         new: &crate::importer::VersionConfig,
     ) -> Result<()> {
+        self.commit_version_with_memory(id, operation, old, new, None)
+    }
+
+    pub fn commit_version_with_memory(
+        &mut self,
+        id: &str,
+        operation: &str,
+        old: &crate::importer::VersionConfig,
+        new: &crate::importer::VersionConfig,
+        memory: Option<&crate::importer::MemoryProfile>,
+    ) -> Result<()> {
         if self.version_operation(operation)?.as_deref() == Some("committed") {
             if self.version_config(id)? != *new {
                 return Err(Error::Validation("提交记录与当前版本不一致".into()));
@@ -98,6 +109,9 @@ impl Database {
         }
         if self.version_config(id)? != *old {
             return Err(Error::Validation("已有版本配置变化，未提交更新".into()));
+        }
+        if memory.is_some_and(|profile| !profile.valid()) {
+            return Err(Error::Validation("关联记忆无效，请重新生成计划".into()));
         }
         let tx = self.connection.transaction()?;
         Self::write_version(&tx, id, new)?;
@@ -108,6 +122,12 @@ impl Database {
             "UPDATE games SET created_at=(SELECT created_at FROM version_history WHERE operation=?2 AND game_id=?1) WHERE id=?1",
             params![id, operation],
         )?;
+        if let Some(profile) = memory {
+            let json = serde_json::to_string(profile)
+                .map_err(|error| Error::Validation(error.to_string()))?;
+            tx.execute("INSERT INTO import_memories(id,game_id,profile_key,profile) VALUES(?1,?2,?3,?4) ON CONFLICT(game_id,profile_key) DO UPDATE SET profile=excluded.profile,confirmed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')",
+                params![Uuid::new_v4().to_string(), id, profile.key(), json])?;
+        }
         tx.commit()?;
         Ok(())
     }
@@ -204,7 +224,7 @@ impl Database {
         connection.busy_timeout(std::time::Duration::from_secs(5))?;
         connection.execute_batch("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;")?;
         let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-        if version > 11 {
+        if version > 12 {
             return Err(Error::Validation("数据库版本较新，当前程序无法打开".into()));
         }
         if version == 0 {
@@ -279,7 +299,47 @@ impl Database {
             transaction.execute_batch(include_str!("../migrations/011_duplicate_reviews.sql"))?;
             transaction.commit()?;
         }
+        if version < 12 {
+            let transaction = connection.unchecked_transaction()?;
+            transaction.execute_batch(include_str!("../migrations/012_import_memories.sql"))?;
+            transaction.commit()?;
+        }
         Ok(Self { connection })
+    }
+
+    pub fn import_memories(
+        &self,
+        game_id: Option<&str>,
+    ) -> Result<Vec<crate::importer::ImportMemory>> {
+        if let Some(id) = game_id {
+            self.game(id)?;
+        }
+        let rows = self.connection.prepare("SELECT id,game_id,profile,confirmed_at FROM import_memories WHERE (?1 IS NULL OR game_id=?1) ORDER BY confirmed_at DESC,id")?
+            .query_map([game_id], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?)))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        rows.into_iter()
+            .map(|(id, game_id, profile, confirmed_at)| {
+                Ok(crate::importer::ImportMemory {
+                    id,
+                    game_id,
+                    profile: serde_json::from_str(&profile)
+                        .map_err(|error| Error::Validation(format!("关联记忆无法读取：{error}")))?,
+                    confirmed_at,
+                })
+            })
+            .collect()
+    }
+
+    pub fn forget_import_memory(&self, game_id: &str, memory_id: &str) -> Result<()> {
+        self.game(game_id)?;
+        if self.connection.execute(
+            "DELETE FROM import_memories WHERE id=?1 AND game_id=?2",
+            params![memory_id, game_id],
+        )? != 1
+        {
+            return Err(Error::Validation("关联记忆已不存在，请刷新后重试".into()));
+        }
+        Ok(())
     }
 
     pub fn duplicate_reviews(&self) -> Result<Vec<crate::library_duplicates::DuplicateReview>> {
@@ -906,7 +966,7 @@ impl Database {
     pub fn clear_library(&mut self) -> Result<ResetReport> {
         self.connection.execute_batch("PRAGMA secure_delete=ON;")?;
         let transaction = self.connection.transaction()?;
-        transaction.execute_batch("DROP TABLE duplicate_reviews; DROP TABLE version_history; DROP TABLE launch_history; DROP TABLE aliases; DROP TABLE save_paths; DROP TABLE games; DROP TABLE settings;")?;
+        transaction.execute_batch("DROP TABLE import_memories; DROP TABLE duplicate_reviews; DROP TABLE version_history; DROP TABLE launch_history; DROP TABLE aliases; DROP TABLE save_paths; DROP TABLE games; DROP TABLE settings;")?;
         transaction.execute_batch(include_str!("../migrations/001_initial.sql"))?;
         transaction.execute_batch(include_str!("../migrations/002_working_directory.sql"))?;
         transaction.execute_batch(include_str!("../migrations/003_launch_history.sql"))?;
@@ -918,6 +978,7 @@ impl Database {
         transaction.execute_batch(include_str!("../migrations/009_version_history.sql"))?;
         transaction.execute_batch(include_str!("../migrations/010_duplicate_ignores.sql"))?;
         transaction.execute_batch(include_str!("../migrations/011_duplicate_reviews.sql"))?;
+        transaction.execute_batch(include_str!("../migrations/012_import_memories.sql"))?;
         transaction.commit()?;
         // Logical reset has committed. A compaction failure must not leave stale records in the UI.
         let warning = self.compact_reset_file().err().map(|error| {
@@ -1086,6 +1147,125 @@ impl Database {
 
 #[cfg(test)]
 mod tests {
+    fn memory_profile(temp: &Path) -> crate::importer::MemoryProfile {
+        let source = temp.join("Moonlight Garden v0.8 汉化版");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(source.join("Moonlight.exe"), b"synthetic").unwrap();
+        let candidate = crate::scanner::analyze_directory(&source).unwrap();
+        crate::importer::MemoryProfile::from_candidate(&candidate, "Moonlight.exe").unwrap()
+    }
+
+    fn insert_memory_game(db: &Database, id: &str) {
+        db.connection.execute("INSERT INTO games(id,canonical_title,display_title,install_path,install_path_key) VALUES(?1,'月光庭院','月光庭院',?1,?1)", [id]).unwrap();
+    }
+
+    #[test]
+    fn import_memory_upgrade_from_11_is_empty_and_preserves_library_records() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("fixture.db");
+        let db = Database::open(&path).unwrap();
+        insert_memory_game(&db, "game");
+        db.connection
+            .execute(
+                "INSERT INTO aliases VALUES('alias','game','手动别名','手动别名','manual')",
+                [],
+            )
+            .unwrap();
+        db.connection
+            .execute_batch("DROP TABLE import_memories;PRAGMA user_version=11;")
+            .unwrap();
+        let before = serde_json::to_string(&db.games().unwrap()).unwrap();
+        drop(db);
+        let db = Database::open(&path).unwrap();
+        assert_eq!(serde_json::to_string(&db.games().unwrap()).unwrap(), before);
+        assert!(db.import_memories(None).unwrap().is_empty());
+        assert_eq!(
+            db.connection
+                .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            12
+        );
+        assert!(!db
+            .connection
+            .prepare("PRAGMA foreign_key_check")
+            .unwrap()
+            .exists([])
+            .unwrap());
+    }
+
+    #[test]
+    fn import_memory_commit_is_atomic_persistent_and_forgotten_replays_stay_forgotten() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("fixture.db");
+        let mut db = Database::open(&path).unwrap();
+        insert_memory_game(&db, "game");
+        let profile = memory_profile(temp.path());
+        let old = db.version_config("game").unwrap();
+        let mut new = old.clone();
+        new.version = "v0.8".into();
+        db.fail_version_commit(true).unwrap();
+        assert!(db
+            .commit_version_with_memory("game", "op", &old, &new, Some(&profile))
+            .is_err());
+        assert!(db.import_memories(None).unwrap().is_empty());
+        assert_eq!(db.version_config("game").unwrap(), old);
+        db.fail_version_commit(false).unwrap();
+        // Failure writing memory also rolls back the version transaction.
+        db.connection.execute_batch("CREATE TEMP TRIGGER fail_memory BEFORE INSERT ON import_memories BEGIN SELECT RAISE(ABORT,'fixture'); END;").unwrap();
+        assert!(db
+            .commit_version_with_memory("game", "op", &old, &new, Some(&profile))
+            .is_err());
+        assert_eq!(db.version_config("game").unwrap(), old);
+        assert!(db.version_history("game").unwrap().is_empty());
+        db.connection
+            .execute_batch("DROP TRIGGER fail_memory;")
+            .unwrap();
+        db.commit_version_with_memory("game", "op", &old, &new, Some(&profile))
+            .unwrap();
+        drop(db);
+        let mut db = Database::open(&path).unwrap();
+        let memory = db.import_memories(Some("game")).unwrap().remove(0);
+        db.commit_version_with_memory("game", "op", &old, &new, Some(&profile))
+            .unwrap();
+        assert_eq!(db.import_memories(None).unwrap().len(), 1);
+        db.forget_import_memory("game", &memory.id).unwrap();
+        db.commit_version_with_memory("game", "op", &old, &new, Some(&profile))
+            .unwrap();
+        assert!(db.import_memories(None).unwrap().is_empty());
+        assert!(db.game("game").unwrap().aliases.is_empty());
+        db.rollback_version("game", "op", &new, &old).unwrap();
+        assert!(db.import_memories(None).unwrap().is_empty());
+    }
+
+    #[test]
+    fn import_memory_collisions_deduplicate_per_game_and_follow_uuid_lifecycle() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut db = Database::open(&temp.path().join("fixture.db")).unwrap();
+        let profile = memory_profile(temp.path());
+        for id in ["a", "b"] {
+            insert_memory_game(&db, id);
+            let old = db.version_config(id).unwrap();
+            let mut new = old.clone();
+            new.version = "v1".into();
+            db.commit_version_with_memory(id, &format!("{id}-first"), &old, &new, Some(&profile))
+                .unwrap();
+            db.rollback_version(id, &format!("{id}-first"), &new, &old)
+                .unwrap();
+            assert!(!db.import_memories(Some(id)).unwrap().is_empty());
+            db.commit_version_with_memory(id, &format!("{id}-second"), &old, &new, Some(&profile))
+                .unwrap();
+        }
+        assert_eq!(db.import_memories(None).unwrap().len(), 2);
+        let a = db.import_memories(Some("a")).unwrap().remove(0);
+        assert!(db.forget_import_memory("b", &a.id).is_err());
+        db.connection.execute("UPDATE games SET canonical_title='重新命名',display_title='重新命名',install_path='moved',install_path_key='moved' WHERE id='a'", []).unwrap();
+        assert_eq!(db.import_memories(Some("a")).unwrap()[0].id, a.id);
+        db.remove_game("a").unwrap();
+        assert_eq!(db.import_memories(None).unwrap().len(), 1);
+        db.clear_library().unwrap();
+        assert!(db.import_memories(None).unwrap().is_empty());
+    }
+
     #[test]
     fn version_import_refreshes_added_time_only_on_successful_first_commit() {
         let temp = tempfile::tempdir().unwrap();
@@ -1144,7 +1324,7 @@ mod tests {
         }
         let before = serde_json::to_string(&db.games().unwrap()).unwrap();
         db.connection
-            .execute_batch("DROP TABLE duplicate_reviews;")
+            .execute_batch("DROP TABLE import_memories;DROP TABLE duplicate_reviews;")
             .unwrap();
         db.connection
             .execute_batch(include_str!("../migrations/010_duplicate_ignores.sql"))
@@ -1188,7 +1368,9 @@ mod tests {
         }
         let before = serde_json::to_string(&db.games().unwrap()).unwrap();
         db.connection
-            .execute_batch("DROP TABLE duplicate_reviews;PRAGMA user_version=9;")
+            .execute_batch(
+                "DROP TABLE import_memories;DROP TABLE duplicate_reviews;PRAGMA user_version=9;",
+            )
             .unwrap();
         drop(db);
         let mut db = Database::open(&path).unwrap();
@@ -1218,7 +1400,7 @@ mod tests {
             db.connection
                 .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
                 .unwrap(),
-            11
+            12
         );
         assert!(!db
             .connection
@@ -1244,7 +1426,7 @@ mod tests {
         let history = db.launch_history(&id).unwrap();
         db.connection
             .execute_batch(
-                "DROP TABLE duplicate_reviews;DROP TABLE version_history;PRAGMA user_version=8;",
+                "DROP TABLE import_memories;DROP TABLE duplicate_reviews;DROP TABLE version_history;PRAGMA user_version=8;",
             )
             .unwrap();
         drop(db);
@@ -1259,7 +1441,7 @@ mod tests {
             db.connection
                 .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
                 .unwrap(),
-            11
+            12
         );
         assert!(!db
             .connection
@@ -1676,7 +1858,7 @@ mod tests {
             db.connection
                 .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
                 .unwrap(),
-            11
+            12
         );
     }
     #[test]

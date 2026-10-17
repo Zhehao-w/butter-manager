@@ -600,7 +600,7 @@ export function ImportPage({
         ...current[source],
         ...(Object.hasOwn(change, 'existing_id') &&
         change.existing_id !== current[source].existing_id
-          ? { working_directory: undefined, mtool_loader: undefined }
+          ? { working_directory: undefined, mtool_loader: undefined, remember_association: false }
           : {}),
         ...change,
       },
@@ -932,6 +932,7 @@ export function ImportPage({
                         title: existing.display_title,
                         reason: '手动选择的关联游戏',
                         auto_associate: false,
+                        remembered: false,
                       },
                       ...recommendations,
                     ]
@@ -1090,6 +1091,9 @@ export function ImportPage({
                             : '使用新包存档'
                           : '使用随包存档'}
                       </span>
+                      {choice.remember_association && choice.existing_id && (
+                        <span className="mode">记住关联</span>
+                      )}
                       {!!(candidate?.bundled_mtool?.length || item?.mtool_cleanup) && (
                         <span className={'mode' + (mtoolIssue ? ' association-pending' : '')}>
                           {choice.cleanup_mtool ? '随包 MTool：回收清理' : '随包 MTool：保留'}
@@ -1495,11 +1499,13 @@ export function ImportPage({
                                     </div>
                                     <div className="import-match-explanation">
                                       <span className="import-match-kind">
-                                        {choice.existing_id === match.id
-                                          ? '关联理由'
-                                          : match.auto_associate === false
-                                            ? '弱关联'
-                                            : '名称匹配'}
+                                        {match.remembered
+                                          ? '关联记忆'
+                                          : choice.existing_id === match.id
+                                            ? '关联理由'
+                                            : match.auto_associate === false
+                                              ? '弱关联'
+                                              : '名称匹配'}
                                       </span>
                                       <span>{match.reason}</span>
                                     </div>
@@ -1544,6 +1550,24 @@ export function ImportPage({
                                 )}
                             </div>
                           </div>
+                          {choice.existing_id && !choice.new_override && (
+                            <div className="import-memory-choice">
+                              <label className="check">
+                                <input
+                                  type="checkbox"
+                                  disabled={disabled}
+                                  checked={!!choice.remember_association}
+                                  onChange={(event) =>
+                                    update(source, { remember_association: event.target.checked })
+                                  }
+                                />
+                                记住本次关联
+                              </label>
+                              <p className="muted">
+                                导入提交成功后保存；下次优先推荐，仍需确认。不添加名称别名。
+                              </p>
+                            </div>
+                          )}
                           {existing && (
                             <section
                               className="import-associated-saves"

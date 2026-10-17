@@ -282,6 +282,7 @@ export interface ImportSelection {
   executable: string;
   mtool: boolean;
   existing_id: string | null;
+  remember_association?: boolean;
   new_override?: boolean;
   preserve_saves?: boolean;
   saves_confirmed?: boolean;
@@ -309,6 +310,14 @@ export interface ImportMatch {
   path: string;
   reason: string;
   auto_associate?: boolean;
+  remembered?: boolean;
+}
+
+export interface ImportMemory {
+  id: string;
+  game_id: string;
+  profile: { format_version: number; title: string; name_key: string; identities: string[] };
+  confirmed_at: string;
 }
 export interface ImportItem {
   mtool_cleanup?: {

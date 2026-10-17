@@ -1935,11 +1935,12 @@ impl ImportStore {
                 update.lightweight,
             )?;
             validate_update_launch(target, &configuration(&item)?, &plan.settings)?;
-            database.lock().unwrap().commit_version(
+            database.lock().unwrap().commit_version_with_memory(
                 &item.game_id,
                 &operation,
                 &update.old,
                 &configuration(&item)?,
+                item.association_memory.as_ref(),
             )?;
             plan.items[index].registered_id = Some(item.game_id.clone());
             self.checkpoint(plan, index, "update_cleanup")?;

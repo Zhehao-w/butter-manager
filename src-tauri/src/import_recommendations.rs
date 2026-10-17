@@ -1,5 +1,5 @@
 //! Batch-local candidate index and bounded evidence. Never chooses a fuzzy update automatically.
-use super::{import_matching::Name, Match};
+use super::{import_matching::Name, import_memory::MemoryIndex, ImportMemory, Match};
 use crate::{
     domain::{Game, ScanCandidate},
     paths, save_detection, version,
@@ -16,9 +16,11 @@ struct Prepared<'a> {
 
 pub struct MatchIndex<'a> {
     games: Vec<Prepared<'a>>,
+    game_positions: HashMap<String, usize>,
     postings: HashMap<String, Vec<usize>>,
     word_frequency: HashMap<String, usize>,
     identities: HashMap<(String, String, Option<String>), Vec<String>>,
+    memories: MemoryIndex,
 }
 
 fn distinctive_exe(path: &str) -> Option<String> {
@@ -137,11 +139,14 @@ impl<'a> MatchIndex<'a> {
     pub fn new(games: &'a [Game]) -> Self {
         let mut index = Self {
             games: Vec::new(),
+            game_positions: HashMap::new(),
             postings: HashMap::new(),
             word_frequency: HashMap::new(),
             identities: HashMap::new(),
+            memories: MemoryIndex::default(),
         };
         for (position, game) in games.iter().enumerate() {
+            index.game_positions.insert(game.id.clone(), position);
             let folder = game.install_path.replace('\\', "/");
             let folder = Path::new(&folder)
                 .file_name()
@@ -166,6 +171,12 @@ impl<'a> MatchIndex<'a> {
             }
             index.games.push(Prepared { game, names });
         }
+        index
+    }
+
+    pub fn with_memories(games: &'a [Game], memories: &[ImportMemory]) -> Self {
+        let mut index = Self::new(games);
+        index.memories = MemoryIndex::new(memories);
         index
     }
 
@@ -312,6 +323,70 @@ impl<'a> MatchIndex<'a> {
         candidate: &ScanCandidate,
         cancelled: &impl Fn() -> bool,
     ) -> Vec<Match> {
+        let mut normal = self.name_matches(candidate, cancelled);
+        if cancelled() {
+            return vec![];
+        }
+        let identities = if self.memories.needs_identity() {
+            self.identity(
+                &candidate.install_path,
+                &candidate.working_directory,
+                candidate_exe(candidate),
+            )
+        } else {
+            vec![]
+        };
+        let incoming = Name::new(&candidate.suggested_title);
+        let mut remembered: Vec<_> = self
+            .memories
+            .matches(&candidate.suggested_title, &identities)
+            .into_iter()
+            .filter_map(|(id, reason)| {
+                let game = self.games[*self.game_positions.get(&id)?].game;
+                if incoming.memory_conflict(&Name::new(&game.canonical_title)) {
+                    return None;
+                }
+                Some(Match {
+                    id,
+                    title: game.display_title.clone(),
+                    version: game.current_version.clone(),
+                    path: game.install_path.clone(),
+                    reason,
+                    auto_associate: false,
+                    remembered: true,
+                })
+            })
+            .collect();
+        if remembered.is_empty() {
+            return normal;
+        }
+        if remembered.len() > 1
+            || normal
+                .iter()
+                .any(|matched| !remembered.iter().any(|memory| memory.id == matched.id))
+        {
+            for matched in &mut remembered {
+                matched.reason.push_str(" · 多个候选，请手动选择");
+            }
+        }
+        normal.retain(|matched| !remembered.iter().any(|memory| memory.id == matched.id));
+        for matched in &mut normal {
+            matched.auto_associate = false;
+        }
+        remembered.extend(normal);
+        remembered.truncate(5);
+        if cancelled() {
+            vec![]
+        } else {
+            remembered
+        }
+    }
+
+    fn name_matches(
+        &mut self,
+        candidate: &ScanCandidate,
+        cancelled: &impl Fn() -> bool,
+    ) -> Vec<Match> {
         let incoming = Name::new(&candidate.suggested_title);
         let positions: HashSet<_> = incoming
             .keys()
@@ -426,6 +501,7 @@ impl<'a> MatchIndex<'a> {
                     path: game.install_path.clone(),
                     reason,
                     auto_associate: score >= 95 && !ambiguous,
+                    remembered: false,
                 }
             })
             .collect()
@@ -440,6 +516,153 @@ mod tests {
         scanner,
     };
     use std::{fs, time::Instant};
+
+    #[test]
+    fn memory_recalls_renamed_uuid_deduplicates_and_requires_confirmation_even_against_exact_name()
+    {
+        let temp = tempfile::tempdir().unwrap();
+        let mut candidate = scanner::pending_candidate(temp.path()).unwrap();
+        candidate.suggested_title = "Moonlight Garden v0.8 汉化版".into();
+        let profile =
+            super::super::MemoryProfile::from_candidate(&candidate, "Moonlight.exe").unwrap();
+        let memory = ImportMemory {
+            id: "memory".into(),
+            game_id: "old".into(),
+            profile,
+            confirmed_at: String::new(),
+        };
+        let old = game("old", "月光庭院", Path::new("Z:/unavailable/moved"));
+        candidate.suggested_title = "Moonlight Garden v0.9 汉化版".into();
+        assert!(MatchIndex::new(std::slice::from_ref(&old))
+            .matches(&candidate, &|| false)
+            .is_empty());
+        let exact = game(
+            "exact",
+            &candidate.suggested_title,
+            Path::new("Z:/unavailable/another"),
+        );
+        let games = [old, exact];
+        let mut index = MatchIndex::with_memories(&games, std::slice::from_ref(&memory));
+        let results = index.matches(&candidate, &|| false);
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].id, "old");
+        assert!(results[0].remembered);
+        assert!(results.iter().all(|result| !result.auto_associate));
+        assert!(index.matches(&candidate, &|| true).is_empty());
+        assert!(MatchIndex::with_memories(&[], &[memory])
+            .matches(&candidate, &|| false)
+            .is_empty());
+        let mut renamed = games[0].clone();
+        renamed.canonical_title = candidate.suggested_title.clone();
+        let remembered = ImportMemory {
+            id: "memory".into(),
+            game_id: "old".into(),
+            profile: super::super::MemoryProfile::from_candidate(&candidate, "Moonlight.exe")
+                .unwrap(),
+            confirmed_at: String::new(),
+        };
+        let results =
+            MatchIndex::with_memories(&[renamed], &[remembered]).matches(&candidate, &|| false);
+        assert_eq!(results.len(), 1);
+        assert!(results[0].remembered && !results[0].auto_associate);
+        assert!(games[0].aliases.is_empty());
+    }
+
+    #[test]
+    fn remembered_project_identity_recalls_without_a_common_title_and_preserves_links_and_collisions(
+    ) {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("Moonlight Garden v0.8");
+        fs::create_dir_all(root.join("Moonlight_Data")).unwrap();
+        fs::write(root.join("Moonlight.exe"), b"synthetic").unwrap();
+        fs::write(
+            root.join("Moonlight_Data/app.info"),
+            "Fixture Studio\nMoonlight Garden\n",
+        )
+        .unwrap();
+        let mut candidate = scanner::pending_candidate(&root).unwrap();
+        candidate.suggested_title = "Moonlight Garden v0.8".into();
+        candidate.executables = vec![exe("Moonlight.exe")];
+        let profile =
+            super::super::MemoryProfile::from_candidate(&candidate, "Moonlight.exe").unwrap();
+        let memories: Vec<_> = ["a", "b"]
+            .iter()
+            .map(|id| ImportMemory {
+                id: (*id).into(),
+                game_id: (*id).into(),
+                profile: profile.clone(),
+                confirmed_at: String::new(),
+            })
+            .collect();
+        candidate.suggested_title = "月光庭院 v0.9".into();
+        let games = [
+            game("a", "曾经的译名", Path::new("missing/a")),
+            game("b", "另一条记录", Path::new("missing/b")),
+        ];
+        let results = MatchIndex::with_memories(&games, &memories).matches(&candidate, &|| false);
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().all(|matched| matched.remembered
+            && !matched.auto_associate
+            && matched.reason.contains("多个候选")));
+        fs::remove_file(root.join("Moonlight_Data/app.info")).unwrap();
+        assert!(MatchIndex::with_memories(&games, &memories)
+            .matches(&candidate, &|| false)
+            .is_empty());
+        // A generic executable by itself never becomes a memory identity.
+        candidate.executables = vec![exe("Game.exe")];
+        assert!(MatchIndex::with_memories(&games, &memories)
+            .matches(&candidate, &|| false)
+            .is_empty());
+    }
+
+    #[test]
+    fn memory_batch_index_handles_500_and_2000_games_without_learning_or_unbounded_results() {
+        for size in [500, 2000] {
+            let temp = tempfile::tempdir().unwrap();
+            let mut candidate = scanner::pending_candidate(temp.path()).unwrap();
+            let games: Vec<_> = (0..size)
+                .map(|n| {
+                    game(
+                        &format!("game-{n}"),
+                        &format!("库内游戏 {n}"),
+                        Path::new("missing"),
+                    )
+                })
+                .collect();
+            let memories: Vec<_> = (0..size)
+                .map(|n| {
+                    let title = format!("Incoming Title {n} v0.8 汉化版");
+                    ImportMemory {
+                        id: format!("memory-{n}"),
+                        game_id: format!("game-{n}"),
+                        profile: super::super::MemoryProfile {
+                            format_version: 1,
+                            name_key: Name::new(&title).memory_key().unwrap(),
+                            title,
+                            identities: vec![],
+                        },
+                        confirmed_at: String::new(),
+                    }
+                })
+                .collect();
+            let started = Instant::now();
+            let mut index = MatchIndex::with_memories(&games, &memories);
+            let prepared = started.elapsed();
+            for n in 0..100 {
+                candidate.suggested_title = format!("Incoming Title {n} v0.9 汉化版");
+                let results = index.matches(&candidate, &|| false);
+                assert_eq!(results[0].id, format!("game-{n}"));
+                assert!(
+                    results.len() <= 5 && results.iter().all(|matched| !matched.auto_associate)
+                );
+            }
+            assert_eq!(memories.len(), size);
+            eprintln!(
+                "memory fixture: {size} games, prepare={prepared:?}, 100 queries={:?}",
+                started.elapsed() - prepared
+            );
+        }
+    }
 
     fn game(id: &str, title: &str, root: &Path) -> Game {
         Game {

@@ -971,6 +971,7 @@ mod tests {
                         mtool: false,
                         existing_id: existing,
                         new_override: true,
+                        remember_association: false,
                         preserve_saves: true,
                         saves_confirmed: true,
                         cleanup_mtool: cleanup,

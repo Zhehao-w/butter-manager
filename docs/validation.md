@@ -1,5 +1,17 @@
 # 验证记录
 
+## 1.2 开发：人工关联记忆（2026-10-17）
+
+基于正式 1.1.0 的 main `40fcdbb` 实施明确勾选的导入关联记忆：schema 12 独立空表，后端生成来源特征，在版本提交事务中写入；通过已有 operation 幂等处理重试，旧 Journal 默认不记住。记忆不写名称别名，不自动回填历史或从新版继续学习。推荐仍需确认，详情基础信息可折叠查看并逐条忘记。
+
+`bash scripts/Check-Cloud.sh` 全部通过：锁定依赖、Prettier / Rustfmt、前端 **232 项**、TypeScript / Vite、Linux Rust 核心 **238 项**及独立 Node **8 组合成 Unity 核验**。发布脚本 **25 项**隔离回归通过。新增覆盖来源版本 / 译名召回、多个目标与精确候选冲突、通用标识及续作 / 季数 / DLC 反例、事务两侧失败、重试、忘记后的恢复、旧 Journal、预览放弃、回退及删除 / 清空；既有高风险回归完整保留，没有新增忽略项。
+
+合成 500 / 2000 条游戏与记忆的本次 Debug 观测：索引准备约 **70 / 278ms**，各 100 次查询约 **23 / 22ms**；不代表所有设备的固定耗时。没有访问正式资料或真实游戏，不生成数据库备份或可恢复导出。
+
+额外尝试 Linux `--no-default-features --all-targets` 严格 Clippy，遇到现有非 Windows / 非 test 分支的 unreachable-code、unused-variable 与 desktop-only dead-code 告警；该命令不属于 Linux 标准入口，未为此改变平台保护或加 lint 豁免。完整 desktop all-targets 严格 Clippy 仍由 Windows CI 执行，PR 最终状态以 GitHub 为准。
+
+Windows 原生完整回归、桌面 Clippy 和 Release EXE 由本次 PR CI 验证；GUI、重启推荐、忘记、窄窗口 / 高 DPI 及真实游戏读档由用户实机验收。当前仍为 1.1.0 开发构建，不创建 1.2 Tag 或 Release。操作与 schema 12 兼容性见 [关联记忆说明](import-association-memory.md)。
+
 ## 1.1.0 发布准备
 
 按用户要求将 package.json、Tauri、Cargo manifest / lock 的应用版本及前端版本断言统一为 **1.1.0**，Tag 使用 `v1.1.0`。README、Portable、路线图和编辑器说明同步正式功能范围：ES3 / Naninovel，单文件槽位写回与 Global 区别，已知密码要求、未知类型 / 自定义服务边界，以及只替换 EXE 并保留 data 的升级方式。历史 1.0.0 记录不改写为新版本。

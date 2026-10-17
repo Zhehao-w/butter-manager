@@ -621,6 +621,28 @@ impl Name {
         &self.title.words
     }
 
+    pub(super) fn memory_key(&self) -> Option<String> {
+        let distinctive = self.title.words.iter().map(String::len).sum::<usize>() >= 6
+            || self.title.chinese.chars().count() >= 3
+            || self.title.japanese.concat().chars().count() >= 3;
+        (distinctive && self.useful_library_name()).then(|| {
+            serde_json::to_string(&(
+                &self.title.words,
+                &self.title.chinese,
+                &self.title.japanese,
+                &self.numbers,
+                &self.title.editions,
+                self.title.dlc,
+                &self.package.chapters,
+            ))
+            .unwrap()
+        })
+    }
+
+    pub(super) fn memory_conflict(&self, old: &Self) -> bool {
+        self.library_conflict(old) || self.package.chapters != old.package.chapters
+    }
+
     pub(super) fn useful_library_name(&self) -> bool {
         self.raw.chars().count() >= 3
             && ![

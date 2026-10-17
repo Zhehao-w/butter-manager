@@ -340,9 +340,9 @@ async fn import_matches(
     scan_id: String,
 ) -> CommandResult<std::collections::HashMap<String, Vec<importer::Match>>> {
     let scan = state.tasks.get(&scan_id).map_err(|e| e.to_string())?;
-    let games = with_db(&state, |db| db.games())?;
+    let (games, memories) = with_db(&state, |db| Ok((db.games()?, db.import_memories(None)?)))?;
     tauri::async_runtime::spawn_blocking(move || {
-        let mut matching = importer::MatchIndex::new(&games);
+        let mut matching = importer::MatchIndex::with_memories(&games, &memories);
         scan.candidates()
             .into_iter()
             .map(|c| {
@@ -355,6 +355,25 @@ async fn import_matches(
     })
     .await
     .map_err(|e| e.to_string())
+}
+#[tauri::command]
+fn import_memories(
+    state: State<'_, AppState>,
+    game_id: String,
+) -> CommandResult<Vec<importer::ImportMemory>> {
+    with_db(&state, |db| db.import_memories(Some(&game_id)))
+}
+#[tauri::command]
+fn forget_import_memory(
+    state: State<'_, AppState>,
+    game_id: String,
+    memory_id: String,
+) -> CommandResult<()> {
+    let gate = state.activity.lock().map_err(|_| "操作锁不可用")?;
+    if *gate > 0 || state.tasks.active() || state.imports.has_pending_files() {
+        return Err("请先结束当前任务或处理未完成的文件操作".into());
+    }
+    with_db(&state, |db| db.forget_import_memory(&game_id, &memory_id))
 }
 #[tauri::command]
 fn import_plans(state: State<'_, AppState>) -> Vec<PlanView> {
@@ -474,7 +493,9 @@ fn start_import_plan(
                 .ok_or_else(|| "来源不属于当前分析结果".into())
         })
         .collect::<CommandResult<Vec<_>>>()?;
-    let (settings, games) = with_db(&state, |db| Ok((db.settings()?, db.games()?)))?;
+    let (settings, games, memories) = with_db(&state, |db| {
+        Ok((db.settings()?, db.games()?, db.import_memories(None)?))
+    })?;
     if settings.game_root.is_empty() {
         return Err("请先设置游戏库目录".into());
     }
@@ -486,7 +507,7 @@ fn start_import_plan(
     let imports = state.imports.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            imports.prepare(&job, settings, candidates, selections, &games)
+            imports.prepare_with_memories(&job, settings, candidates, selections, &games, &memories)
         }));
         job.finish(match result {
             Ok(r) => r.map(|_| vec![]).map_err(|e| e.to_string()),
@@ -1641,6 +1662,8 @@ pub fn run() {
             discover_import_sources,
             start_import_analysis,
             import_matches,
+            import_memories,
+            forget_import_memory,
             import_plans,
             import_recovery_issues,
             preview_import_duplicate,

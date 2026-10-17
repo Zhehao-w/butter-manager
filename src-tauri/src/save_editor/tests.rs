@@ -34,6 +34,314 @@ fn field<'a>(fields: &'a [Field], name: &str) -> &'a Field {
     fields.iter().find(|f| f.name == name).unwrap()
 }
 
+fn unity_fixtures() -> Vec<Value> {
+    serde_json::from_str(include_str!("fixtures/unity.json")).unwrap()
+}
+fn unity_changes(fields: &[Field], old: bool) -> Vec<Change> {
+    vec![
+        change(
+            field(fields, "coins"),
+            if old { json!("99") } else { json!(99) },
+        ),
+        change(field(fields, "player_name"), json!("测试 / 😀")),
+        change(
+            field(fields, "met"),
+            if old { json!("true") } else { json!(true) },
+        ),
+    ]
+}
+
+#[test]
+fn unity_independent_vectors_patch_only_selected_tokens_preserving_types_and_wrappers() {
+    for f in unity_fixtures() {
+        let input = raw(&f, "data");
+        let format = f["format"].as_str().unwrap();
+        let password = f["password"].as_str();
+        let decoded = unity::decode(&input, format, password).unwrap();
+        let fields = decoded.fields(format).unwrap();
+        if format == unity::ES3 {
+            assert!(!field(&fields, "large").editable);
+            assert!(!field(&fields, "custom").editable);
+        }
+        let unchanged = decoded
+            .apply(
+                &input,
+                format,
+                &[change(
+                    field(&fields, "coins"),
+                    field(&fields, "coins").value.clone(),
+                )],
+                password,
+            )
+            .unwrap();
+        assert_eq!(
+            unchanged, input,
+            "no-op must keep exact bytes, including IV / compression"
+        );
+        let changes = unity_changes(&fields, f["id"].as_str().unwrap().contains("old-global"));
+        let output = decoded.apply(&input, format, &changes, password).unwrap();
+        let after = unity::decode(&output, format, password)
+            .unwrap()
+            .fields(format)
+            .unwrap();
+        for original in &fields {
+            let expected = changes
+                .iter()
+                .find(|c| c.id == original.id)
+                .map(|c| &c.value)
+                .unwrap_or(&original.value);
+            assert!(
+                same_value(&field(&after, &original.name).value, expected),
+                "{} / {}",
+                f["id"],
+                original.name
+            );
+        }
+        export_fixture(&format!("unity-{}.bin", f["id"].as_str().unwrap()), &output);
+    }
+}
+
+#[test]
+fn unity_slot_writes_are_isolated_revision_checked_and_never_back_up_sources() {
+    for f in unity_fixtures() {
+        let dir = tempfile::tempdir().unwrap();
+        let dir = dunce::canonicalize(dir.path()).unwrap();
+        fs::create_dir(dir.join("save")).unwrap();
+        let game = game(&dir);
+        let format = f["format"].as_str().unwrap();
+        let extension = if format == unity::ES3 {
+            "es3"
+        } else if f["wrapper"] == "plain" {
+            "json"
+        } else {
+            "nson"
+        };
+        let path = dir.join(format!("save/GameSave001.{extension}"));
+        let other = dir.join(format!("save/GameSave002.{extension}"));
+        let bytes = raw(&f, "data");
+        fs::write(&path, &bytes).unwrap();
+        fs::write(&other, &bytes).unwrap();
+        fs::write(dir.join("save/settings.json"), b"{\"coins\":7}").unwrap();
+        let catalog = list(&game).unwrap();
+        assert_eq!(catalog.slots.len(), 2);
+        let slot = catalog
+            .slots
+            .iter()
+            .find(|s| s.name.starts_with("GameSave001."))
+            .unwrap();
+        let password = f["password"].as_str();
+        if password.is_some() {
+            assert!(read(&game, &slot.id).unwrap().password_required);
+            let locked = read(&game, &slot.id).unwrap();
+            assert!(apply_with_password(
+                &game,
+                &slot.id,
+                &locked.revision,
+                &[Change {
+                    id: "es3/coins".into(),
+                    value: json!(99)
+                }],
+                false,
+                Some("wrong-password")
+            )
+            .is_err());
+            assert_eq!(fs::read(&path).unwrap(), bytes);
+        }
+        let doc = read_with_password(&game, &slot.id, password).unwrap();
+        let changes = unity_changes(
+            &doc.fields,
+            f["id"].as_str().unwrap().contains("old-global"),
+        );
+        let next =
+            apply_with_password(&game, &slot.id, &doc.revision, &changes, false, password).unwrap();
+        assert_ne!(next.revision, doc.revision);
+        let updated = fs::read(&path).unwrap();
+        assert!(
+            apply_with_password(&game, &slot.id, &doc.revision, &changes, false, password).is_err()
+        );
+        assert_eq!(fs::read(&path).unwrap(), updated);
+        assert_eq!(fs::read(&other).unwrap(), bytes);
+        assert_eq!(fs::read_dir(dir.join("save")).unwrap().count(), 3);
+        assert!(apply_with_password(
+            &game,
+            "not-a-grant",
+            &next.revision,
+            &changes,
+            false,
+            password
+        )
+        .is_err());
+    }
+}
+
+#[test]
+fn unity_naninovel_refuses_ambiguous_maps_and_unsupported_values_without_editing_other_services() {
+    let f = unity_fixtures().remove(4);
+    let bytes = raw(&f, "data");
+    let mut outer: Value = serde_json::from_slice(&bytes).unwrap();
+    outer["objectJsonMap"]["keys"].as_array_mut().unwrap().pop();
+    assert!(unity::decode(&serde_json::to_vec(&outer).unwrap(), unity::NANI, None).is_err());
+    let mut outer: Value = serde_json::from_slice(&bytes).unwrap();
+    outer["objectJsonMap"]["keys"][1] = outer["objectJsonMap"]["keys"][0].clone();
+    assert!(unity::decode(&serde_json::to_vec(&outer).unwrap(), unity::NANI, None).is_err());
+    outer["objectJsonMap"]["keys"][1] =
+        "Naninovel.CustomVariableManager+GameState, Different.Assembly".into();
+    outer["objectJsonMap"]["values"][1] = outer["objectJsonMap"]["values"][0].clone();
+    assert!(unity::decode(&serde_json::to_vec(&outer).unwrap(), unity::NANI, None).is_err());
+    let mut outer: Value = serde_json::from_slice(&bytes).unwrap();
+    let mut service: Value =
+        serde_json::from_str(outer["objectJsonMap"]["values"][0].as_str().unwrap()).unwrap();
+    service["LocalVariables"][0]["name"] = service["LocalVariables"][1]["name"].clone();
+    outer["objectJsonMap"]["values"][0] = serde_json::to_string(&service).unwrap().into();
+    assert!(unity::decode(&serde_json::to_vec(&outer).unwrap(), unity::NANI, None).is_err());
+    service["LocalVariables"][0]["name"] = "coins".into();
+    service["LocalVariables"][0]["value"]["type"] = 999.into();
+    outer["objectJsonMap"]["values"][0] = serde_json::to_string(&service).unwrap().into();
+    let fields = unity::decode(&serde_json::to_vec(&outer).unwrap(), unity::NANI, None)
+        .unwrap()
+        .fields(unity::NANI)
+        .unwrap();
+    assert!(!field(&fields, "coins").editable);
+    assert!(field(&fields, "player_name").editable);
+    assert_eq!(
+        fields.len(),
+        3,
+        "unknown game-specific services must not become editable variables"
+    );
+}
+
+#[test]
+fn unity_rejects_wrong_password_truncation_trailing_bytes_duplicates_and_type_changes() {
+    for f in unity_fixtures() {
+        let bytes = raw(&f, "data");
+        let format = f["format"].as_str().unwrap();
+        let password = f["password"].as_str();
+        if password.is_some() {
+            assert!(unity::decode(&bytes, format, Some("wrong-password")).is_err());
+            assert!(unity::decode(&bytes, format, None).is_err());
+        }
+        for cut in [1, bytes.len() / 2, bytes.len() - 1] {
+            assert!(
+                unity::decode(&bytes[..cut], format, password).is_err(),
+                "truncated {} at {cut}",
+                f["id"]
+            );
+        }
+        let mut trailing = bytes.clone();
+        trailing.push(0x01);
+        assert!(unity::decode(&trailing, format, password).is_err());
+        let decoded = unity::decode(&bytes, format, password).unwrap();
+        let fields = decoded.fields(format).unwrap();
+        let coins = field(&fields, "coins");
+        if coins.kind == "number" {
+            for value in [json!("oops"), json!(true), json!(1e30)] {
+                assert!(decoded
+                    .apply(&bytes, format, &[change(coins, value)], password)
+                    .is_err());
+            }
+        }
+        if format == unity::ES3 {
+            for value in [json!(1.5), json!(2147483648i64)] {
+                assert!(decoded
+                    .apply(&bytes, format, &[change(coins, value)], password)
+                    .is_err());
+            }
+            assert!(decoded
+                .apply(
+                    &bytes,
+                    format,
+                    &[change(field(&fields, "custom"), json!(1))],
+                    password
+                )
+                .is_err());
+        }
+    }
+    for bytes in [
+        br#"{"x":1,"x":2}"#.as_slice(),
+        br#"{"x":{"__type":"int","value":1,"value":2}}"#,
+        br#"{"x":{"__type":"int","value":1,}}"#,
+    ] {
+        assert!(unity::decode(bytes, unity::ES3, None).is_err());
+    }
+    assert!(json_tree::Node::parse(b"{\x0b\"x\":1}").is_err());
+    let deep = format!("{}0{}", "[".repeat(66), "]".repeat(66));
+    assert!(json_tree::Node::parse(deep.as_bytes()).is_err());
+}
+
+#[test]
+fn unity_discovers_only_associated_files_and_one_saves_level_without_following_links() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dunce::canonicalize(dir.path()).unwrap();
+    fs::create_dir_all(dir.join("save/Saves/deeper")).unwrap();
+    fs::create_dir_all(dir.join("save/other")).unwrap();
+    let bytes = raw(&unity_fixtures()[4], "data");
+    fs::write(dir.join("save/Saves/GameSave001.json"), &bytes).unwrap();
+    fs::write(dir.join("save/Saves/deeper/GameSave002.json"), &bytes).unwrap();
+    fs::write(dir.join("save/other/GameSave003.json"), &bytes).unwrap();
+    let mut game = game(&dir);
+    game.save_paths.push("<GAME>/save/Saves".into());
+    let catalog = list(&game).unwrap();
+    assert_eq!(catalog.slots.len(), 1);
+    let doc = read(&game, &catalog.slots[0].id).unwrap();
+    apply(
+        &game,
+        &doc.slot.id,
+        &doc.revision,
+        &unity_changes(&doc.fields, false),
+        false,
+    )
+    .unwrap();
+    assert_eq!(
+        fs::read(dir.join("save/Saves/deeper/GameSave002.json")).unwrap(),
+        bytes
+    );
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(
+            dir.join("save/Saves/GameSave001.json"),
+            dir.join("save/linked.nson"),
+        )
+        .unwrap();
+        assert_eq!(list(&game).unwrap().slots.len(), 1);
+        let linked = dir.join("linked");
+        fs::create_dir(&linked).unwrap();
+        std::os::unix::fs::symlink(dir.join("save/Saves"), linked.join("Saves")).unwrap();
+        game.save_paths = vec!["<GAME>/linked".into()];
+        assert!(list(&game).unwrap().slots.is_empty());
+    }
+}
+
+#[test]
+fn unity_cipher_iv_cannot_be_confused_with_json_or_gzip_and_large_deflate_is_complete() {
+    use aes::cipher::{block_padding::Pkcs7, BlockEncryptMut, KeyIvInit};
+    let f = unity_fixtures().remove(0);
+    let plain = raw(&f, "data");
+    for prefix in [b"{ ".as_slice(), &[0x1f, 0x8b]] {
+        let mut iv = [0; 16];
+        iv[..prefix.len()].copy_from_slice(prefix);
+        let mut key = [0; 16];
+        pbkdf2::pbkdf2_hmac::<sha1::Sha1>(b"test", &iv, 100, &mut key);
+        let mut bytes = iv.to_vec();
+        bytes.extend(
+            cbc::Encryptor::<aes::Aes128>::new_from_slices(&key, &iv)
+                .unwrap()
+                .encrypt_padded_vec_mut::<Pkcs7>(&plain),
+        );
+        assert!(unity::locked(&bytes, unity::ES3));
+        assert!(unity::decode(&bytes, unity::ES3, Some("test")).is_ok());
+    }
+    let f = unity_fixtures().remove(4);
+    let bytes = raw(&f, "data");
+    let text = String::from_utf8(bytes)
+        .unwrap()
+        .replace("synthetic-placeholder", &"a".repeat(40_000));
+    let mut e = flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+    e.write_all(text.as_bytes()).unwrap();
+    let bytes = e.finish().unwrap();
+    assert!(unity::decode(&bytes, unity::NANI, None).is_ok());
+    assert!(unity::decode(&bytes[..bytes.len() - 1], unity::NANI, None).is_err());
+}
+
 #[test]
 fn renpy_collections_edit_children_nulls_and_known_sets_preserving_types_and_aliases() {
     let fixtures: Value =

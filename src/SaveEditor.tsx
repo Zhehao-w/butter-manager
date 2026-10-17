@@ -39,6 +39,8 @@ export function SaveEditor({ game, onClose }: { game: Game; onClose: () => void 
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [password, setPassword] = useState('');
+  const passwords = useRef(new Map<string, string>());
   const [pending, setPending] = useState<null | (() => void)>(null);
   const [pendingTrust, setPendingTrust] = useState<null | (() => void)>(null);
   const trusted = useRef(new Map<string, string>());
@@ -51,6 +53,7 @@ export function SaveEditor({ game, onClose }: { game: Game; onClose: () => void 
   const active = useRef(false);
   const viewport = useRef<HTMLDivElement>(null);
   async function load(id: string) {
+    setPassword('');
     setDrafts({});
     setExpanded(new Set());
     setValueEditor(null);
@@ -60,7 +63,11 @@ export function SaveEditor({ game, onClose }: { game: Game; onClose: () => void 
       setSlotId('');
       return;
     }
-    const next = await api.readEditableSave(game.id, id);
+    const knownPassword = passwords.current.get(id);
+    const next =
+      knownPassword === undefined
+        ? await api.readEditableSave(game.id, id)
+        : await api.readEditableSave(game.id, id, knownPassword);
     if (!alive.current) return;
     setSlotId(id);
     setDocument(next);
@@ -92,10 +99,12 @@ export function SaveEditor({ game, onClose }: { game: Game; onClose: () => void 
     await load(next.slots.some((slot) => slot.id === slotId) ? slotId : (next.slots[0]?.id ?? ''));
   }
   useEffect(() => {
+    const sessionPasswords = passwords.current;
     alive.current = true;
     void run(refresh);
     return () => {
       alive.current = false;
+      sessionPasswords.clear();
       void api.releaseExternalSaves(game.id).catch(() => {});
     };
     // The editor is mounted per game, and its first discovery uses no stale slot selection.
@@ -146,12 +155,34 @@ export function SaveEditor({ game, onClose }: { game: Game; onClose: () => void 
               changes,
               sourceTrusted(document),
             )
-          : await api.applySaveEdits(game.id, document.slot.id, document.revision, changes);
+          : passwords.current.has(document.slot.id)
+            ? await api.applySaveEdits(
+                game.id,
+                document.slot.id,
+                document.revision,
+                changes,
+                undefined,
+                passwords.current.get(document.slot.id),
+              )
+            : await api.applySaveEdits(game.id, document.slot.id, document.revision, changes);
       if (!alive.current) return;
       trusted.current.set(next.slot.id, next.revision);
       setDocument(next);
       setDrafts({});
       setNotice('已保存，请回游戏重新读档。');
+    });
+  }
+  async function unlock() {
+    if (!document?.password_required) return;
+    const id = document.slot.id;
+    await run(async () => {
+      const next = await api.readEditableSave(game.id, id, password);
+      if (!alive.current) return;
+      if (next.password_required) throw new Error('此文件尚未解锁');
+      passwords.current.set(id, password);
+      setDocument(next);
+      setPassword('');
+      setCategory('variables');
     });
   }
   function trustBeforeWrite(action: () => void) {
@@ -410,6 +441,30 @@ export function SaveEditor({ game, onClose }: { game: Game; onClose: () => void 
             刷新
           </button>
         </div>
+        {document?.password_required && (
+          <form
+            className="save-editor-password"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void unlock();
+            }}
+          >
+            <label htmlFor="save-editor-password">ES3 密码</label>
+            <input
+              id="save-editor-password"
+              type="password"
+              autoComplete="off"
+              value={password}
+              disabled={busy}
+              maxLength={1024}
+              onChange={(event) => setPassword(event.target.value)}
+            />
+            <button disabled={busy} type="submit">
+              解锁存档
+            </button>
+            <p className="muted">仅在本次编辑会话中使用，不保存密码。不知道密码时暂不能编辑。</p>
+          </form>
+        )}
         {(renpy || game.engine === "Ren'Py") && (
           <div className="save-editor-signature">
             <span>
@@ -446,8 +501,8 @@ export function SaveEditor({ game, onClose }: { game: Game; onClose: () => void 
         {busy && !document && <p role="status">正在读取存档…</p>}
         {!busy && !catalog.slots.length && (
           <p className="muted">
-            支持
-            MV、MZ、Ren’Py。请确认已关联存档目录，且游戏已经保存过进度；新增的目录需要先保存资料。
+            支持 MV、MZ、Ren’Py、ES3 和
+            Naninovel。请确认已关联存档目录，且游戏已经保存过进度；新增的目录需要先保存资料。
           </p>
         )}
         {document && (

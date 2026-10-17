@@ -1,0 +1,66 @@
+[
+  {
+    "id": "es3-plain",
+    "format": "ES3",
+    "wrapper": "plain",
+    "password": null,
+    "data": "ewogImNvaW5zIiA6IHsiX190eXBlIjoiaW50IiwidmFsdWUiOjcsInVua25vd24iOjFlM30sCiAicGxheWVyX25hbWUiOnsiX190eXBlIjoic3RyaW5nIiwidmFsdWUiOiLlkIjmiJDop5LoibIifSwibWV0Ijp7Il9fdHlwZSI6ImJvb2wiLCJ2YWx1ZSI6ZmFsc2V9LCJsYXJnZSI6eyJfX3R5cGUiOiJsb25nIiwidmFsdWUiOjkyMjMzNzIwMzY4NTQ3NzU4MDd9LCJjdXN0b20iOnsiX190eXBlIjoiR2FtZS5DdXN0b20sIEFzc2VtYmx5LUNTaGFycCIsInZhbHVlIjp7Il9faWQiOjEsIngiOlsxLDJdfX0KfQ==",
+    "expected": "{\n \"coins\" : {\"__type\":\"int\",\"value\":99,\"unknown\":1e3},\n \"player_name\":{\"__type\":\"string\",\"value\":\"测试 / 😀\"},\"met\":{\"__type\":\"bool\",\"value\":true},\"large\":{\"__type\":\"long\",\"value\":9223372036854775807},\"custom\":{\"__type\":\"Game.Custom, Assembly-CSharp\",\"value\":{\"__id\":1,\"x\":[1,2]}}\n}"
+  },
+  {
+    "id": "es3-gzip",
+    "format": "ES3",
+    "wrapper": "gzip",
+    "password": null,
+    "data": "H4sIAAAAAAAAA1XMO07DQBSF4d6rGJ36BsU2YcJ0KEUWkDJC1iRcgsU8LM8YYkXTJ13EJujZEyjLQNA4bo/O9x8yga2vXYBQ4oCqin3DUKhdBOFNm46hJKFzr86/O6icy0SZQGN0z23ltGWoKxhiW7vdYPF9Pv4cz5fPj8vpC4lgOY7Axnsz3J+1CZwIRre7cdj46+x9UZSlLKbl3Xx2K+VsPpWJsO1C9HbEltryzeJ/J/EQAtuN6SeL1YtumyH3B+onqJywh1rnVDymlKVfIvHuQR4BAAA=",
+    "expected": "{\n \"coins\" : {\"__type\":\"int\",\"value\":99,\"unknown\":1e3},\n \"player_name\":{\"__type\":\"string\",\"value\":\"测试 / 😀\"},\"met\":{\"__type\":\"bool\",\"value\":true},\"large\":{\"__type\":\"long\",\"value\":9223372036854775807},\"custom\":{\"__type\":\"Game.Custom, Assembly-CSharp\",\"value\":{\"__id\":1,\"x\":[1,2]}}\n}"
+  },
+  {
+    "id": "es3-aes",
+    "format": "ES3",
+    "wrapper": "aes",
+    "password": "synthetic-only-密码",
+    "data": "ABEiM0RVZneImaq7zN3u/60qov8sNZGFYGGQWN1EcBEQBSgVxE89rXcbSqSgwmIiQnYEpG/7saSX6dJkVF5UNcPlXvQQmQcgrlBPVTXarwA/MPLcACrsrNUBOLYeY4gibIPVShx+KXWRCoo1CAhC57qYPp9R9tKdQk0W17JjVB9EXjtrRSiCDlJcSV/xPIErGosy32CdHReadxjABDsEEJFFXSEE9drNFw6JYNPC0QaRo8Er0MYql5LW8aP9WXgA0auVAQFx1OrxefuxASLds1t/bl8of0ULL1ov3g4sxRLdkAmgtzMjO0GP0SWAXNXXNGLtCfaIdf5EvdvBllM+vqB3M6LV1qVdwUWUQ+n4sLZS9lYwsNfrplWB7MSBZXSlPsX3O0m1NmTlr7Kz79kX+A==",
+    "expected": "{\n \"coins\" : {\"__type\":\"int\",\"value\":99,\"unknown\":1e3},\n \"player_name\":{\"__type\":\"string\",\"value\":\"测试 / 😀\"},\"met\":{\"__type\":\"bool\",\"value\":true},\"large\":{\"__type\":\"long\",\"value\":9223372036854775807},\"custom\":{\"__type\":\"Game.Custom, Assembly-CSharp\",\"value\":{\"__id\":1,\"x\":[1,2]}}\n}"
+  },
+  {
+    "id": "es3-aes-gzip",
+    "format": "ES3",
+    "wrapper": "aes-gzip",
+    "password": "synthetic-only-密码",
+    "data": "ABEiM0RVZneImaq7zN3u/4xTwEZSu/BtXXBS9lRsEwMnbJmzJ79TR1PZzDDbodAasc34vB5Tyz5LqRwhyiz5Mz+F2X80rakaB3FwplcNixr8FX5xaia12DfKr5/nh6jFr+pkfPrDjKQ2iUu6qgGn4uqXn015PNSbqnwMCiDjGAn2i15PhUir5Zo4lfXXD3kUW2DykP3xeBILFJa4gDdubWQefkhPotX9UzcafpkIeuk38mOGP5SQIbBXxDVZqFfn46/vVTwUXqIJqpJJYeSfFqpd/Da2P3Gpn1hG6igecEEwxV6jtm3Mf9UQ9sjgnLEW",
+    "expected": "{\n \"coins\" : {\"__type\":\"int\",\"value\":99,\"unknown\":1e3},\n \"player_name\":{\"__type\":\"string\",\"value\":\"测试 / 😀\"},\"met\":{\"__type\":\"bool\",\"value\":true},\"large\":{\"__type\":\"long\",\"value\":9223372036854775807},\"custom\":{\"__type\":\"Game.Custom, Assembly-CSharp\",\"value\":{\"__id\":1,\"x\":[1,2]}}\n}"
+  },
+  {
+    "id": "nani-current-plain",
+    "format": "Naninovel",
+    "wrapper": "plain",
+    "password": null,
+    "data": "ewogIm9iamVjdEpzb25NYXAiIDogeyJrZXlzIjpbIk5hbmlub3ZlbC5DdXN0b21WYXJpYWJsZU1hbmFnZXIrR2FtZVN0YXRlLCBFbHJpbmd1cy5OYW5pbm92ZWwuUnVudGltZSwgVmVyc2lvbj0wLjAuMC4wLCBDdWx0dXJlPW5ldXRyYWwsIFB1YmxpY0tleVRva2VuPW51bGwiLCJHYW1lLlN5bnRoZXRpY1NlcnZpY2UrU3RhdGUsIEFzc2VtYmx5LUNTaGFycCJdLCJ2YWx1ZXMiOlsie1wiTG9jYWxWYXJpYWJsZXNcIjpbe1wibmFtZVwiOlwiY29pbnNcIixcInNjb3BlXCI6MCxcInZhbHVlXCI6e1widHlwZVwiOjEsXCJzdHJpbmdWYWx1ZVwiOlwiXCIsXCJudW1lcmljVmFsdWVcIjo3LFwiYm9vbGVhblZhbHVlXCI6ZmFsc2V9LFwiZXh0cmFcIjpcInByZXNlcnZlXCJ9LHtcIm5hbWVcIjpcInBsYXllcl9uYW1lXCIsXCJzY29wZVwiOjAsXCJ2YWx1ZVwiOntcInR5cGVcIjowLFwic3RyaW5nVmFsdWVcIjpcIuWQiOaIkOinkuiJslwiLFwibnVtZXJpY1ZhbHVlXCI6MCxcImJvb2xlYW5WYWx1ZVwiOmZhbHNlfSxcImV4dHJhXCI6XCJwcmVzZXJ2ZVwifSx7XCJuYW1lXCI6XCJtZXRcIixcInNjb3BlXCI6MCxcInZhbHVlXCI6e1widHlwZVwiOjIsXCJzdHJpbmdWYWx1ZVwiOlwiXCIsXCJudW1lcmljVmFsdWVcIjowLFwiYm9vbGVhblZhbHVlXCI6ZmFsc2V9LFwiZXh0cmFcIjpcInByZXNlcnZlXCJ9XSxcInVua25vd25cIjp7XCJrZWVwXCI6W1wieFwiLDEwMDBdfX0iLCJ7IFwiY29pbnNcIjogMTIzLCBcImtlZXBcIjogMWUrMDMgfSJdfSwKICJwbGF5YmFja1Nwb3QiOnsic2NyaXB0UGF0aCI6IlN5bnRoZXRpY0NoYXB0ZXIiLCJsaW5lSW5kZXgiOjQyLCJpbmxpbmVJbmRleCI6MH0sInJvbGxiYWNrU3RhY2tKc29uIjoiW3tcImtlZXBcIjp0cnVlfV0iLCJ0aHVtYm5haWxCYXNlNjQiOiJzeW50aGV0aWMtcGxhY2Vob2xkZXIiCn0=",
+    "expected": "{\n \"objectJsonMap\" : {\"keys\":[\"Naninovel.CustomVariableManager+GameState, Elringus.Naninovel.Runtime, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null\",\"Game.SyntheticService+State, Assembly-CSharp\"],\"values\":[\"{\\\"LocalVariables\\\":[{\\\"name\\\":\\\"coins\\\",\\\"scope\\\":0,\\\"value\\\":{\\\"type\\\":1,\\\"stringValue\\\":\\\"\\\",\\\"numericValue\\\":99,\\\"booleanValue\\\":false},\\\"extra\\\":\\\"preserve\\\"},{\\\"name\\\":\\\"player_name\\\",\\\"scope\\\":0,\\\"value\\\":{\\\"type\\\":0,\\\"stringValue\\\":\\\"测试 / 😀\\\",\\\"numericValue\\\":0,\\\"booleanValue\\\":false},\\\"extra\\\":\\\"preserve\\\"},{\\\"name\\\":\\\"met\\\",\\\"scope\\\":0,\\\"value\\\":{\\\"type\\\":2,\\\"stringValue\\\":\\\"\\\",\\\"numericValue\\\":0,\\\"booleanValue\\\":true},\\\"extra\\\":\\\"preserve\\\"}],\\\"unknown\\\":{\\\"keep\\\":[\\\"x\\\",1000]}}\",\"{ \\\"coins\\\": 123, \\\"keep\\\": 1e+03 }\"]},\n \"playbackSpot\":{\"scriptPath\":\"SyntheticChapter\",\"lineIndex\":42,\"inlineIndex\":0},\"rollbackStackJson\":\"[{\\\"keep\\\":true}]\",\"thumbnailBase64\":\"synthetic-placeholder\"\n}"
+  },
+  {
+    "id": "nani-current-deflate",
+    "format": "Naninovel",
+    "wrapper": "deflate",
+    "password": null,
+    "data": "pZPNahsxEMfveQoxVytm7YQWBD60ppR+pIS6+GKZMqtMs+pqpUUfrpdl78kt9CV67zu15DHKrmMnh0BTik76a2b+P81I7REDl38lFd8GZ8+wBiZYCyU1AcQKPqDV1m3IjOcpRFct0WvMDZ2hxUvyo9dY0SJiJM5eGa/tZQrj+5yPyUZdEWdL8kE7O8vGw+JsnkxMnmaWUvRoODtPudHqHTWfXEl2ZpMxwKEvP140NhYUtVqQ32hFozvDFyFQlZvmeL4o0New5rBBk2gAbyW8dwrNHjhIEKtWgsWKJAgJymkbJHAJQbm61zIudwUkiFZCbAZ10kfE/mrLuzMJQ5pNFXmt9upzLiF3zhDavfQFTaCOS6Bt9Dhk1p4C+Q1J6PhDmtpgQ/7zbv9XpuwRpl83V7+vbm5/fL+9/vkYX/ZffBXFJ3BNn9irf2ZZcwnJltZ9szvDkqjuJyphK4FPsixbdx1waNlhsoJNpiecHWLZhEbZCetg3fEjNnQ8R1UuahdBtBCU13U8x1iAgMOTmxdYR/LAwWhLb+wFbUGcTjlo+0DIOg7eGTPUi6jK/i+BgNU9afSJujVwiEWqcovavMRAz05BQNibHdcGFRXOXJCHo+4P",
+    "expected": "{\n \"objectJsonMap\" : {\"keys\":[\"Naninovel.CustomVariableManager+GameState, Elringus.Naninovel.Runtime, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null\",\"Game.SyntheticService+State, Assembly-CSharp\"],\"values\":[\"{\\\"LocalVariables\\\":[{\\\"name\\\":\\\"coins\\\",\\\"scope\\\":0,\\\"value\\\":{\\\"type\\\":1,\\\"stringValue\\\":\\\"\\\",\\\"numericValue\\\":99,\\\"booleanValue\\\":false},\\\"extra\\\":\\\"preserve\\\"},{\\\"name\\\":\\\"player_name\\\",\\\"scope\\\":0,\\\"value\\\":{\\\"type\\\":0,\\\"stringValue\\\":\\\"测试 / 😀\\\",\\\"numericValue\\\":0,\\\"booleanValue\\\":false},\\\"extra\\\":\\\"preserve\\\"},{\\\"name\\\":\\\"met\\\",\\\"scope\\\":0,\\\"value\\\":{\\\"type\\\":2,\\\"stringValue\\\":\\\"\\\",\\\"numericValue\\\":0,\\\"booleanValue\\\":true},\\\"extra\\\":\\\"preserve\\\"}],\\\"unknown\\\":{\\\"keep\\\":[\\\"x\\\",1000]}}\",\"{ \\\"coins\\\": 123, \\\"keep\\\": 1e+03 }\"]},\n \"playbackSpot\":{\"scriptPath\":\"SyntheticChapter\",\"lineIndex\":42,\"inlineIndex\":0},\"rollbackStackJson\":\"[{\\\"keep\\\":true}]\",\"thumbnailBase64\":\"synthetic-placeholder\"\n}"
+  },
+  {
+    "id": "nani-old-global-plain",
+    "format": "Naninovel",
+    "wrapper": "plain",
+    "password": null,
+    "data": "ewogIm9iamVjdEpzb25NYXAiIDogeyJrZXlzIjpbIk5hbmlub3ZlbC5DdXN0b21WYXJpYWJsZU1hbmFnZXIrR2xvYmFsU3RhdGUsIEVscmluZ3VzLk5hbmlub3ZlbC5SdW50aW1lLCBWZXJzaW9uPTAuMC4wLjAsIEN1bHR1cmU9bmV1dHJhbCwgUHVibGljS2V5VG9rZW49bnVsbCIsIkdhbWUuU3ludGhldGljU2VydmljZStTdGF0ZSwgQXNzZW1ibHktQ1NoYXJwIl0sInZhbHVlcyI6WyJ7XCJHbG9iYWxWYXJpYWJsZU1hcFwiOntcImtleXNcIjpbXCJjb2luc1wiLFwicGxheWVyX25hbWVcIixcIm1ldFwiXSxcInZhbHVlc1wiOltcIjdcIixcIuWQiOaIkOinkuiJslwiLFwiZmFsc2VcIl19LFwidW5rbm93blwiOjEyfSIsInsgXCJjb2luc1wiOiAxMjMsIFwia2VlcFwiOiAxZSswMyB9Il19LAogInBsYXliYWNrU3BvdCI6eyJzY3JpcHRQYXRoIjoiU3ludGhldGljQ2hhcHRlciIsImxpbmVJbmRleCI6NDIsImlubGluZUluZGV4IjowfSwicm9sbGJhY2tTdGFja0pzb24iOiJbe1wia2VlcFwiOnRydWV9XSIsInRodW1ibmFpbEJhc2U2NCI6InN5bnRoZXRpYy1wbGFjZWhvbGRlciIKfQ==",
+    "expected": "{\n \"objectJsonMap\" : {\"keys\":[\"Naninovel.CustomVariableManager+GlobalState, Elringus.Naninovel.Runtime, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null\",\"Game.SyntheticService+State, Assembly-CSharp\"],\"values\":[\"{\\\"GlobalVariableMap\\\":{\\\"keys\\\":[\\\"coins\\\",\\\"player_name\\\",\\\"met\\\"],\\\"values\\\":[\\\"99\\\",\\\"测试 / 😀\\\",\\\"true\\\"]},\\\"unknown\\\":12}\",\"{ \\\"coins\\\": 123, \\\"keep\\\": 1e+03 }\"]},\n \"playbackSpot\":{\"scriptPath\":\"SyntheticChapter\",\"lineIndex\":42,\"inlineIndex\":0},\"rollbackStackJson\":\"[{\\\"keep\\\":true}]\",\"thumbnailBase64\":\"synthetic-placeholder\"\n}"
+  },
+  {
+    "id": "nani-old-global-deflate",
+    "format": "Naninovel",
+    "wrapper": "deflate",
+    "password": null,
+    "data": "TZHNahtBDMfvfopBV0+M44QWBnxoTQltSQndkovHBO1GzU5Xq1nmw61Z9p7eQl6i975TSx4jeJM6RSd9/v6S+okCX36jKn2IXs6xA2VUDw3tIpg1fEJx4rfEs1WOybeXGByWTOcoeENhesa+RC4SJtLqHQcnNznOXro+Z0muJa0uKUTnZTmfjabVKnPKgZZCOQVkrS5yya76SLsvviFZSmYGDWfY0qzYSaopuaqgsHUVTZ+Bb2KktuTd0aqoMXSw0bBFzjRK7y08qXvR3FkwvR2Xs2DWFirvJFrQFjrGHYUrwZZGv6VkYaPt88Cn8tdj6s/d7d/bu4df9w8/f4+Br8iRLGwGbSFLI/67WDDHiwE09OpAMep4caLVnk/d6NJ0fqKGfeNEjQpKrJqi8wlMD7EKrksXmGowcLjAqsYuUQAN7ITeyzX9AHO60ODkv8B80BA88zgvYdXsnwsG1v2BnkKmYQMaUp3bUtDxW4z06hQMxH+wo46xotrzNQWYDI8=",
+    "expected": "{\n \"objectJsonMap\" : {\"keys\":[\"Naninovel.CustomVariableManager+GlobalState, Elringus.Naninovel.Runtime, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null\",\"Game.SyntheticService+State, Assembly-CSharp\"],\"values\":[\"{\\\"GlobalVariableMap\\\":{\\\"keys\\\":[\\\"coins\\\",\\\"player_name\\\",\\\"met\\\"],\\\"values\\\":[\\\"99\\\",\\\"测试 / 😀\\\",\\\"true\\\"]},\\\"unknown\\\":12}\",\"{ \\\"coins\\\": 123, \\\"keep\\\": 1e+03 }\"]},\n \"playbackSpot\":{\"scriptPath\":\"SyntheticChapter\",\"lineIndex\":42,\"inlineIndex\":0},\"rollbackStackJson\":\"[{\\\"keep\\\":true}]\",\"thumbnailBase64\":\"synthetic-placeholder\"\n}"
+  }
+]

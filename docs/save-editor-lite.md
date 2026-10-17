@@ -1,4 +1,4 @@
-# Save Editor Lite v0.1
+# Save Editor Lite
 
 入口：游戏详情 → 存档位置 → **编辑存档**。默认发现已保存的 `save_paths` 中的槽位；支持关联目录或单个存档文件，没有配置时复用现有存档位置识别。Ren’Py 编辑器也可通过 **选择外部 Ren’Py 存档** 原生选择器打开任意位置的 `.save` / `persistent`，以当前详情中的游戏为目标游戏，无需新增 `save_paths`。新增关联存档目录应先保存游戏资料。编辑器不移动游戏或存档。
 
@@ -6,12 +6,30 @@
 
 ## 支持范围
 
+正式版 1.0.0 支持 MV / MZ 与 Ren’Py。**v1.1 开发分支**新增下表 ES3 / Naninovel，两项尚未发布且真实游戏读档待验收；NRBF、通用 JSON 和注册表均不在本期。参考来源见 [Unity 专项调研](unity-save-research.md)和 [格式总体调研](save-format-research.md)。
+
 | 格式 | 支持 | 限制 |
 | --- | --- | --- |
 | RPG Maker MV | 标准 `file*.rpgsave`，LZString Base64；变量数字/布尔/字符串、开关、金钱、道具/武器/防具数量 | 不提供任意 JSON 编辑；复杂变量只读 |
 | RPG Maker MZ | 标准 `file*.rmmzsave`，pako zlib 的 UTF-8 二进制字符串，兼容原始 zlib 字节并保留原编码 | ZIP、加密或插件自定义封装拒绝写入 |
 | Ren’Py `.save` | ZIP 的 `log`、`signatures`；公开 `store.*` 简单字段、字典/列表/元组中的简单子字段、None 初始化；元信息与 PNG 截图 | 未知自定义对象、内建/私有状态、共享引用、重复名称只读；不增删字典键或列表元素 |
 | Ren’Py `persistent` | zlib pickle + 尾部签名；公开字段与容器子字段；同步所属顶层字段的 `_changed` 修改时间戳 | 无法安全维护时间戳时只读；不根据变量名推断字段含义 |
+
+| ES3（v1.1 开发中） | `.es3` 明文 / GZip；标准 AES-128-CBC + PKCS7、IV 前缀、PBKDF2-HMAC-SHA1 的已知密码容器，支持加密内的 GZip | 顶层 typed-entry 中明确类型的已有数值、布尔、文本；复杂对象、数组、引用与未知类型只读；不查找或猜测密码 |
+| Naninovel（v1.1 开发中） | raw DEFLATE `.nson` 与已识别结构的明文 `.json`；`CustomVariableManager` 的本地 / 全局简单变量，新版类型化变量与旧版字符串映射 | 保留原始封装；游戏自定义服务、脚本位置、场景和回滚历史不编辑；自定义加密 / handler 不支持 |
+
+## Unity 文件编辑（v1.1 开发中）
+
+在已保存的关联存档目录中发现 `.es3` / `.nson`；`.json` 须识别到 Naninovel 变量服务结构，普通 JSON 配置不会作为通用编辑入口。另检查已关联目录下的一层 `Saves`，不递归其他目录、不修改关联路径；单文件关联只读取该文件。候选文件仍绑定游戏和不透明槽位 ID，保留链接 / 重解析点、任务互斥及 revision 保护。
+
+选择准备在游戏中读取的槽位，修改后只保存该文件。`GameSave001` / `GameSave002` 不需要同步；`Global` 是独立文件，其中全局变量可能影响多个槽位，运行中的游戏也可能再次覆盖它。Naninovel 服务内容为嵌套 JSON 字符串时，只替换所选变量的活动值，保留名称、作用域、类型、非活动值与其他服务。旧字符串映射仍作为文本编辑，不猜测数字 / 布尔类型。
+
+ES3 解锁使用遮蔽密码输入框，密码只在当前编辑器会话的内存中保留，关闭后释放；不保存到设置、数据库或文件，不提供内置游戏密码。标准容器兼容参数是格式要求，修改后生成随机新 IV，不重复使用原 IV。未知密码、损坏或自定义封装报错，不写回。
+
+底层严格解析带原字节范围的 JSON，只替换目标标量；未修改字段的数字表示、空白、未知类型与内容原样保留，嵌套服务字符串的外层转义可能规范化。无实际修改直接保留原文件字节。写回后复核完整封装和所选字段，再经现有同目录临时文件替换；不生成持久备份。JSON 最多 64 层 / 100000 节点，最多显示 20000 字段，文件 / 解压与单次修改上限沿用现有保护。
+
+合成夹具由 `node scripts/Generate-UnityEditorFixtures.mjs` 生成；Rust 测试可通过 `BUTTER_SAVE_EDITOR_VERIFY_DIR` 将合成输出写到隔离目录，再运行 `node scripts/Generate-UnityEditorFixtures.mjs --verify-dir <该目录>`，使用 Node crypto / zlib 独立核对封装、字段和其他字节。此流程不读取真实附件或存档。
+
 
 RPG Maker 辅助 JSON 只读加载 `System`、`Items`、`Weapons`、`Armors`、`Actors`、`Classes`。优先启动文件旁的 `data/`、`www/data/`，再检查游戏根目录及至多 64 个直接包装目录；不无界递归。数据库缺失时按 ID 显示，不允许凭空创建未知物品。System 声明但未赋值的变量默认为 0，开关为 false，可以赋值；数据库存在但背包没有的物品可以增加。角色展示名称/职业，HP/MP、等级、经验、装备与技能首版全部只读。
 

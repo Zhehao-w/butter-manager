@@ -2293,7 +2293,7 @@ function SettingsPage({
               className="settings-license-link"
               onClick={() => setLicenseOpen('virtual')}
             >
-              <span>虚拟列表：TanStack Virtual · 许可说明</span>
+              <span>依赖组件：TanStack Virtual / 存档编解码 · 许可说明</span>
               <Icon name="next" size={16} />
             </button>
           </div>
@@ -2404,7 +2404,7 @@ function SettingsPage({
       </div>
       {licenseOpen && (
         <Modal
-          title={licenseOpen === 'icons' ? 'Lucide · 许可说明' : 'TanStack Virtual · 许可说明'}
+          title={licenseOpen === 'icons' ? 'Lucide · 许可说明' : '依赖组件 · 许可说明'}
           className="settings-license-modal"
           onClose={() => setLicenseOpen(null)}
         >

@@ -82,6 +82,74 @@ beforeEach(() => {
 });
 afterEach(() => vi.restoreAllMocks());
 describe('Save Editor Lite', () => {
+  it('unlocks ES3 with a session password, retries errors and saves only the chosen slot', async () => {
+    const locked = { ...doc(), fields: [], password_required: true };
+    locked.slot.format = 'ES3';
+    const unlocked = { ...locked, password_required: false, fields: [field('金钱', 5, 'number')] };
+    vi.mocked(api.listEditableSaves).mockResolvedValue({
+      slots: [locked.slot, doc('two').slot],
+      warnings: [],
+    });
+    vi.mocked(api.readEditableSave).mockImplementation(async (_game, id, password) => {
+      if (id === 'two') return doc('two');
+      if (password === undefined) return locked;
+      if (password !== 'synthetic-password') throw new Error('ES3 密码错误');
+      return unlocked;
+    });
+    vi.mocked(api.applySaveEdits).mockResolvedValue({ ...unlocked, revision: 'revision-2' });
+    const view = render(<SaveEditor game={game} onClose={vi.fn()} />);
+    const password = await screen.findByLabelText('ES3 密码');
+    expect((password as HTMLInputElement).type).toBe('password');
+    expect((screen.getByRole('button', { name: '保存修改' }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+    fireEvent.change(password, { target: { value: 'wrong' } });
+    fireEvent.click(screen.getByRole('button', { name: '解锁存档' }));
+    await screen.findByText('Error: ES3 密码错误');
+    expect(api.applySaveEdits).not.toHaveBeenCalled();
+    fireEvent.change(password, { target: { value: 'synthetic-password' } });
+    fireEvent.click(screen.getByRole('button', { name: '解锁存档' }));
+    fireEvent.change(await screen.findByLabelText('金钱'), { target: { value: '25' } });
+    expect(screen.queryByLabelText('ES3 密码')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '保存修改 (1)' }));
+    await screen.findByText('已保存，请回游戏重新读档。');
+    expect(api.applySaveEdits).toHaveBeenLastCalledWith(
+      'game',
+      'one',
+      'revision-1',
+      [{ id: '金钱', value: 25 }],
+      undefined,
+      'synthetic-password',
+    );
+    fireEvent.change(screen.getByLabelText('存档槽位'), { target: { value: 'two' } });
+    await waitFor(() => expect(api.readEditableSave).toHaveBeenLastCalledWith('game', 'two'));
+    await screen.findByLabelText('姓名');
+    fireEvent.change(screen.getByLabelText('存档槽位'), { target: { value: 'one' } });
+    await waitFor(() =>
+      expect(api.readEditableSave).toHaveBeenLastCalledWith('game', 'one', 'synthetic-password'),
+    );
+    view.unmount();
+    render(<SaveEditor game={game} onClose={vi.fn()} />);
+    await screen.findByLabelText('ES3 密码');
+    expect(api.readEditableSave).toHaveBeenLastCalledWith('game', 'one');
+  });
+  it('edits Naninovel through the existing fields and keeps drafts when the file revision changes', async () => {
+    const nani = doc();
+    nani.slot.format = 'Naninovel';
+    nani.slot.name = 'GameSave001.nson';
+    vi.mocked(api.listEditableSaves).mockResolvedValue({ slots: [nani.slot], warnings: [] });
+    vi.mocked(api.readEditableSave).mockResolvedValue(nani);
+    vi.mocked(api.applySaveEdits).mockRejectedValue('存档已被游戏更新，请刷新');
+    render(<SaveEditor game={game} onClose={vi.fn()} />);
+    fireEvent.change(await screen.findByLabelText('金钱'), { target: { value: '25' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存修改 (1)' }));
+    await screen.findByText('存档已被游戏更新，请刷新');
+    expect((screen.getByLabelText('金钱') as HTMLInputElement).value).toBe('25');
+    expect(api.applySaveEdits).toHaveBeenCalledWith('game', 'one', 'revision-1', [
+      { id: '金钱', value: 25 },
+    ]);
+    expect(screen.queryByLabelText('ES3 密码')).toBeNull();
+  });
   it.each([
     ['number', 9876.25, '9876.25'],
     ['number', 0, '0'],

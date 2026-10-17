@@ -48,16 +48,24 @@ export const api = {
   recycleRenpyAppdata: (id: string, token: string) =>
     invoke<void>('recycle_renpy_appdata', { id, token }),
   listEditableSaves: (gameId: string) => invoke<SaveCatalog>('list_editable_saves', { gameId }),
-  readEditableSave: (gameId: string, saveId: string) =>
-    invoke<SaveDocument>('read_editable_save', { gameId, saveId }),
+  readEditableSave: (gameId: string, saveId: string, password?: string) =>
+    invoke<SaveDocument>('read_editable_save', { gameId, saveId, password }),
   applySaveEdits: (
     gameId: string,
     saveId: string,
     revision: string,
     changes: SaveChange[],
     sourceTrusted?: boolean,
+    password?: string,
   ) =>
-    invoke<SaveDocument>('apply_save_edits', { gameId, saveId, revision, changes, sourceTrusted }),
+    invoke<SaveDocument>('apply_save_edits', {
+      gameId,
+      saveId,
+      revision,
+      changes,
+      sourceTrusted,
+      password,
+    }),
   resignRenpySave: (gameId: string, saveId: string, revision: string, sourceTrusted: boolean) =>
     invoke<SaveDocument>('resign_renpy_save', { gameId, saveId, revision, sourceTrusted }),
   chooseExternalRenpySave: (gameId: string) =>

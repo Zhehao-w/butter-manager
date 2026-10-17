@@ -1,5 +1,13 @@
 # 验证记录
 
+## 1.2.1 发布准备（2026-10-17）
+
+修复 PR #7 已合并到 main `f4ad35f`，其 Linux / Windows CI 及 Windows EXE 构建通过（运行 39032483896）。发布准备将 package、Tauri、Cargo manifest / lock 与应用内版本断言统一为 **1.2.1**，同步 README、Portable、路线图及变更记录，说明单文件存档跨盘更新的触发条件和已提交更新的恢复语义。
+
+完整 `bash scripts/Check-Cloud.sh` 通过：前端 **232 项**、Rust 核心 **241 项**、独立 Node **8 组**合成 Unity 核验，以及 Prettier / Rustfmt、TypeScript / Vite。发布脚本 **25 项**隔离回归通过；四处版本、应用内断言、文档相对链接及差异检查通过。保持 schema 12 和现有发布流水线，Release 附件仍为版本化 Portable ZIP 与独立 `SHA256SUMS.txt`，只替换 EXE 并保留完整 `data/`。
+
+本记录描述发布准备；1.2.1 最终源码的 Windows 原生检查、严格桌面 Clippy、EXE 构建及 Tag 自动发布结果以对应 CI / Release 为准。真实游戏读档仍由用户实机验收。
+
 ## 全量审查 P2：跨盘更新的单文件存档清理（2026-10-17）
 
 修复 `remove_source_basic` 在来源文件恰好等于单文件存档路径时拼接空后缀的问题，归档文件使用自身路径，目录存档继续使用子路径。保留既有来源清单、文件类型 / 大小、目录身份、任务互斥及 Journal 恢复保护。两个 MTool 审查项按用户决定接受现有行为，没有修改清理实现，详见 [处理决定](code-review-2026-10-17.md)。

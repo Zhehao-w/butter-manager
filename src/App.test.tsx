@@ -587,7 +587,7 @@ describe('iteration interactions', () => {
       await screen.findByRole('button', { name: '扫描目录' });
       openConfig('设置');
       const about = within(screen.getByRole('region', { name: '关于应用' }));
-      expect(about.getByText('v1.1.0')).toBeTruthy();
+      expect(about.getByText('v1.2.0')).toBeTruthy();
       expect(about.getByText(`构建 ${commit ?? '未知'}`)).toBeTruthy();
     },
   );
@@ -821,7 +821,7 @@ describe('iteration interactions', () => {
       'character-new',
     );
     expect(within(sidebar).getByText('by Zhehao-w')).toBeTruthy();
-    expect(within(sidebar).getByText('v1.1.0').className).toBe('sidebar-version');
+    expect(within(sidebar).getByText('v1.2.0').className).toBe('sidebar-version');
     expect(sidebar.querySelectorAll('img')).toHaveLength(2);
     expect(screen.queryByRole('button', { name: '关于' })).toBeNull();
     expect(screen.queryByRole('region', { name: '关于页面' })).toBeNull();
@@ -1081,6 +1081,7 @@ describe('iteration interactions', () => {
         (within(page).getByRole('textbox', { name: /Game Root/ }) as HTMLInputElement).value,
       ).toBe('D:/Games'),
     );
+    await waitForEnabledButton('选择新根目录…', within(editor));
     goLibrary();
     const search = screen.getByRole('textbox', { name: '搜索游戏或别名' });
     fireEvent.change(search, { target: { value: migrated.install_path } });

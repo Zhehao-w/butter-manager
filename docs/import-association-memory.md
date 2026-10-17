@@ -1,6 +1,6 @@
-# 1.2 导入关联记忆（开发中）
+# 1.2.0 导入关联记忆
 
-本功能属于 1.2 开发分支，正式下载仍以 Release 为准。应用版本在发布准备时再统一调整；开发 EXE 通过对应 PR / main 的 CI artifact 交付。
+本功能随 1.2.0 交付，正式下载以 Release 页面为准：Portable ZIP 与独立 SHA256SUMS.txt。PR / main 的开发 EXE 仍通过对应 CI artifact 交付。
 
 ## 使用方式
 

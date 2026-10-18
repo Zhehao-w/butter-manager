@@ -29,6 +29,8 @@ import { scanResults, directoryTime, canSelectScanCandidate } from './scan';
 import type { ScanSort, ScanChoice } from './scan';
 import type {
   Game,
+  LibraryTag,
+  PlayStatus,
   DeleteReport,
   GameEdit,
   LaunchConfiguration,
@@ -52,10 +54,12 @@ import { SaveEditor } from './SaveEditor';
 import { WindowTitleBar } from './WindowTitleBar';
 import { RenpyAppdataCleanup } from './RenpyAppdataCleanup';
 import { LibraryRelocation } from './LibraryRelocation';
+import { appendTag, FavoriteButton, GameTags, TagEditor, TagManager } from './LibraryOrganization';
 import { WindowCloseGuards, useWindowCloseGuard, useWindowClosing } from './windowClose';
 import { useLibraryLayout, useSavedSort } from './preferences';
 import {
   PlayBadge,
+  playLabels,
   LaunchBadge,
   LibraryFilters,
   EngineQuickFilters,
@@ -108,6 +112,53 @@ export default function App() {
     if (favicon) favicon.href = appIcon;
   }, [appIcon]);
   const [games, setGames] = useState<Game[]>([]);
+  const [libraryTags, setLibraryTags] = useState<LibraryTag[]>([]);
+  const [tagManagerOpen, setTagManagerOpen] = useState(false);
+  const [organizationBusy, setOrganizationBusy] = useState(false);
+  const organizationRequest = useRef(false);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [librarySelected, setLibrarySelected] = useState<Set<string>>(new Set());
+  const [batchStatus, setBatchStatus] = useState<PlayStatus>('COMPLETED');
+  function toggleLibrarySelection(id: string) {
+    if (organizationBusy || taskActive) return;
+    setLibrarySelected((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+  async function organizationAction(work: () => Promise<void>) {
+    if (organizationRequest.current || taskActive) return;
+    organizationRequest.current = true;
+    setOrganizationBusy(true);
+    try {
+      await action(work);
+    } finally {
+      organizationRequest.current = false;
+      setOrganizationBusy(false);
+    }
+  }
+  async function toggleFavorite(game: Game) {
+    await organizationAction(async () => {
+      const saved = await api.setFavorite(game.id, !game.favorite);
+      setGames((current) =>
+        current.map((value) =>
+          value.id === saved.id ? { ...value, favorite: saved.favorite } : value,
+        ),
+      );
+    });
+  }
+  async function refreshOrganization() {
+    const [library, tags] = await Promise.all([api.games(), api.libraryTags()]);
+    setGames(library);
+    setLibraryTags(tags);
+    setFilters((current) => ({
+      ...current,
+      tags: (current.tags ?? []).filter((id) => tags.some((tag) => tag.id === id)),
+    }));
+  }
+
   const [pathChecks, setPathChecks] = useState<Record<string, LibraryPathCheck>>({});
   const [issuesOnly, setIssuesOnly] = useState(false);
   const checkQuiet = useRef(false);
@@ -146,7 +197,17 @@ export default function App() {
     try {
       const launched = await (configuration ? api.play(id, configuration) : api.play(id));
       if (launched)
-        setGames((current) => current.map((game) => (game.id === id ? launched : game)));
+        setGames((current) =>
+          current.map((game) =>
+            game.id === id
+              ? {
+                  ...game,
+                  last_launched_at: launched.last_launched_at,
+                  play_status: launched.play_status,
+                }
+              : game,
+          ),
+        );
     } finally {
       window.clearTimeout(progressTimer);
       setVisibleLaunchingIds((current) => {
@@ -286,7 +347,18 @@ export default function App() {
           if (changed.length) {
             libraryEpoch.current++;
             const updates = new Map(changed.map((game) => [game.id, game]));
-            setGames((current) => current.map((game) => updates.get(game.id) || game));
+            setGames((current) =>
+              current.map((game) =>
+                updates.has(game.id)
+                  ? {
+                      ...updates.get(game.id)!,
+                      favorite: game.favorite,
+                      tags: game.tags,
+                      play_status: game.play_status,
+                    }
+                  : game,
+              ),
+            );
             const checked = await api.job(job.id, job.next_cursor);
             if (currentScanId.current === job.id) acceptPathChecks(checked.path_checks || []);
           }
@@ -335,7 +407,20 @@ export default function App() {
               if (epoch !== libraryEpoch.current) return;
               setGames((current) => {
                 const map = new Map(current.map((g) => [g.id, g]));
-                for (const game of added) map.set(game.id, game);
+                for (const game of added) {
+                  const existing = map.get(game.id);
+                  map.set(
+                    game.id,
+                    existing
+                      ? {
+                          ...game,
+                          favorite: existing.favorite,
+                          tags: existing.tags,
+                          play_status: existing.play_status,
+                        }
+                      : game,
+                  );
+                }
                 return [...map.values()].sort((a, b) =>
                   a.display_title.localeCompare(b.display_title),
                 );
@@ -376,20 +461,22 @@ export default function App() {
     !!id && (!page || page.id !== id || activeJob(page));
   const scanning = pending(scanId, scanJob.page);
   const processing = pending(taskId, taskJob.page);
-  const taskActive = starting || scanning || processing || importBusy || duplicateBusy;
+  const taskActive =
+    starting || scanning || processing || importBusy || duplicateBusy || organizationBusy;
   const windowClosing = useWindowClosing(
     desktop,
-    taskActive || linkBusy || launchingIds.size > 0,
+    taskActive || organizationBusy || linkBusy || launchingIds.size > 0,
     setError,
   );
 
   useEffect(() => {
     if (!desktop) return;
     let stale = false;
-    Promise.all([api.games(), api.settings()])
-      .then(([library, config]) => {
+    Promise.all([api.games(), api.settings(), api.libraryTags()])
+      .then(([library, config, tags]) => {
         if (stale) return;
         setGames(library);
+        setLibraryTags(tags);
         setSettings(config);
         setSettingsOpen(!config.game_root);
         if (library.length) void startLibraryCheck(true);
@@ -577,6 +664,55 @@ export default function App() {
       ),
     [games, needle, sort, pathChecks, issuesOnly, filters, otherEnginesOnly, popularEngines],
   );
+  // Filter changes never retain an invisible selection; sorting and view changes keep UUIDs.
+  useEffect(() => {
+    setLibrarySelected(new Set());
+  }, [search, issuesOnly, filters, otherEnginesOnly, previewOpen, importOpen, settingsOpen]);
+  useEffect(() => {
+    const visible = new Set(filtered.map((game) => game.id));
+    setLibrarySelected((current) => {
+      const next = new Set([...current].filter((id) => visible.has(id)));
+      return next.size === current.size ? current : next;
+    });
+  }, [filtered]);
+  async function applyBatchStatus() {
+    if (launchRequests.current.size) return;
+    const ids = filtered.filter((game) => librarySelected.has(game.id)).map((game) => game.id);
+    if (!ids.length) return;
+    await organizationAction(async () => {
+      const saved = await api.setPlayStatuses(ids, batchStatus);
+      const updated = new Map(saved.map((game) => [game.id, game]));
+      setGames((current) =>
+        current.map((game) =>
+          updated.has(game.id) ? { ...game, play_status: updated.get(game.id)!.play_status } : game,
+        ),
+      );
+      setLibrarySelected(new Set());
+      setToast(`已将 ${saved.length} 个游戏标记为「${playLabels[batchStatus]}」。`);
+    });
+  }
+  function itemControls(game: Game) {
+    return (
+      <span className="library-item-controls">
+        {selectionMode ? (
+          <input
+            type="checkbox"
+            aria-label={`选择 ${game.display_title}`}
+            checked={librarySelected.has(game.id)}
+            disabled={organizationBusy || taskActive}
+            onClick={(event) => event.stopPropagation()}
+            onChange={() => toggleLibrarySelection(game.id)}
+          />
+        ) : (
+          <FavoriteButton
+            game={game}
+            disabled={organizationBusy || taskActive}
+            onChange={() => void toggleFavorite(game)}
+          />
+        )}
+      </span>
+    );
+  }
   const [cardColumns, setCardColumns] = useState(1);
   useLayoutEffect(() => {
     const element = libraryScroll.current;
@@ -874,6 +1010,8 @@ export default function App() {
                 <div className="header-actions library-controls">
                   <LibraryFilters
                     games={games}
+                    tags={libraryTags}
+                    onManageTags={() => setTagManagerOpen(true)}
                     value={filters}
                     onChange={(value) => {
                       setFilters(value);
@@ -887,6 +1025,19 @@ export default function App() {
                     onClick={() => setIssuesOnly(!issuesOnly)}
                   >
                     需处理 ({problemCount})
+                  </button>
+                  <button
+                    type="button"
+                    className={selectionMode ? 'active' : ''}
+                    aria-pressed={selectionMode}
+                    disabled={organizationBusy || taskActive}
+                    onClick={() => {
+                      setSelectionMode(!selectionMode);
+                      setLibrarySelected(new Set());
+                    }}
+                  >
+                    <Icon name="check" size={16} />
+                    {selectionMode ? '结束选择' : '批量选择'}
                   </button>
                   <SortField
                     label="游戏排序"
@@ -907,6 +1058,8 @@ export default function App() {
                   type="button"
                   className="quick-filter-all"
                   aria-pressed={
+                    !filters.favoritesOnly &&
+                    !filters.tags?.length &&
                     !filters.statuses.length &&
                     !filters.engines.length &&
                     !filters.modes.length &&
@@ -919,6 +1072,17 @@ export default function App() {
                 >
                   <Icon name="library" size={16} />
                   全部
+                </button>
+                <button
+                  type="button"
+                  className="quick-filter-all favorite-quick-filter"
+                  aria-pressed={!!filters.favoritesOnly}
+                  onClick={() =>
+                    setFilters((current) => ({ ...current, favoritesOnly: !current.favoritesOnly }))
+                  }
+                >
+                  <Icon name="star" size={16} />
+                  收藏
                 </button>
                 <div className="quick-filter-section">
                   <span className="quick-filter-label">游玩状态</span>
@@ -941,6 +1105,67 @@ export default function App() {
                   />
                 </div>
               </div>
+              {selectionMode && (
+                <div className="library-batch-bar" role="group" aria-label="批量修改游玩状态">
+                  <label className="library-select-all">
+                    <input
+                      type="checkbox"
+                      aria-label="全选当前筛选结果"
+                      ref={(element) => {
+                        if (element)
+                          element.indeterminate =
+                            librarySelected.size > 0 && librarySelected.size < filtered.length;
+                      }}
+                      checked={filtered.length > 0 && librarySelected.size === filtered.length}
+                      disabled={!filtered.length || organizationBusy || taskActive}
+                      onChange={(event) =>
+                        setLibrarySelected(
+                          event.target.checked
+                            ? new Set(filtered.map((game) => game.id))
+                            : new Set(),
+                        )
+                      }
+                    />
+                    全选筛选结果（{filtered.length}）
+                  </label>
+                  <span className="library-selected-count" role="status">
+                    已选 {librarySelected.size} 个
+                  </span>
+                  <select
+                    aria-label="批量目标状态"
+                    value={batchStatus}
+                    disabled={organizationBusy || taskActive}
+                    onChange={(event) => setBatchStatus(event.target.value as PlayStatus)}
+                  >
+                    {Object.entries(playLabels).map(([value, label]) => (
+                      <option value={value} key={value}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    className="primary"
+                    disabled={
+                      !librarySelected.size ||
+                      organizationBusy ||
+                      taskActive ||
+                      launchingIds.size > 0
+                    }
+                    title={launchingIds.size ? '启动请求完成后可修改状态' : undefined}
+                    onClick={() => void applyBatchStatus()}
+                  >
+                    {organizationBusy ? '保存中…' : '应用到所选'}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!librarySelected.size || organizationBusy}
+                    onClick={() => setLibrarySelected(new Set())}
+                  >
+                    取消选择
+                  </button>
+                </div>
+              )}
               <div
                 className="library-content"
                 style={
@@ -1006,11 +1231,18 @@ export default function App() {
                           onMouseEnter={() => setHighlightedGameId(g.id)}
                           onFocus={() => setHighlightedGameId(g.id)}
                           onClick={(event) => {
-                            if ((event.target as Element).closest('.library-play-button')) return;
-                            openGame(g.id);
+                            if (
+                              (event.target as Element).closest(
+                                '.library-play-button, .library-item-controls',
+                              )
+                            )
+                              return;
+                            if (selectionMode) toggleLibrarySelection(g.id);
+                            else openGame(g.id);
                           }}
                         >
                           <td className="library-game-cell">
+                            {itemControls(g)}
                             <div className="game-identity">
                               <GameMark game={g} />
                               <div className="game-identity-text">
@@ -1020,6 +1252,7 @@ export default function App() {
                                 <div className="game-status-line">
                                   <PlayBadge game={g} />
                                   <PathBadge check={pathChecks[g.id]} />
+                                  <GameTags tags={g.tags} />
                                 </div>
                               </div>
                             </div>
@@ -1125,15 +1358,21 @@ export default function App() {
                           ).map((g) => (
                             <article
                               key={g.id}
-                              className={`game-card ${g.id === highlightedGameId ? 'selected' : ''}`}
+                              className={`game-card ${g.id === highlightedGameId ? 'selected' : ''} ${selectionMode && librarySelected.has(g.id) ? 'is-batch-selected' : ''}`}
                               onMouseEnter={() => setHighlightedGameId(g.id)}
                               onFocus={() => setHighlightedGameId(g.id)}
                               onClick={(event) => {
-                                if ((event.target as Element).closest('.library-play-button'))
+                                if (
+                                  (event.target as Element).closest(
+                                    '.library-play-button, .library-item-controls',
+                                  )
+                                )
                                   return;
-                                openGame(g.id);
+                                if (selectionMode) toggleLibrarySelection(g.id);
+                                else openGame(g.id);
                               }}
                             >
+                              {itemControls(g)}
                               <GameMark game={g} large />
                               <button
                                 type="button"
@@ -1160,7 +1399,8 @@ export default function App() {
                                 className="card-engine"
                                 title={g.engine === 'Unknown' ? '引擎未识别' : g.engine}
                               >
-                                {g.engine === 'Unknown' ? '引擎未识别' : g.engine}
+                                <span>{g.engine === 'Unknown' ? '引擎未识别' : g.engine}</span>
+                                <GameTags tags={g.tags} />
                               </span>
                               <span className="card-last-played">
                                 <Icon name="clock" size={14} />
@@ -1214,6 +1454,8 @@ export default function App() {
                 </p>
                 <span className="library-total" role="status">
                   {search ||
+                  filters.favoritesOnly ||
+                  filters.tags?.length ||
                   filters.statuses.length ||
                   filters.engines.length ||
                   filters.modes.length ||
@@ -1518,6 +1760,8 @@ export default function App() {
                 const report = await api.clearLibrary(confirmation);
                 libraryEpoch.current += 1;
                 setGames([]);
+                setLibraryTags([]);
+                setLibrarySelected(new Set());
                 setPathChecks({});
                 setIssuesOnly(false);
                 setLinkCandidate(null);
@@ -1635,10 +1879,20 @@ export default function App() {
           )}
         </Modal>
       )}
+      {tagManagerOpen && (
+        <TagManager
+          tags={libraryTags}
+          games={games}
+          locked={taskActive || organizationBusy}
+          onChanged={refreshOrganization}
+          onClose={() => setTagManagerOpen(false)}
+        />
+      )}
       {game && settings && (
         <GameDetail
           key={game.id}
           game={game}
+          libraryTags={libraryTags}
           settings={settings}
           pathCheck={pathChecks[game.id]}
           onRemoved={() => removeRecord(game.id)}
@@ -1668,6 +1922,9 @@ export default function App() {
           launchProgressVisible={visibleLaunchingIds.has(game.id)}
           onPlay={(configuration) => playGame(game.id, configuration)}
           onSaved={(saved) => {
+            setLibraryTags((current) => [
+              ...new Map([...current, ...saved.tags].map((tag) => [tag.id, tag])).values(),
+            ]);
             setGames((current) => current.map((g) => (g.id === saved.id ? saved : g)));
             if (
               saved.main_executable !== game.main_executable ||
@@ -2476,6 +2733,7 @@ function DetailTitle({ title, version }: { title: string; version: string }) {
 
 function GameDetail({
   game,
+  libraryTags,
   settings,
   pathCheck,
   onRemoved,
@@ -2495,6 +2753,7 @@ function GameDetail({
   onClose,
 }: {
   game: Game;
+  libraryTags: LibraryTag[];
   settings: Settings;
   pathCheck?: LibraryPathCheck;
   onRemoved: () => Promise<void>;
@@ -2514,6 +2773,7 @@ function GameDetail({
   onClose: () => void;
 }) {
   const [draft, setDraft] = useState<GameEdit>({ ...game });
+  const [tagInput, setTagInput] = useState('');
   const formId = useId();
   const detailTabs = [
     ['basic', '基础信息', 'info'],
@@ -2598,7 +2858,12 @@ function GameDetail({
   const busy = requestBusy || maintenanceBusy;
   const [message, setMessage] = useState('');
   const [confirmClose, setConfirmClose] = useState(false);
-  const edit = { ...draft, aliases: lines(aliases), save_paths: lines(saves) };
+  const edit = {
+    ...draft,
+    tags: appendTag(draft.tags ?? [], tagInput, libraryTags),
+    aliases: lines(aliases),
+    save_paths: lines(saves),
+  };
   const configuration: LaunchConfiguration = {
     main_executable: draft.main_executable,
     working_directory: draft.working_directory,
@@ -2676,6 +2941,8 @@ function GameDetail({
     ).some((key) => draft[key] !== game[key]) ||
     JSON.stringify(draft.external_player ?? null) !==
       JSON.stringify(game.external_player ?? null) ||
+    !!tagInput.trim() ||
+    JSON.stringify(draft.tags ?? []) !== JSON.stringify(game.tags) ||
     aliases !== game.aliases.join('\n') ||
     saves !== game.save_paths.join('\n');
   const detailStatus = message || analysisNotice;
@@ -2708,6 +2975,7 @@ function GameDetail({
     return run(async () => {
       const saved = await api.saveGame(edit);
       setDraft({ ...saved });
+      setTagInput('');
       setAliases(saved.aliases.join('\n'));
       setSaves(saved.save_paths.join('\n'));
       onSaved(saved);
@@ -3000,6 +3268,13 @@ function GameDetail({
                   </span>
                 </label>
               </div>
+              <TagEditor
+                tags={draft.tags ?? []}
+                available={libraryTags}
+                value={tagInput}
+                onInput={setTagInput}
+                onChange={(tags) => field('tags', tags)}
+              />
               <ImportMemories
                 gameId={game.id}
                 disabled={busy || launching || analysisLocked || confirmClose}

@@ -273,6 +273,49 @@ fn with_db<T>(
 fn list_games(state: State<'_, AppState>) -> CommandResult<Vec<Game>> {
     with_db(&state, |db| db.games())
 }
+// Organization writes share the existing activity gate with file jobs and launch requests.
+fn with_library_edit<T>(
+    state: &AppState,
+    action: impl FnOnce(&mut Database) -> crate::domain::Result<T>,
+) -> CommandResult<T> {
+    let gate = state.activity.lock().map_err(|_| "操作锁不可用")?;
+    state
+        .imports
+        .ensure_recovery_clear()
+        .map_err(|e| e.to_string())?;
+    if *gate > 0 || state.tasks.active() || state.imports.has_pending_files() {
+        return Err("请先结束当前任务或处理未完成的文件操作".into());
+    }
+    with_db(state, action)
+}
+#[tauri::command]
+fn library_tags(state: State<'_, AppState>) -> CommandResult<Vec<crate::domain::LibraryTag>> {
+    with_db(&state, |db| db.library_tags())
+}
+#[tauri::command]
+fn set_game_favorite(
+    state: State<'_, AppState>,
+    id: String,
+    favorite: bool,
+) -> CommandResult<Game> {
+    with_library_edit(&state, |db| db.set_favorite(&id, favorite))
+}
+#[tauri::command]
+fn set_game_play_statuses(
+    state: State<'_, AppState>,
+    ids: Vec<String>,
+    status: crate::domain::PlayStatus,
+) -> CommandResult<Vec<Game>> {
+    with_library_edit(&state, |db| db.set_play_statuses(&ids, status))
+}
+#[tauri::command]
+fn rename_library_tag(state: State<'_, AppState>, id: String, name: String) -> CommandResult<()> {
+    with_library_edit(&state, |db| db.rename_library_tag(&id, &name))
+}
+#[tauri::command]
+fn delete_library_tag(state: State<'_, AppState>, id: String) -> CommandResult<()> {
+    with_library_edit(&state, |db| db.delete_library_tag(&id))
+}
 #[tauri::command]
 async fn choose_import_sources(app: tauri::AppHandle) -> CommandResult<Vec<String>> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -1658,6 +1701,11 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             open_data_directory,
             list_games,
+            library_tags,
+            set_game_favorite,
+            set_game_play_statuses,
+            rename_library_tag,
+            delete_library_tag,
             choose_import_sources,
             discover_import_sources,
             start_import_analysis,

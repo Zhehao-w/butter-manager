@@ -3371,6 +3371,7 @@ button.library-play-button:active:not(:disabled) {
   flex-wrap: wrap;
   margin-bottom: 12px;
 }
+
 .library-quick-filters {
   display: flex;
   align-items: center;
@@ -5787,4 +5788,244 @@ button.save-editor-entry:active:not(:disabled) {
   margin: 0;
   font-size: 12px;
   line-height: 1.6;
+}
+
+/* Library organization shares the existing fixed row/card dimensions. */
+.library-item-controls {
+  width: 28px;
+  flex: 0 0 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 0;
+}
+.library-item-controls input,
+.library-select-all input,
+.favorite-filter-option input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  flex: none;
+  accent-color: #6e9fe7;
+}
+.favorite-button {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  box-shadow: none;
+  color: #96a8c1;
+}
+.favorite-button.is-favorite {
+  color: #c86e94;
+  background: #fff0f6;
+  border-color: #f5d9e5;
+}
+.game-card {
+  position: relative;
+}
+.game-card > .library-item-controls {
+  position: absolute;
+  top: 66px;
+  right: 18px;
+  height: 24px;
+  margin: 0;
+}
+.game-card .favorite-button {
+  width: 24px;
+  height: 24px;
+}
+.game-card > .game-status-line {
+  gap: 3px;
+}
+.game-card.is-batch-selected {
+  border-color: #9cbfec;
+  background: #edf5ff;
+}
+.game-tags {
+  min-width: 0;
+  max-width: 160px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+  vertical-align: middle;
+}
+.game-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100px;
+  padding: 2px 6px;
+  border: 1px solid #dce8f8;
+  border-radius: 6px;
+  background: #f1f6fd;
+  color: #6785af;
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.game-tags > .game-tag {
+  display: block;
+}
+.game-tags > .tag-overflow {
+  flex: none;
+}
+.game-card .card-engine {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+.game-card .card-engine > span:first-child {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.game-card .game-tags {
+  max-width: 140px;
+}
+.library-batch-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  background: #f0f6ff;
+  border: 1px solid #dce8f8;
+  border-radius: 12px;
+  font-size: 12px;
+}
+.library-select-all,
+.favorite-filter-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+}
+.library-selected-count {
+  color: var(--text-secondary);
+  margin-right: auto;
+}
+.library-batch-bar select {
+  width: 100px;
+}
+.library-batch-bar :is(button, select) {
+  height: 32px;
+  font-size: 12px;
+}
+.filter-options-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.filter-options-tags .filter-option {
+  width: auto;
+  min-height: 34px;
+  max-width: 100%;
+  padding: 6px 10px;
+}
+.filter-options-tags .filter-option-icon {
+  width: 20px;
+  height: 20px;
+}
+.filter-options-tags .filter-option-label {
+  overflow-wrap: anywhere;
+}
+.manage-tags-button {
+  margin-top: 10px;
+}
+.tag-editor {
+  min-width: 0;
+  margin: 16px 0 0;
+  padding: 12px 14px;
+  border: 1px solid #dce8f8;
+  border-radius: 12px;
+}
+.tag-editor legend {
+  padding: 0 5px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.tag-editor-selected,
+.tag-editor-options {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.tag-editor-selected {
+  min-height: 26px;
+}
+.tag-editor-selected .game-tag {
+  max-width: 100%;
+}
+.tag-editor-selected .game-tag > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tag-editor-input {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+}
+.tag-editor-input input {
+  flex: 1;
+  min-width: 0;
+}
+.tag-editor details {
+  margin-top: 10px;
+}
+.tag-editor-options {
+  margin-top: 8px;
+}
+.tag-editor-options button {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  font-size: 12px;
+}
+.tag-manager-list {
+  max-height: 300px;
+  overflow: auto;
+  margin-top: 12px;
+}
+.tag-manager-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid #e3ecf9;
+}
+.tag-manager-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tag-manager-row button {
+  font-size: 12px;
+  padding: 5px 8px;
+}
+.tag-manager-edit {
+  margin-top: 14px;
+  padding: 12px;
+  border-radius: 10px;
+  background: #f1f6fd;
+}
+.tag-manager-edit .header-actions {
+  justify-content: flex-end;
+  margin-top: 10px;
 }

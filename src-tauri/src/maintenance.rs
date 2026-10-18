@@ -1039,6 +1039,8 @@ pub(crate) mod tests {
             updated_at: "unchanged".into(),
             last_launched_at: None,
             play_status: crate::domain::PlayStatus::Unplayed,
+            favorite: false,
+            tags: vec![],
             aliases: vec![],
             save_paths: vec![],
         }

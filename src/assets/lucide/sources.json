@@ -143,5 +143,10 @@
     "file": "flag.svg",
     "source": "https://raw.githubusercontent.com/lucide-icons/lucide/0.468.0/icons/flag.svg",
     "sha256": "73d58bafed0501f646bdbb015cbb4de22142836f7ff1f60c1c6bd3b0b72d81db"
+  },
+  {
+    "file": "star.svg",
+    "source": "https://raw.githubusercontent.com/lucide-icons/lucide/0.468.0/icons/star.svg",
+    "sha256": "c59da86b889569387db28e69ad00a89f96af22863ad9eea9aa12c4876a14338c"
   }
 ]

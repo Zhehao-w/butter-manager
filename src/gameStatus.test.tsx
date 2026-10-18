@@ -28,10 +28,35 @@ export const statusGame: Game = {
   updated_at: '',
   last_launched_at: null,
   play_status: 'UNPLAYED',
+  favorite: false,
+  tags: [],
   aliases: [],
   save_paths: [],
 };
 describe('library status and preferences', () => {
+  it('combines favorites and all selected tag IDs with existing engine, mode and play filters', () => {
+    const game = {
+      ...statusGame,
+      favorite: true,
+      tags: [
+        { id: 'a', name: '汉化' },
+        { id: 'b', name: '剧情向' },
+      ],
+    };
+    const filters = {
+      ...emptyFilters(),
+      favoritesOnly: true,
+      tags: ['a', 'b'],
+      engines: ['Unity'],
+      statuses: ['UNPLAYED' as const],
+    };
+    expect(matchesFilters(game, filters)).toBe(true);
+    expect(matchesFilters({ ...game, favorite: false }, filters)).toBe(false);
+    expect(matchesFilters({ ...game, tags: game.tags.slice(0, 1) }, filters)).toBe(false);
+    expect(matchesFilters({ ...game, engine: 'Godot' }, filters)).toBe(false);
+    expect(matchesFilters({ ...game, play_status: 'COMPLETED' }, filters)).toBe(false);
+    expect(matchesFilters({ ...game, tags: [], favorite: false }, emptyFilters())).toBe(true);
+  });
   it('ranks five engine types by total counts, keeping all remaining types and Unknown in Other', () => {
     const games = [
       'Unity',

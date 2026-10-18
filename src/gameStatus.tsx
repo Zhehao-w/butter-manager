@@ -2,7 +2,7 @@ import { useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { launchLabel } from './qsp';
 import { engineTone, Icon, Modal } from './ui';
 import type { IconName } from './ui';
-import type { Game, PlayStatus } from './types';
+import type { Game, LibraryTag, PlayStatus } from './types';
 
 export const playLabels: Record<PlayStatus, string> = {
   UNPLAYED: '未启动',
@@ -35,8 +35,17 @@ export interface GameFilters {
   statuses: PlayStatus[];
   engines: string[];
   modes: string[];
+  favoritesOnly?: boolean;
+  tags?: string[];
 }
-export const emptyFilters = (): GameFilters => ({ statuses: [], engines: [], modes: [] });
+export const emptyFilters = (): GameFilters => ({
+  statuses: [],
+  engines: [],
+  modes: [],
+  favoritesOnly: false,
+  tags: [],
+});
+type FilterGroup = 'statuses' | 'engines' | 'modes' | 'tags';
 export function PlayStatusControl({
   value,
   onChange,
@@ -70,7 +79,8 @@ export function PlayStatusControl({
     </div>
   );
 }
-function filterAppearance(group: keyof GameFilters, key: string): { icon: IconName; tone: string } {
+function filterAppearance(group: FilterGroup, key: string): { icon: IconName; tone: string } {
+  if (group === 'tags') return { icon: 'tag', tone: 'blue' };
   if (group === 'statuses') {
     return playAppearance[key as PlayStatus];
   }
@@ -108,7 +118,9 @@ export function matchesFilters(game: Game, filters: GameFilters) {
   return (
     (!filters.statuses.length || filters.statuses.includes(status)) &&
     (!filters.engines.length || filters.engines.includes(game.engine)) &&
-    (!filters.modes.length || filters.modes.includes(launchLabel(game)))
+    (!filters.modes.length || filters.modes.includes(launchLabel(game))) &&
+    (!filters.favoritesOnly || game.favorite) &&
+    (filters.tags ?? []).every((id) => game.tags.some((tag) => tag.id === id))
   );
 }
 export function engineQuickGroups(games: Game[]) {
@@ -242,14 +254,23 @@ export function LibraryFilters({
   games,
   value,
   onChange,
+  tags = [],
+  onManageTags,
 }: {
+  tags?: LibraryTag[];
+  onManageTags?: () => void;
   games: Game[];
   value: GameFilters;
   onChange: (value: GameFilters) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<GameFilters>(emptyFilters);
-  const count = value.statuses.length + value.engines.length + value.modes.length;
+  const count =
+    value.statuses.length +
+    value.engines.length +
+    value.modes.length +
+    (value.tags?.length ?? 0) +
+    Number(!!value.favoritesOnly);
   const engines = useMemo(
     () =>
       [...new Set([...games.map((g) => g.engine), ...value.engines])].sort(
@@ -257,9 +278,9 @@ export function LibraryFilters({
       ),
     [games, value.engines],
   );
-  const toggle = (group: keyof GameFilters, key: string) => {
+  const toggle = (group: FilterGroup, key: string) => {
     setDraft((previous) => {
-      const current: string[] = previous[group];
+      const current: string[] = previous[group] ?? [];
       return {
         ...previous,
         [group]: current.includes(key) ? current.filter((s) => s !== key) : [...current, key],
@@ -317,19 +338,34 @@ export function LibraryFilters({
           }
         >
           <div className="library-filter-groups">
+            <fieldset>
+              <legend>收藏</legend>
+              <label className="favorite-filter-option">
+                <input
+                  type="checkbox"
+                  checked={!!draft.favoritesOnly}
+                  onChange={(event) =>
+                    setDraft((current) => ({ ...current, favoritesOnly: event.target.checked }))
+                  }
+                />
+                <Icon name="star" size={17} />
+                只看收藏
+              </label>
+            </fieldset>
             {(
               [
                 ['statuses', '游玩状态', Object.entries(playLabels)],
                 ['engines', '游戏引擎', engines.map((e) => [e, e === 'Unknown' ? '未识别' : e])],
                 ['modes', '启动方式', launchModes.map((m) => [m, m])],
-              ] as [keyof GameFilters, string, string[][]][]
+                ['tags', '自定义标签（同时满足）', tags.map((tag) => [tag.id, tag.name])],
+              ] as [FilterGroup, string, string[][]][]
             ).map(([group, title, options]) => (
               <fieldset key={group}>
                 <legend>{title}</legend>
                 <div className={`filter-options filter-options-${group}`}>
                   {options.map(([key, label]) => {
                     const appearance = filterAppearance(group, key);
-                    const selected = (draft[group] as string[]).includes(key);
+                    const selected = (draft[group] ?? []).includes(key);
                     return (
                       <label
                         key={key}
@@ -348,6 +384,25 @@ export function LibraryFilters({
                     );
                   })}
                 </div>
+                {group === 'tags' && (
+                  <>
+                    {!options.length && <p className="muted">尚无标签，可在游戏详情中添加。</p>}
+                    {onManageTags && (
+                      <button
+                        type="button"
+                        className="manage-tags-button"
+                        onClick={() => {
+                          onChange(draft);
+                          setOpen(false);
+                          onManageTags();
+                        }}
+                      >
+                        <Icon name="tag" size={14} />
+                        管理标签
+                      </button>
+                    )}
+                  </>
+                )}
               </fieldset>
             ))}
           </div>

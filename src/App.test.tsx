@@ -64,6 +64,219 @@ async function openDetail() {
   return screen.getByRole('dialog', { name: game.display_title });
 }
 
+describe('library organization', () => {
+  it('keeps manual organization changes when a completed scan synchronization returns later', async () => {
+    const tagged = { ...game, tags: [{ id: 'tag', name: '汉化' }] };
+    let finishSync!: (games: Game[]) => void;
+    vi.mocked(api.games).mockResolvedValue([tagged]);
+    vi.mocked(api.syncScanMtool).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishSync = resolve;
+        }),
+    );
+    vi.mocked(api.setFavorite).mockResolvedValue({ ...tagged, favorite: true });
+    vi.mocked(api.setPlayStatuses).mockResolvedValue([
+      { ...tagged, favorite: true, play_status: 'COMPLETED' },
+    ]);
+    render(<App />);
+    await waitForEnabledButton('扫描目录');
+    fireEvent.click(screen.getByRole('button', { name: '扫描目录' }));
+    await waitFor(() => expect(api.syncScanMtool).toHaveBeenCalledOnce());
+    goLibrary();
+    await waitForEnabledButton(`收藏 ${game.display_title}`);
+    fireEvent.click(screen.getByRole('button', { name: `收藏 ${game.display_title}` }));
+    await screen.findByRole('button', { name: `取消收藏 ${game.display_title}` });
+    await waitForEnabledButton('批量选择');
+    fireEvent.click(screen.getByRole('button', { name: '批量选择' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: '全选当前筛选结果' }));
+    fireEvent.click(screen.getByRole('button', { name: '应用到所选' }));
+    await screen.findByText('已选 0 个');
+    await waitForEnabledButton('结束选择');
+    fireEvent.click(screen.getByRole('button', { name: '结束选择' }));
+    await act(async () => {
+      finishSync([{ ...game, engine: 'Unity' }]);
+    });
+    expect(screen.getByRole('button', { name: `取消收藏 ${game.display_title}` })).toBeTruthy();
+    const row = screen.getByRole('row', { name: new RegExp(game.display_title) });
+    expect(row.textContent).toContain('已通关');
+    expect(row.textContent).toContain('汉化');
+    expect(row.textContent).toContain('Unity');
+  });
+  it('keeps favorites when a previously submitted launch response arrives later', async () => {
+    let finishLaunch!: (value: Game) => void;
+    vi.mocked(api.play).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishLaunch = resolve;
+        }),
+    );
+    vi.mocked(api.setFavorite).mockResolvedValue({ ...game, favorite: true });
+    render(<App />);
+    fireEvent.click(await screen.findByRole('button', { name: `启动 ${game.display_title}` }));
+    fireEvent.click(screen.getByRole('button', { name: `收藏 ${game.display_title}` }));
+    await screen.findByRole('button', { name: `取消收藏 ${game.display_title}` });
+    await waitForEnabledButton('批量选择');
+    fireEvent.click(screen.getByRole('button', { name: '批量选择' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: '全选当前筛选结果' }));
+    expect((screen.getByRole('button', { name: '应用到所选' }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+    await act(async () => {
+      finishLaunch({ ...game, play_status: 'PLAYING', last_launched_at: '2026-10-18T00:00:00Z' });
+    });
+    expect((screen.getByRole('button', { name: '应用到所选' }) as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+    fireEvent.click(screen.getByRole('button', { name: '结束选择' }));
+    expect(screen.getByRole('button', { name: `取消收藏 ${game.display_title}` })).toBeTruthy();
+    expect(screen.getByRole('row', { name: new RegExp(game.display_title) }).textContent).toContain(
+      '正在玩',
+    );
+  });
+  it.each(['list', 'grid'] as const)(
+    'saves favorites in %s without opening details or launching and keeps failed changes',
+    async (layout) => {
+      const favorite = { ...game, favorite: true };
+      vi.mocked(api.setFavorite)
+        .mockResolvedValueOnce(favorite)
+        .mockRejectedValueOnce(new Error('synthetic favorite failure'));
+      render(<App />);
+      await screen.findByRole('button', { name: game.display_title });
+      if (layout === 'grid') fireEvent.click(screen.getByRole('button', { name: '卡片视图' }));
+      fireEvent.click(screen.getByRole('button', { name: `收藏 ${game.display_title}` }));
+      const remove = await screen.findByRole('button', { name: `取消收藏 ${game.display_title}` });
+      expect(api.setFavorite).toHaveBeenLastCalledWith(game.id, true);
+      expect(screen.queryByRole('dialog')).toBeNull();
+      expect(api.play).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole('button', { name: '收藏' }));
+      expect(screen.getByRole('button', { name: game.display_title })).toBeTruthy();
+      await waitFor(() => expect((remove as HTMLButtonElement).disabled).toBe(false));
+      fireEvent.click(remove);
+      await screen.findByText('Error: synthetic favorite failure');
+      expect(screen.getByRole('button', { name: `取消收藏 ${game.display_title}` })).toBeTruthy();
+    },
+  );
+
+  it('keeps new tag input in the detail dirty guard and saves pending input with the existing form', async () => {
+    vi.mocked(api.saveGame).mockImplementation(async (edit) => ({
+      ...game,
+      ...edit,
+      tags: (edit.tags ?? []).map((tag, index) => ({ ...tag, id: `tag-${index}` })),
+    }));
+    const modal = await openDetail();
+    fireEvent.change(within(modal).getByLabelText('新标签'), { target: { value: '汉化' } });
+    fireEvent.click(within(modal).getByRole('button', { name: '关闭弹窗' }));
+    const confirmation = screen.getByRole('dialog', { name: '放弃未保存修改？' });
+    fireEvent.click(within(confirmation).getByRole('button', { name: '继续编辑' }));
+    fireEvent.click(within(modal).getByRole('button', { name: '保存资料' }));
+    await waitFor(() => expect(api.saveGame).toHaveBeenCalledOnce());
+    expect(vi.mocked(api.saveGame).mock.calls[0][0].tags).toEqual([{ id: '', name: '汉化' }]);
+    await waitFor(() =>
+      expect(
+        (within(modal).getByRole('button', { name: '保存资料' }) as HTMLButtonElement).disabled,
+      ).toBe(true),
+    );
+    expect((within(modal).getByLabelText('新标签') as HTMLInputElement).value).toBe('');
+    expect(within(modal).getByRole('button', { name: '移除标签 汉化' })).toBeTruthy();
+  });
+
+  it('renames tags across games and removes deleted tag filters without touching game files', async () => {
+    let tags = [{ id: 'tag', name: '汉化' }];
+    let library = [
+      { ...game, tags, favorite: true },
+      makeGame({ id: 'other', display_title: 'Other' }),
+    ];
+    vi.mocked(api.games).mockImplementation(async () => library);
+    vi.mocked(api.libraryTags).mockImplementation(async () => tags);
+    vi.mocked(api.renameTag).mockImplementation(async (id, name) => {
+      tags = [{ id, name }];
+      library = library.map((value) => (value.id === game.id ? { ...value, tags } : value));
+    });
+    vi.mocked(api.deleteTag).mockImplementation(async () => {
+      tags = [];
+      library = library.map((value) => ({ ...value, tags: [] }));
+    });
+    render(<App />);
+    await screen.findByRole('button', { name: game.display_title });
+    fireEvent.click(screen.getByRole('button', { name: /^筛选/ }));
+    fireEvent.click(
+      within(screen.getByRole('dialog', { name: '筛选游戏' })).getByLabelText('汉化'),
+    );
+    fireEvent.click(screen.getByRole('button', { name: '完成' }));
+    expect(screen.queryByRole('button', { name: 'Other' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /^筛选/ }));
+    fireEvent.click(screen.getByRole('button', { name: '管理标签' }));
+    const manager = screen.getByRole('dialog', { name: '管理标签' });
+    fireEvent.click(within(manager).getByRole('button', { name: '重命名标签 汉化' }));
+    fireEvent.change(within(manager).getByLabelText('标签名称'), { target: { value: '剧情向' } });
+    fireEvent.click(within(manager).getByRole('button', { name: '保存名称' }));
+    await waitFor(() => expect(api.renameTag).toHaveBeenCalledWith('tag', '剧情向'));
+    const remove = await within(manager).findByRole('button', { name: '删除标签 剧情向' });
+    await waitFor(() => expect((remove as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(remove);
+    fireEvent.click(within(manager).getByRole('button', { name: '确认删除标签' }));
+    await waitFor(() =>
+      expect(within(manager).queryByRole('button', { name: '删除标签 剧情向' })).toBeNull(),
+    );
+    fireEvent.click(within(manager).getByRole('button', { name: '关闭' }));
+    expect(await screen.findByRole('button', { name: 'Other' })).toBeTruthy();
+    expect(api.deleteFiles).not.toHaveBeenCalled();
+    expect(api.removeGame).not.toHaveBeenCalled();
+  });
+
+  it.each(['list', 'grid'] as const)(
+    'bulk-selects all %s results beyond the viewport and clears selections when filtering',
+    async (layout) => {
+      mockLibraryViewport();
+      const library = Array.from({ length: 120 }, (_, index) =>
+        makeGame({ id: `id-${index}`, display_title: `Game ${index}` }),
+      );
+      vi.mocked(api.games).mockResolvedValue(library);
+      vi.mocked(api.setPlayStatuses).mockImplementation(async (ids, status) =>
+        library
+          .filter((value) => ids.includes(value.id))
+          .map((value) => ({ ...value, play_status: status })),
+      );
+      render(<App />);
+      await screen.findByRole('button', { name: 'Game 0' });
+      if (layout === 'grid') fireEvent.click(screen.getByRole('button', { name: '卡片视图' }));
+      fireEvent.click(screen.getByRole('button', { name: '批量选择' }));
+      expect(screen.getAllByRole('checkbox', { name: /^选择 Game/ }).length).toBeLessThan(120);
+      fireEvent.click(screen.getByRole('checkbox', { name: '全选当前筛选结果' }));
+      expect(screen.getByText('已选 120 个')).toBeTruthy();
+      fireEvent.change(screen.getByRole('combobox', { name: '游戏排序' }), {
+        target: { value: 'name-desc' },
+      });
+      expect(screen.getByText('已选 120 个')).toBeTruthy();
+      fireEvent.click(screen.getByRole('button', { name: '应用到所选' }));
+      await waitFor(() => expect(api.setPlayStatuses).toHaveBeenCalledOnce());
+      expect(new Set(vi.mocked(api.setPlayStatuses).mock.calls[0][0])).toEqual(
+        new Set(library.map((value) => value.id)),
+      );
+      expect(vi.mocked(api.setPlayStatuses).mock.calls[0][1]).toBe('COMPLETED');
+      await screen.findByText('已选 0 个');
+      await waitFor(() =>
+        expect(
+          (screen.getByRole('checkbox', { name: '全选当前筛选结果' }) as HTMLInputElement).disabled,
+        ).toBe(false),
+      );
+      fireEvent.click(screen.getByRole('checkbox', { name: '全选当前筛选结果' }));
+      fireEvent.change(screen.getByPlaceholderText('搜索游戏（名称、别名、路径）'), {
+        target: { value: 'Game 119' },
+      });
+      expect(screen.getByText('已选 0 个')).toBeTruthy();
+      fireEvent.click(screen.getByRole('checkbox', { name: '全选当前筛选结果' }));
+      vi.mocked(api.setPlayStatuses).mockRejectedValueOnce(new Error('synthetic batch failure'));
+      fireEvent.click(screen.getByRole('button', { name: '应用到所选' }));
+      await screen.findByText('Error: synthetic batch failure');
+      expect(screen.getByText('已选 1 个')).toBeTruthy();
+      expect(screen.queryByRole('dialog')).toBeNull();
+      expect(api.play).not.toHaveBeenCalled();
+    },
+  );
+});
+
 it.each(['list', 'grid'] as const)(
   'blocks %s and detail launches while a task is active',
   async (layout) => {

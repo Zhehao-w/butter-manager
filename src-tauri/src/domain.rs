@@ -85,6 +85,12 @@ impl PlayStatus {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LibraryTag {
+    pub id: String,
+    pub name: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Game {
     pub id: String,
@@ -105,6 +111,10 @@ pub struct Game {
     pub updated_at: String,
     pub last_launched_at: Option<String>,
     pub play_status: PlayStatus,
+    #[serde(default)]
+    pub favorite: bool,
+    #[serde(default)]
+    pub tags: Vec<LibraryTag>,
     pub aliases: Vec<String>,
     pub save_paths: Vec<String>,
 }
@@ -135,6 +145,9 @@ pub struct GameEdit {
     pub external_player: Option<ExternalPlayer>,
     pub mtool_target_exe: Option<String>,
     pub mtool_loader: Option<String>,
+    /// Omitted by older callers: preserve assignments. Empty IDs request new tags.
+    #[serde(default)]
+    pub tags: Option<Vec<LibraryTag>>,
     pub aliases: Vec<String>,
     pub save_paths: Vec<String>,
 }

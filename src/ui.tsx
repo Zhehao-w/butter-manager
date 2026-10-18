@@ -30,6 +30,7 @@ import filterIcon from './assets/lucide/filter.svg';
 import swordsIcon from './assets/lucide/swords.svg';
 import wandIcon from './assets/lucide/wand-sparkles.svg';
 import flagIcon from './assets/lucide/flag.svg';
+import starIcon from './assets/lucide/star.svg';
 
 // Unmodified Lucide 0.468.0 assets; see assets/lucide/README.md for upstream and licenses.
 const iconAssets = {
@@ -62,6 +63,7 @@ const iconAssets = {
   swords: swordsIcon,
   wand: wandIcon,
   flag: flagIcon,
+  star: starIcon,
 };
 export type IconName = keyof typeof iconAssets;
 export function SearchField({

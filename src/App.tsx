@@ -129,7 +129,7 @@ export default function App() {
     });
   }
   async function organizationAction(work: () => Promise<void>) {
-    if (organizationRequest.current || taskActive) return;
+    if (organizationRequest.current || taskActive || launchRequests.current.size > 0) return;
     organizationRequest.current = true;
     setOrganizationBusy(true);
     try {
@@ -706,7 +706,7 @@ export default function App() {
         ) : (
           <FavoriteButton
             game={game}
-            disabled={organizationBusy || taskActive}
+            disabled={organizationBusy || taskActive || launchingIds.size > 0}
             onChange={() => void toggleFavorite(game)}
           />
         )}
@@ -1883,7 +1883,7 @@ export default function App() {
         <TagManager
           tags={libraryTags}
           games={games}
-          locked={taskActive || organizationBusy}
+          locked={taskActive || organizationBusy || launchingIds.size > 0}
           onChanged={refreshOrganization}
           onClose={() => setTagManagerOpen(false)}
         />

@@ -103,19 +103,22 @@ describe('library organization', () => {
     expect(row.textContent).toContain('汉化');
     expect(row.textContent).toContain('Unity');
   });
-  it('keeps favorites when a previously submitted launch response arrives later', async () => {
+  it('blocks favorites and batch edits until a successful launch request finishes', async () => {
     let finishLaunch!: (value: Game) => void;
+    vi.mocked(api.games).mockResolvedValue([{ ...game, favorite: true }]);
     vi.mocked(api.play).mockImplementation(
       () =>
         new Promise((resolve) => {
           finishLaunch = resolve;
         }),
     );
-    vi.mocked(api.setFavorite).mockResolvedValue({ ...game, favorite: true });
+    vi.mocked(api.setFavorite).mockResolvedValue(game);
     render(<App />);
     fireEvent.click(await screen.findByRole('button', { name: `启动 ${game.display_title}` }));
-    fireEvent.click(screen.getByRole('button', { name: `收藏 ${game.display_title}` }));
-    await screen.findByRole('button', { name: `取消收藏 ${game.display_title}` });
+    const favorite = screen.getByRole('button', { name: `取消收藏 ${game.display_title}` });
+    expect((favorite as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(favorite);
+    expect(api.setFavorite).not.toHaveBeenCalled();
     await waitForEnabledButton('批量选择');
     fireEvent.click(screen.getByRole('button', { name: '批量选择' }));
     fireEvent.click(screen.getByRole('checkbox', { name: '全选当前筛选结果' }));
@@ -129,11 +132,56 @@ describe('library organization', () => {
       false,
     );
     fireEvent.click(screen.getByRole('button', { name: '结束选择' }));
-    expect(screen.getByRole('button', { name: `取消收藏 ${game.display_title}` })).toBeTruthy();
+    await waitForEnabledButton(`取消收藏 ${game.display_title}`);
+    fireEvent.click(screen.getByRole('button', { name: `取消收藏 ${game.display_title}` }));
+    await screen.findByRole('button', { name: `收藏 ${game.display_title}` });
+    expect(api.setFavorite).toHaveBeenCalledExactlyOnceWith(game.id, false);
     expect(screen.getByRole('row', { name: new RegExp(game.display_title) }).textContent).toContain(
       '正在玩',
     );
   });
+  it.each(['list', 'grid'] as const)(
+    'keeps every %s favorite disabled when another launch fails but one request remains',
+    async (layout) => {
+      const other = makeGame({ id: 'other', display_title: 'Other', favorite: true });
+      const idle = makeGame({ id: 'idle', display_title: 'Idle' });
+      let finishLaunch!: (value: Game) => void;
+      vi.mocked(api.games).mockResolvedValue([game, other, idle]);
+      vi.mocked(api.play).mockImplementation((id) =>
+        id === game.id
+          ? new Promise((resolve) => {
+              finishLaunch = resolve;
+            })
+          : Promise.reject(new Error('synthetic launch gate failure')),
+      );
+      vi.mocked(api.setFavorite).mockResolvedValue({ ...idle, favorite: true });
+      render(<App />);
+      await screen.findByRole('button', { name: game.display_title });
+      if (layout === 'grid') fireEvent.click(screen.getByRole('button', { name: '卡片视图' }));
+      fireEvent.click(screen.getByRole('button', { name: `启动 ${game.display_title}` }));
+      const favorites = () =>
+        [game, other, idle].map(
+          (value) =>
+            screen.getByRole('button', {
+              name: `${value.favorite ? '取消收藏' : '收藏'} ${value.display_title}`,
+            }) as HTMLButtonElement,
+        );
+      expect(favorites().every((button) => button.disabled)).toBe(true);
+      fireEvent.click(screen.getByRole('button', { name: '收藏 Idle' }));
+      expect(api.setFavorite).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole('button', { name: '启动 Other' }));
+      await screen.findByText('Error: synthetic launch gate failure');
+      expect(favorites().every((button) => button.disabled)).toBe(true);
+      expect(api.setFavorite).not.toHaveBeenCalled();
+      await act(async () => {
+        finishLaunch({ ...game, play_status: 'PLAYING' });
+      });
+      await waitFor(() => expect(favorites().every((button) => !button.disabled)).toBe(true));
+      fireEvent.click(screen.getByRole('button', { name: '收藏 Idle' }));
+      await screen.findByRole('button', { name: '取消收藏 Idle' });
+      expect(api.setFavorite).toHaveBeenCalledExactlyOnceWith(idle.id, true);
+    },
+  );
   it.each(['list', 'grid'] as const)(
     'saves favorites in %s without opening details or launching and keeps failed changes',
     async (layout) => {
@@ -182,6 +230,10 @@ describe('library organization', () => {
   });
 
   it('renames tags across games and removes deleted tag filters without touching game files', async () => {
+    let finishLaunch!: (value: Game) => void;
+    vi.mocked(api.play).mockImplementation(
+      () => new Promise<Game>((resolve) => (finishLaunch = resolve)),
+    );
     let tags = [{ id: 'tag', name: '汉化' }];
     let library = [
       { ...game, tags, favorite: true },
@@ -199,6 +251,7 @@ describe('library organization', () => {
     });
     render(<App />);
     await screen.findByRole('button', { name: game.display_title });
+    fireEvent.click(screen.getByRole('button', { name: `启动 ${game.display_title}` }));
     fireEvent.click(screen.getByRole('button', { name: /^筛选/ }));
     fireEvent.click(
       within(screen.getByRole('dialog', { name: '筛选游戏' })).getByLabelText('汉化'),
@@ -208,6 +261,17 @@ describe('library organization', () => {
     fireEvent.click(screen.getByRole('button', { name: /^筛选/ }));
     fireEvent.click(screen.getByRole('button', { name: '管理标签' }));
     const manager = screen.getByRole('dialog', { name: '管理标签' });
+    const rename = within(manager).getByRole('button', { name: '重命名标签 汉化' });
+    const deleteTag = within(manager).getByRole('button', { name: '删除标签 汉化' });
+    expect((rename as HTMLButtonElement).disabled).toBe(true);
+    expect((deleteTag as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(rename);
+    fireEvent.click(deleteTag);
+    expect(api.renameTag).not.toHaveBeenCalled();
+    expect(api.deleteTag).not.toHaveBeenCalled();
+    await act(async () => finishLaunch({ ...library[0], play_status: 'PLAYING' }));
+    await waitFor(() => expect((rename as HTMLButtonElement).disabled).toBe(false));
+    expect((deleteTag as HTMLButtonElement).disabled).toBe(false);
     fireEvent.click(within(manager).getByRole('button', { name: '重命名标签 汉化' }));
     fireEvent.change(within(manager).getByLabelText('标签名称'), { target: { value: '剧情向' } });
     fireEvent.click(within(manager).getByRole('button', { name: '保存名称' }));
@@ -2042,6 +2106,10 @@ describe('iteration interactions', () => {
     fireEvent.click(play);
     await screen.findByText('启动文件已被移动');
     expect((play as HTMLButtonElement).disabled).toBe(false);
+    expect(
+      (screen.getByRole('button', { name: `收藏 ${game.display_title}` }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false);
     expect(within(play.closest('tr')!).getByText('未启动')).toBeTruthy();
     expect(screen.queryByRole('dialog')).toBeNull();
   });

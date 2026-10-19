@@ -109,6 +109,8 @@ export const api = {
   libraryTags: () => invoke<LibraryTag[]>('library_tags'),
   setFavorite: (id: string, favorite: boolean) =>
     invoke<Game>('set_game_favorite', { id, favorite }),
+  setFavorites: (ids: string[], favorite: boolean) =>
+    invoke<Game[]>('set_game_favorites', { ids, favorite }),
   setPlayStatuses: (ids: string[], status: PlayStatus) =>
     invoke<Game[]>('set_game_play_statuses', { ids, status }),
   renameTag: (id: string, name: string) => invoke<void>('rename_library_tag', { id, name }),

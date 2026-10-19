@@ -69,6 +69,23 @@ impl Database {
     }
 
     pub fn set_play_statuses(&mut self, ids: &[String], status: PlayStatus) -> Result<Vec<Game>> {
+        self.set_library_field(
+            ids,
+            "UPDATE games SET play_status=?2 WHERE id=?1",
+            status.as_str(),
+        )
+    }
+
+    pub fn set_favorites(&mut self, ids: &[String], favorite: bool) -> Result<Vec<Game>> {
+        self.set_library_field(ids, "UPDATE games SET favorite=?2 WHERE id=?1", favorite)
+    }
+
+    fn set_library_field(
+        &mut self,
+        ids: &[String],
+        sql: &str,
+        value: impl rusqlite::ToSql,
+    ) -> Result<Vec<Game>> {
         if ids.is_empty() || ids.len() > 10000 {
             return Err(Error::Validation("请选择 1–10000 个游戏".into()));
         }
@@ -80,11 +97,7 @@ impl Database {
             .collect();
         let tx = self.connection.transaction()?;
         for id in &unique {
-            if tx.execute(
-                "UPDATE games SET play_status=?2 WHERE id=?1",
-                params![id, status.as_str()],
-            )? != 1
-            {
+            if tx.execute(sql, params![id, value])? != 1 {
                 return Err(Error::Validation("所选游戏已变化，请刷新列表后重试".into()));
             }
         }
@@ -391,6 +404,49 @@ mod tests {
     }
 
     #[test]
+    fn bulk_favorites_are_atomic_preserve_other_fields_and_support_both_values() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut db = Database::open(&temp.path().join("isolated.db")).unwrap();
+        insert(&db, "a");
+        insert(&db, "b");
+        db.record_launch("a").unwrap();
+        db.set_favorite("a", true).unwrap();
+        assign(&mut db, "a", &["汉化"]);
+        let before = serde_json::to_value(db.games().unwrap()).unwrap();
+        let history = db.launch_history("a").unwrap();
+        assert!(db.set_favorites(&[], true).is_err());
+        assert!(db.set_favorites(&vec!["a".into(); 10001], true).is_err());
+        assert!(db
+            .set_favorites(&["a".into(), "missing".into()], false)
+            .is_err());
+        assert_eq!(serde_json::to_value(db.games().unwrap()).unwrap(), before);
+        db.connection.execute_batch("CREATE TEMP TRIGGER fail_favorite BEFORE UPDATE OF favorite ON games WHEN OLD.id='b' BEGIN SELECT RAISE(ABORT,'fixture failure'); END;").unwrap();
+        assert!(db.set_favorites(&["a".into(), "b".into()], false).is_err());
+        assert_eq!(serde_json::to_value(db.games().unwrap()).unwrap(), before);
+        db.connection
+            .execute_batch("DROP TRIGGER fail_favorite;")
+            .unwrap();
+        for favorite in [true, true, false] {
+            let result = db
+                .set_favorites(&["a".into(), "a".into(), "b".into()], favorite)
+                .unwrap();
+            assert_eq!(result.len(), 2);
+            let after = serde_json::to_value(db.games().unwrap()).unwrap();
+            for (before, after) in before
+                .as_array()
+                .unwrap()
+                .iter()
+                .zip(after.as_array().unwrap())
+            {
+                let mut expected = before.clone();
+                expected["favorite"] = favorite.into();
+                assert_eq!(*after, expected);
+            }
+            assert_eq!(db.launch_history("a").unwrap(), history);
+        }
+    }
+
+    #[test]
     fn large_bulk_selection_loads_all_tags_and_deduplicates_across_query_chunks() {
         let temp = tempfile::tempdir().unwrap();
         let mut db = Database::open(&temp.path().join("isolated.db")).unwrap();
@@ -415,5 +471,10 @@ mod tests {
         assert!(result
             .iter()
             .all(|game| game.tags == [tag.clone()] && game.play_status == PlayStatus::Completed));
+        let favorites = db.set_favorites(&ids, true).unwrap();
+        assert_eq!(favorites.len(), 1001);
+        assert!(favorites.iter().all(|game| game.favorite
+            && game.tags == [tag.clone()]
+            && game.play_status == PlayStatus::Completed));
     }
 }

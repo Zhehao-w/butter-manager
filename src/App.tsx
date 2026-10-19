@@ -54,7 +54,15 @@ import { SaveEditor } from './SaveEditor';
 import { WindowTitleBar } from './WindowTitleBar';
 import { RenpyAppdataCleanup } from './RenpyAppdataCleanup';
 import { LibraryRelocation } from './LibraryRelocation';
-import { appendTag, FavoriteButton, GameTags, TagEditor, TagManager } from './LibraryOrganization';
+import {
+  appendTag,
+  FavoriteButton,
+  GameTags,
+  LibraryBatchActions,
+  LibrarySelectAll,
+  TagEditor,
+  TagManager,
+} from './LibraryOrganization';
 import { WindowCloseGuards, useWindowCloseGuard, useWindowClosing } from './windowClose';
 import { useLibraryLayout, useSavedSort } from './preferences';
 import {
@@ -118,7 +126,6 @@ export default function App() {
   const organizationRequest = useRef(false);
   const [selectionMode, setSelectionMode] = useState(false);
   const [librarySelected, setLibrarySelected] = useState<Set<string>>(new Set());
-  const [batchStatus, setBatchStatus] = useState<PlayStatus>('COMPLETED');
   function toggleLibrarySelection(id: string) {
     if (organizationBusy || taskActive) return;
     setLibrarySelected((current) => {
@@ -675,12 +682,12 @@ export default function App() {
       return next.size === current.size ? current : next;
     });
   }, [filtered]);
-  async function applyBatchStatus() {
+  async function applyBatchStatus(status: PlayStatus) {
     if (launchRequests.current.size) return;
     const ids = filtered.filter((game) => librarySelected.has(game.id)).map((game) => game.id);
     if (!ids.length) return;
     await organizationAction(async () => {
-      const saved = await api.setPlayStatuses(ids, batchStatus);
+      const saved = await api.setPlayStatuses(ids, status);
       const updated = new Map(saved.map((game) => [game.id, game]));
       setGames((current) =>
         current.map((game) =>
@@ -688,8 +695,35 @@ export default function App() {
         ),
       );
       setLibrarySelected(new Set());
-      setToast(`已将 ${saved.length} 个游戏标记为「${playLabels[batchStatus]}」。`);
+      setToast(`已将 ${saved.length} 个游戏标记为「${playLabels[status]}」。`);
     });
+  }
+  async function applyBatchFavorite(favorite: boolean) {
+    const ids = filtered.filter((game) => librarySelected.has(game.id)).map((game) => game.id);
+    if (!ids.length) return;
+    await organizationAction(async () => {
+      const saved = await api.setFavorites(ids, favorite);
+      const updated = new Map(saved.map((game) => [game.id, game.favorite]));
+      setGames((current) =>
+        current.map((game) =>
+          updated.has(game.id) ? { ...game, favorite: updated.get(game.id)! } : game,
+        ),
+      );
+      setLibrarySelected(new Set());
+      setToast(`已${favorite ? '收藏' : '取消收藏'} ${saved.length} 个游戏。`);
+    });
+  }
+  function selectAllControl() {
+    return (
+      <LibrarySelectAll
+        selected={librarySelected.size}
+        total={filtered.length}
+        disabled={organizationBusy || taskActive}
+        onChange={(checked) =>
+          setLibrarySelected(checked ? new Set(filtered.map((game) => game.id)) : new Set())
+        }
+      />
+    );
   }
   function itemControls(game: Game) {
     return (
@@ -1028,7 +1062,7 @@ export default function App() {
                   </button>
                   <button
                     type="button"
-                    className={selectionMode ? 'active' : ''}
+                    className={`library-selection-toggle ${selectionMode ? 'active' : ''}`}
                     aria-pressed={selectionMode}
                     disabled={organizationBusy || taskActive}
                     onClick={() => {
@@ -1053,117 +1087,73 @@ export default function App() {
                   </SortField>
                 </div>
               </div>
-              <div className="library-quick-filters" role="group" aria-label="快捷筛选">
-                <button
-                  type="button"
-                  className="quick-filter-all"
-                  aria-pressed={
-                    !filters.favoritesOnly &&
-                    !filters.tags?.length &&
-                    !filters.statuses.length &&
-                    !filters.engines.length &&
-                    !filters.modes.length &&
-                    !otherEnginesOnly
-                  }
-                  onClick={() => {
-                    setFilters(emptyFilters());
-                    setOtherEnginesOnly(false);
-                  }}
-                >
-                  <Icon name="library" size={16} />
-                  全部
-                </button>
-                <button
-                  type="button"
-                  className="quick-filter-all favorite-quick-filter"
-                  aria-pressed={!!filters.favoritesOnly}
-                  onClick={() =>
-                    setFilters((current) => ({ ...current, favoritesOnly: !current.favoritesOnly }))
-                  }
-                >
-                  <Icon name="star" size={16} />
-                  收藏
-                </button>
-                <div className="quick-filter-section">
-                  <span className="quick-filter-label">游玩状态</span>
-                  <PlayQuickFilters
-                    statuses={filters.statuses}
-                    onChange={(statuses) => setFilters((current) => ({ ...current, statuses }))}
-                  />
-                </div>
-                <div className="quick-filter-section quick-engine-section">
-                  <span className="quick-filter-label">游戏引擎</span>
-                  <EngineQuickFilters
-                    games={games}
-                    engines={filters.engines}
-                    other={otherEnginesOnly}
-                    onVisibleCountChange={setQuickEngineCount}
-                    onChange={(engines, other) => {
-                      setFilters((current) => ({ ...current, engines }));
-                      setOtherEnginesOnly(other);
-                    }}
-                  />
-                </div>
-              </div>
-              {selectionMode && (
-                <div className="library-batch-bar" role="group" aria-label="批量修改游玩状态">
-                  <label className="library-select-all">
-                    <input
-                      type="checkbox"
-                      aria-label="全选当前筛选结果"
-                      ref={(element) => {
-                        if (element)
-                          element.indeterminate =
-                            librarySelected.size > 0 && librarySelected.size < filtered.length;
-                      }}
-                      checked={filtered.length > 0 && librarySelected.size === filtered.length}
-                      disabled={!filtered.length || organizationBusy || taskActive}
-                      onChange={(event) =>
-                        setLibrarySelected(
-                          event.target.checked
-                            ? new Set(filtered.map((game) => game.id))
-                            : new Set(),
-                        )
-                      }
-                    />
-                    全选筛选结果（{filtered.length}）
-                  </label>
-                  <span className="library-selected-count" role="status">
-                    已选 {librarySelected.size} 个
-                  </span>
-                  <select
-                    aria-label="批量目标状态"
-                    value={batchStatus}
-                    disabled={organizationBusy || taskActive}
-                    onChange={(event) => setBatchStatus(event.target.value as PlayStatus)}
-                  >
-                    {Object.entries(playLabels).map(([value, label]) => (
-                      <option value={value} key={value}>
-                        {label}
-                      </option>
-                    ))}
-                  </select>
+              {selectionMode ? (
+                <LibraryBatchActions
+                  selected={librarySelected.size}
+                  total={filtered.length}
+                  disabled={organizationBusy || taskActive}
+                  waiting={launchingIds.size > 0}
+                  busy={organizationBusy}
+                  selectAll={layout === 'grid' ? selectAllControl() : undefined}
+                  onStatus={(status) => void applyBatchStatus(status)}
+                  onFavorite={(favorite) => void applyBatchFavorite(favorite)}
+                  onClear={() => setLibrarySelected(new Set())}
+                />
+              ) : (
+                <div className="library-quick-filters" role="group" aria-label="快捷筛选">
                   <button
                     type="button"
-                    className="primary"
-                    disabled={
-                      !librarySelected.size ||
-                      organizationBusy ||
-                      taskActive ||
-                      launchingIds.size > 0
+                    className="quick-filter-all"
+                    aria-pressed={
+                      !filters.favoritesOnly &&
+                      !filters.tags?.length &&
+                      !filters.statuses.length &&
+                      !filters.engines.length &&
+                      !filters.modes.length &&
+                      !otherEnginesOnly
                     }
-                    title={launchingIds.size ? '启动请求完成后可修改状态' : undefined}
-                    onClick={() => void applyBatchStatus()}
+                    onClick={() => {
+                      setFilters(emptyFilters());
+                      setOtherEnginesOnly(false);
+                    }}
                   >
-                    {organizationBusy ? '保存中…' : '应用到所选'}
+                    <Icon name="library" size={16} />
+                    全部
                   </button>
                   <button
                     type="button"
-                    disabled={!librarySelected.size || organizationBusy}
-                    onClick={() => setLibrarySelected(new Set())}
+                    className="quick-filter-all favorite-quick-filter"
+                    aria-pressed={!!filters.favoritesOnly}
+                    onClick={() =>
+                      setFilters((current) => ({
+                        ...current,
+                        favoritesOnly: !current.favoritesOnly,
+                      }))
+                    }
                   >
-                    取消选择
+                    <Icon name="star" size={16} filled={!!filters.favoritesOnly} />
+                    收藏
                   </button>
+                  <div className="quick-filter-section">
+                    <span className="quick-filter-label">游玩状态</span>
+                    <PlayQuickFilters
+                      statuses={filters.statuses}
+                      onChange={(statuses) => setFilters((current) => ({ ...current, statuses }))}
+                    />
+                  </div>
+                  <div className="quick-filter-section quick-engine-section">
+                    <span className="quick-filter-label">游戏引擎</span>
+                    <EngineQuickFilters
+                      games={games}
+                      engines={filters.engines}
+                      other={otherEnginesOnly}
+                      onVisibleCountChange={setQuickEngineCount}
+                      onChange={(engines, other) => {
+                        setFilters((current) => ({ ...current, engines }));
+                        setOtherEnginesOnly(other);
+                      }}
+                    />
+                  </div>
                 </div>
               )}
               <div
@@ -1179,7 +1169,14 @@ export default function App() {
                   <table className="library-table" aria-rowcount={filtered.length + 1}>
                     <thead ref={libraryHeader}>
                       <tr>
-                        <th scope="col">游戏</th>
+                        <th scope="col">
+                          <span className="library-game-heading">
+                            {selectionMode && (
+                              <span className="library-item-controls">{selectAllControl()}</span>
+                            )}
+                            游戏
+                          </span>
+                        </th>
                         <th scope="col">版本</th>
                         <th scope="col">启动方式</th>
                         <th scope="col">引擎</th>

@@ -31,6 +31,9 @@ import swordsIcon from './assets/lucide/swords.svg';
 import wandIcon from './assets/lucide/wand-sparkles.svg';
 import flagIcon from './assets/lucide/flag.svg';
 import starIcon from './assets/lucide/star.svg';
+import starSvg from './assets/lucide/star.svg?raw';
+
+const filledStarIcon = `data:image/svg+xml,${encodeURIComponent(starSvg.replace('fill="none"', 'fill="currentColor"'))}`;
 
 // Unmodified Lucide 0.468.0 assets; see assets/lucide/README.md for upstream and licenses.
 const iconAssets = {
@@ -175,8 +178,16 @@ export function PageHeader({
     </header>
   );
 }
-export function Icon({ name, size = 20 }: { name: IconName; size?: number }) {
-  const mask = `url("${iconAssets[name]}")`;
+export function Icon({
+  name,
+  size = 20,
+  filled = false,
+}: {
+  name: IconName;
+  size?: number;
+  filled?: boolean;
+}) {
+  const mask = `url("${name === 'star' && filled ? filledStarIcon : iconAssets[name]}")`;
   return (
     <span
       className="icon"

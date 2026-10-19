@@ -90,7 +90,7 @@ describe('library organization', () => {
     await waitForEnabledButton('批量选择');
     fireEvent.click(screen.getByRole('button', { name: '批量选择' }));
     fireEvent.click(screen.getByRole('checkbox', { name: '全选当前筛选结果' }));
-    fireEvent.click(screen.getByRole('button', { name: '应用到所选' }));
+    fireEvent.click(screen.getByRole('button', { name: '批量标记为已通关' }));
     await screen.findByText('已选 0 个');
     await waitForEnabledButton('结束选择');
     fireEvent.click(screen.getByRole('button', { name: '结束选择' }));
@@ -122,15 +122,20 @@ describe('library organization', () => {
     await waitForEnabledButton('批量选择');
     fireEvent.click(screen.getByRole('button', { name: '批量选择' }));
     fireEvent.click(screen.getByRole('checkbox', { name: '全选当前筛选结果' }));
-    expect((screen.getByRole('button', { name: '应用到所选' }) as HTMLButtonElement).disabled).toBe(
+    expect(
+      (screen.getByRole('button', { name: '批量标记为已通关' }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+    expect((screen.getByRole('button', { name: '批量收藏' }) as HTMLButtonElement).disabled).toBe(
       true,
     );
+    fireEvent.click(screen.getByRole('button', { name: '批量收藏' }));
+    expect(api.setFavorites).not.toHaveBeenCalled();
     await act(async () => {
       finishLaunch({ ...game, play_status: 'PLAYING', last_launched_at: '2026-10-18T00:00:00Z' });
     });
-    expect((screen.getByRole('button', { name: '应用到所选' }) as HTMLButtonElement).disabled).toBe(
-      false,
-    );
+    expect(
+      (screen.getByRole('button', { name: '批量标记为已通关' }) as HTMLButtonElement).disabled,
+    ).toBe(false);
     fireEvent.click(screen.getByRole('button', { name: '结束选择' }));
     await waitForEnabledButton(`取消收藏 ${game.display_title}`);
     fireEvent.click(screen.getByRole('button', { name: `取消收藏 ${game.display_title}` }));
@@ -290,6 +295,90 @@ describe('library organization', () => {
   });
 
   it.each(['list', 'grid'] as const)(
+    'batch-favorites %s games with failure retry, view changes and favorite filtering',
+    async (layout) => {
+      const library = [
+        { ...game, play_status: 'PLAYING' as const, tags: [{ id: 'tag', name: '汉化' }] },
+        makeGame({ id: 'other', display_title: 'Other', favorite: true }),
+        makeGame({ id: 'idle', display_title: 'Idle' }),
+      ];
+      vi.mocked(api.games).mockResolvedValue(library);
+      vi.mocked(api.setFavorites).mockImplementation(async (ids, favorite) =>
+        library
+          .filter((value) => ids.includes(value.id))
+          .map((value) => ({
+            ...value,
+            favorite,
+            play_status: 'UNPLAYED',
+            tags: [],
+          })),
+      );
+      let rejectSave!: (reason: Error) => void;
+      vi.mocked(api.setFavorites).mockImplementationOnce(
+        () =>
+          new Promise((_, reject) => {
+            rejectSave = reject;
+          }),
+      );
+      render(<App />);
+      await screen.findByRole('button', { name: game.display_title });
+      if (layout === 'grid') fireEvent.click(screen.getByRole('button', { name: '卡片视图' }));
+      fireEvent.click(screen.getByRole('button', { name: '批量选择' }));
+      const all = screen.getByRole('checkbox', { name: '全选当前筛选结果' }) as HTMLInputElement;
+      if (layout === 'list') expect(all.closest('th')?.textContent).toContain('游戏');
+      fireEvent.click(screen.getByRole('checkbox', { name: `选择 ${game.display_title}` }));
+      expect(all.indeterminate).toBe(true);
+      fireEvent.click(all);
+      expect(screen.getByText('已选 3 个')).toBeTruthy();
+      expect(screen.queryByRole('combobox', { name: '批量目标状态' })).toBeNull();
+      fireEvent.click(screen.getByRole('button', { name: '批量收藏' }));
+      for (const button of within(screen.getByRole('group', { name: '批量操作' })).getAllByRole(
+        'button',
+      )) {
+        expect((button as HTMLButtonElement).disabled).toBe(true);
+      }
+      fireEvent.click(screen.getByRole('button', { name: '批量收藏' }));
+      expect(api.setFavorites).toHaveBeenCalledOnce();
+      await act(async () => rejectSave(new Error('synthetic favorite batch failure')));
+      await screen.findByText('Error: synthetic favorite batch failure');
+      expect(screen.getByText('已选 3 个')).toBeTruthy();
+      await waitForEnabledButton('批量收藏');
+      fireEvent.click(screen.getByRole('button', { name: '批量收藏' }));
+      await screen.findByText('已选 0 个');
+      expect(new Set(vi.mocked(api.setFavorites).mock.lastCall?.[0])).toEqual(
+        new Set(library.map((value) => value.id)),
+      );
+      expect(vi.mocked(api.setFavorites).mock.lastCall?.[1]).toBe(true);
+      await waitForEnabledButton('结束选择');
+      fireEvent.click(screen.getByRole('button', { name: '结束选择' }));
+      for (const value of library)
+        expect(
+          screen.getByRole('button', { name: `取消收藏 ${value.display_title}` }),
+        ).toBeTruthy();
+      const item = screen
+        .getByRole('button', { name: game.display_title })
+        .closest<HTMLElement>(layout === 'list' ? 'tr' : '.game-card')!;
+      expect(within(item).getByText('正在玩')).toBeTruthy();
+      expect(within(item).getByText('汉化')).toBeTruthy();
+      fireEvent.click(screen.getByRole('button', { name: '收藏' }));
+      fireEvent.click(screen.getByRole('button', { name: '批量选择' }));
+      fireEvent.click(screen.getByRole('checkbox', { name: '全选当前筛选结果' }));
+      fireEvent.click(
+        screen.getByRole('button', { name: layout === 'list' ? '卡片视图' : '列表视图' }),
+      );
+      expect(screen.getByText('已选 3 个')).toBeTruthy();
+      fireEvent.click(screen.getByRole('button', { name: '批量取消收藏' }));
+      await screen.findByText('已选 0 个');
+      expect(new Set(vi.mocked(api.setFavorites).mock.lastCall?.[0])).toEqual(
+        new Set(library.map((value) => value.id)),
+      );
+      expect(vi.mocked(api.setFavorites).mock.lastCall?.[1]).toBe(false);
+      expect(screen.queryByRole('button', { name: game.display_title })).toBeNull();
+      expect(api.play).not.toHaveBeenCalled();
+      expect(api.deleteFiles).not.toHaveBeenCalled();
+    },
+  );
+  it.each(['list', 'grid'] as const)(
     'bulk-selects all %s results beyond the viewport and clears selections when filtering',
     async (layout) => {
       mockLibraryViewport();
@@ -313,7 +402,7 @@ describe('library organization', () => {
         target: { value: 'name-desc' },
       });
       expect(screen.getByText('已选 120 个')).toBeTruthy();
-      fireEvent.click(screen.getByRole('button', { name: '应用到所选' }));
+      fireEvent.click(screen.getByRole('button', { name: '批量标记为已通关' }));
       await waitFor(() => expect(api.setPlayStatuses).toHaveBeenCalledOnce());
       expect(new Set(vi.mocked(api.setPlayStatuses).mock.calls[0][0])).toEqual(
         new Set(library.map((value) => value.id)),
@@ -332,7 +421,7 @@ describe('library organization', () => {
       expect(screen.getByText('已选 0 个')).toBeTruthy();
       fireEvent.click(screen.getByRole('checkbox', { name: '全选当前筛选结果' }));
       vi.mocked(api.setPlayStatuses).mockRejectedValueOnce(new Error('synthetic batch failure'));
-      fireEvent.click(screen.getByRole('button', { name: '应用到所选' }));
+      fireEvent.click(screen.getByRole('button', { name: '批量标记为已通关' }));
       await screen.findByText('Error: synthetic batch failure');
       expect(screen.getByText('已选 1 个')).toBeTruthy();
       expect(screen.queryByRole('dialog')).toBeNull();

@@ -1,8 +1,10 @@
 import { useState } from 'react';
+import type { ReactNode } from 'react';
 import { api } from './api';
 import { Icon, Modal } from './ui';
 import { useWindowCloseGuard } from './windowClose';
-import type { Game, LibraryTag } from './types';
+import type { Game, LibraryTag, PlayStatus } from './types';
+import { playLabels } from './gameStatus';
 
 export const tagKey = (name: string) =>
   name.trim().normalize('NFKC').toLowerCase().replace(/\s+/gu, ' ');
@@ -38,8 +40,120 @@ export function FavoriteButton({
         onChange();
       }}
     >
-      <Icon name="star" size={17} />
+      <Icon name="star" size={17} filled={game.favorite} />
     </button>
+  );
+}
+
+export function LibrarySelectAll({
+  selected,
+  total,
+  disabled,
+  onChange,
+}: {
+  selected: number;
+  total: number;
+  disabled: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <input
+      type="checkbox"
+      aria-label="全选当前筛选结果"
+      title={`全选当前筛选结果（${total}）`}
+      ref={(element) => {
+        if (element) element.indeterminate = selected > 0 && selected < total;
+      }}
+      checked={total > 0 && selected === total}
+      disabled={!total || disabled}
+      onChange={(event) => onChange(event.target.checked)}
+    />
+  );
+}
+
+export function LibraryBatchActions({
+  selected,
+  total,
+  disabled,
+  waiting,
+  busy,
+  selectAll,
+  onStatus,
+  onFavorite,
+  onClear,
+}: {
+  selected: number;
+  total: number;
+  disabled: boolean;
+  waiting: boolean;
+  busy: boolean;
+  selectAll?: ReactNode;
+  onStatus: (status: PlayStatus) => void;
+  onFavorite: (favorite: boolean) => void;
+  onClear: () => void;
+}) {
+  const locked = !selected || disabled || waiting;
+  const title = waiting ? '启动请求完成后可修改' : !selected ? '请先选择游戏' : undefined;
+  return (
+    <div className="library-batch-actions" role="group" aria-label="批量操作" aria-busy={busy}>
+      {selectAll && <label className="library-select-all">{selectAll}全选</label>}
+      <span className="library-selected-count" role="status">
+        已选 {selected} 个<span> / 共 {total} 个</span>
+      </span>
+      <div className="library-batch-buttons">
+        <div className="play-quick-filters" role="group" aria-label="批量游玩状态">
+          <span className="quick-filter-label">标记为</span>
+          {(Object.keys(playLabels) as PlayStatus[]).map((status) => (
+            <button
+              type="button"
+              key={status}
+              className={`play-${status.toLowerCase()}`}
+              aria-label={`批量标记为${playLabels[status]}`}
+              disabled={locked}
+              title={title}
+              onClick={() => onStatus(status)}
+            >
+              <Icon
+                name={status === 'UNPLAYED' ? 'library' : status === 'PLAYING' ? 'play' : 'flag'}
+                size={14}
+              />
+              {playLabels[status]}
+            </button>
+          ))}
+        </div>
+        <div className="library-batch-favorites" role="group" aria-label="批量收藏">
+          <button
+            type="button"
+            className="batch-favorite-add"
+            aria-label="批量收藏"
+            disabled={locked}
+            title={title}
+            onClick={() => onFavorite(true)}
+          >
+            <Icon name="star" size={14} filled />
+            收藏
+          </button>
+          <button
+            type="button"
+            aria-label="批量取消收藏"
+            disabled={locked}
+            title={title}
+            onClick={() => onFavorite(false)}
+          >
+            <Icon name="star" size={14} />
+            取消收藏
+          </button>
+        </div>
+      </div>
+      <button
+        type="button"
+        className="library-clear-selection"
+        disabled={!selected || disabled}
+        onClick={onClear}
+      >
+        取消选择
+      </button>
+    </div>
   );
 }
 

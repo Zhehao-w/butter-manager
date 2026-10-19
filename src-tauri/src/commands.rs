@@ -301,6 +301,14 @@ fn set_game_favorite(
     with_library_edit(&state, |db| db.set_favorite(&id, favorite))
 }
 #[tauri::command]
+fn set_game_favorites(
+    state: State<'_, AppState>,
+    ids: Vec<String>,
+    favorite: bool,
+) -> CommandResult<Vec<Game>> {
+    with_library_edit(&state, |db| db.set_favorites(&ids, favorite))
+}
+#[tauri::command]
 fn set_game_play_statuses(
     state: State<'_, AppState>,
     ids: Vec<String>,
@@ -1703,6 +1711,7 @@ pub fn run() {
             list_games,
             library_tags,
             set_game_favorite,
+            set_game_favorites,
             set_game_play_statuses,
             rename_library_tag,
             delete_library_tag,

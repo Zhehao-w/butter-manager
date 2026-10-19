@@ -5808,6 +5808,50 @@ button.save-editor-entry:active:not(:disabled) {
   flex: none;
   accent-color: #6e9fe7;
 }
+.library-item-controls input,
+.library-select-all input {
+  appearance: none;
+  display: grid;
+  place-content: center;
+  border: 1px solid #b8cce8;
+  border-radius: 4px;
+  background: #fff;
+  cursor: pointer;
+}
+.library-item-controls input:checked,
+.library-select-all input:checked,
+.library-item-controls input:indeterminate,
+.library-select-all input:indeterminate {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.library-item-controls input:checked::before,
+.library-select-all input:checked::before {
+  content: '';
+  width: 4px;
+  height: 8px;
+  margin-top: -2px;
+  border: solid white;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+.library-item-controls input:indeterminate::before,
+.library-select-all input:indeterminate::before {
+  content: '';
+  width: 8px;
+  height: 2px;
+  background: white;
+}
+.library-item-controls input:focus-visible,
+.library-select-all input:focus-visible {
+  outline: 2px solid #87b7ff;
+  outline-offset: 3px;
+}
+.library-item-controls input:disabled,
+.library-select-all input:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
 .favorite-button {
   width: 28px;
   height: 28px;
@@ -5822,9 +5866,9 @@ button.save-editor-entry:active:not(:disabled) {
   color: #96a8c1;
 }
 .favorite-button.is-favorite {
-  color: #c86e94;
-  background: #fff0f6;
-  border-color: #f5d9e5;
+  color: #d6538b;
+  background: #ffedf5;
+  border-color: #f3cadd;
 }
 .game-card {
   position: relative;
@@ -5894,17 +5938,32 @@ button.save-editor-entry:active:not(:disabled) {
 .game-card .game-tags {
   max-width: 140px;
 }
-.library-batch-bar {
+.library-game-heading {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 10px;
-  padding: 10px 12px;
-  margin-bottom: 12px;
-  background: #f0f6ff;
-  border: 1px solid #dce8f8;
-  border-radius: 12px;
+  gap: 12px;
+}
+.library-selection-toggle[aria-pressed='true'] {
+  color: var(--accent);
+  background: #eaf3ff;
+  border-color: #a9cdff;
+}
+.library-batch-actions {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  min-height: 34px;
+  gap: 14px;
+  margin-bottom: 14px;
   font-size: 12px;
+}
+.library-batch-actions .library-select-all {
+  flex: none;
+  color: var(--text-secondary);
+}
+.library-batch-actions input {
+  width: 16px;
+  height: 16px;
 }
 .library-select-all,
 .favorite-filter-option {
@@ -5914,15 +5973,66 @@ button.save-editor-entry:active:not(:disabled) {
   cursor: pointer;
 }
 .library-selected-count {
+  flex: none;
   color: var(--text-secondary);
-  margin-right: auto;
+  white-space: nowrap;
 }
-.library-batch-bar select {
-  width: 100px;
+.library-selected-count > span {
+  color: #8b9bb2;
 }
-.library-batch-bar :is(button, select) {
-  height: 32px;
+.library-batch-buttons,
+.library-batch-favorites {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.library-batch-buttons {
+  min-width: 0;
+  gap: 14px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.library-batch-buttons .play-quick-filters {
+  align-items: center;
+}
+.library-batch-favorites {
+  padding-left: 14px;
+  border-left: 1px solid #dce7f5;
+}
+.library-batch-favorites button,
+.library-clear-selection {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  min-height: 34px;
+  padding: 5px 11px;
+  border-radius: 20px;
+  box-shadow: none;
   font-size: 12px;
+}
+.library-batch-favorites .batch-favorite-add {
+  color: #c45888;
+  border-color: #f3cadd;
+  background: #ffedf5;
+}
+.library-clear-selection {
+  margin-left: auto;
+  color: var(--text-secondary);
+  background: transparent;
+  border-color: transparent;
+}
+@media (max-width: 1100px) {
+  .library-batch-actions,
+  .library-batch-buttons {
+    gap: 8px;
+  }
+  .library-selected-count > span {
+    display: none;
+  }
+  .library-batch-favorites {
+    padding-left: 8px;
+  }
 }
 .filter-options-tags {
   display: flex;

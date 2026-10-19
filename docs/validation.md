@@ -8,6 +8,8 @@ schema 12 → 13 在事务中增加默认关闭的收藏字段和标签 UUID 关
 
 最终 `bash scripts/Check-Cloud.sh` 全部通过：锁定依赖安装、Prettier / Rustfmt、前端 **241 项**、TypeScript / Vite、Linux Rust 核心 **246 项**及独立 Node **8 组合成 Unity 核验**；发布脚本 **25 项**隔离回归通过。文档链接、资源来源 / SHA-256 及差异检查通过。既有高风险回归全部保留，无新增忽略项；仅使用独立临时数据库、目录和合成存档，没有访问正式资料或创建数据库 / WAL / SHM 副本及可恢复导出。
 
+Windows 所有目标检查曾发现只读示例 `examples/import_match_preview.rs` 构造 `Game` 时缺少新增收藏和标签字段；现补齐默认值，保持只读诊断及旧 schema 查询不变。`cargo check --no-default-features --example import_match_preview`、5 项分类回归、Rustfmt 和工作流 YAML 解析通过。1001 游戏夹具改用事务初始化，保留原有全部断言。CI 将 Rust 编译错误写入 GitHub 检查注释，规范 Windows 路径及示例文件链接，不削弱严格 Clippy 或改变失败退出码。
+
 额外的 Linux 非桌面 `cargo clippy --no-default-features --lib --tests -- -D warnings` 仍受此前已记录的非 Windows unreachable / unused 与 desktop-only dead-code 告警影响，没有为此改变平台保护或加 lint 豁免；它不属于标准 Linux 入口。Windows 原生回归、所有桌面目标严格 Clippy 和 EXE 交付以本 PR CI 为准；Windows 窄窗口 / 高 DPI / 重启及真实游戏验收仍待用户完成。
 
 当前应用版本保留 1.2.1，目标为后续 1.3.0。**PR 开发 EXE 已使用 schema 13，旧版 1.2.x 无法打开升级后的库。** README 和路线图区分正式版与开发功能，操作与验收见 [游戏库整理说明](library-organization.md)。

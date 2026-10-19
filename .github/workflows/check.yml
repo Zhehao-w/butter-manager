@@ -215,8 +215,8 @@ jobs:
             $taskClippyText = $taskClippyEvent.message.message.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
             $taskClippySpan = $taskClippyEvent.message.spans | Where-Object is_primary | Select-Object -First 1
             if ($taskClippySpan) {
-              $taskClippyPath = $taskClippySpan.file_name
-              if ($taskClippyPath.StartsWith('src/')) { $taskClippyPath = "src-tauri/$taskClippyPath" }
+              $taskClippyPath = $taskClippySpan.file_name.Replace('\', '/')
+              if ($taskClippyPath.StartsWith('src/') -or $taskClippyPath.StartsWith('examples/')) { $taskClippyPath = "src-tauri/$taskClippyPath" }
               $taskClippyPath = $taskClippyPath.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A').Replace(',', '%2C')
               Write-Host ("::error file={0},line={1},col={2}::{3}" -f $taskClippyPath, $taskClippySpan.line_start, $taskClippySpan.column_start, $taskClippyText)
             } else {

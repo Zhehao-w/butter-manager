@@ -395,8 +395,12 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let mut db = Database::open(&temp.path().join("isolated.db")).unwrap();
         let mut ids: Vec<String> = (0..1001).map(|i| format!("game-{i}")).collect();
-        for id in &ids {
-            insert(&db, id);
+        {
+            let setup = db.connection.transaction().unwrap();
+            for id in &ids {
+                setup.execute("INSERT INTO games(id,canonical_title,display_title,install_path,install_path_key) VALUES(?1,?1,?1,?1,?1)", [id]).unwrap();
+            }
+            setup.commit().unwrap();
         }
         let tag = assign(&mut db, &ids[0], &["汉化"]).tags.remove(0);
         db.connection

@@ -24,7 +24,8 @@ fn main() -> Result<()> {
             main_executable: row.get(6)?, engine: row.get(7)?, mtool_target_exe: row.get(8)?,
             version_source: String::new(), launch_type: String::new(), external_player: None,
             mtool_loader: None, created_at: String::new(), updated_at: String::new(),
-            last_launched_at: None, play_status: PlayStatus::Unplayed, aliases: vec![], save_paths: vec![],
+            last_launched_at: None, play_status: PlayStatus::Unplayed, favorite: false,
+            tags: vec![], aliases: vec![], save_paths: vec![],
         }))?.collect::<std::result::Result<Vec<_>,_>>()?;
     for game in &mut games {
         for (table, column, values) in [

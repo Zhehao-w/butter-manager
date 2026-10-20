@@ -419,6 +419,7 @@ impl<'a> MatchIndex<'a> {
                                 .flatten()
                         })
                         .or_else(|| incoming.legacy_numeric_proposal(name))
+                        .or_else(|| incoming.import_proposal(name, supported))
                 })
                 .max_by_key(|(score, _)| *score)
             else {
@@ -712,6 +713,240 @@ mod tests {
     fn options(root: &Path, contents: &str) {
         fs::create_dir_all(root.join("game")).unwrap();
         fs::write(root.join("game/options.rpy"), contents).unwrap();
+    }
+
+    #[test]
+    fn subtitle_revision_and_repeated_alias_imports_offer_manual_recommendations() {
+        let mut missing = Vec::new();
+        for (old_title, incoming_title, executable) in [
+            (
+                "蘑菇岛打工日记V1.0.2",
+                "蘑菇岛打工日记～NTR客房的秘密～ V1.02 官中动态步兵正式版",
+                "MushroomsIsland.exe",
+            ),
+            (
+                "InfinityLOL-R15-pc",
+                "Infinity Love or Lust R25 InfinityLOL 无限：爱或欲望",
+                "InfinityLOL.exe",
+            ),
+            (
+                "ReSister — 与妹妹两人的秘密同居生活 — v1.1.0 DLC",
+                "ReSister — 与妹妹两人的秘密同居生活— ReSister—妹とふたり、ひみつの同棲生活— v1.1.1",
+                "ReSister.exe",
+            ),
+        ] {
+            let mut old = game("old", old_title, Path::new("Z:/missing/old"));
+            old.main_executable = Some(executable.into());
+            let mut candidate = scanner::pending_candidate(Path::new("Z:/missing/source")).unwrap();
+            candidate.suggested_title = incoming_title.into();
+            candidate.executables = vec![exe(executable)];
+            let results = MatchIndex::new(std::slice::from_ref(&old)).matches(&candidate, &|| false);
+            if results.len() != 1 {
+                missing.push(format!("{old_title} / {incoming_title}: {} results", results.len()));
+            }
+            assert!(results.iter().all(|r| r.id == "old" && !r.auto_associate));
+            if old_title.contains("DLC") && !results.is_empty() {
+                assert!(results[0].reason.contains("DLC"));
+            }
+            let mut incoming = game("incoming", incoming_title, Path::new("Z:/missing/new"));
+            incoming.main_executable = old.main_executable.clone();
+            assert!(MatchIndex::new(&[old, incoming])
+                .library_pairs(&|| false, &|_| {})
+                .unwrap().is_empty(), "library rules must stay conservative: {incoming_title}");
+        }
+        assert!(missing.is_empty(), "{}", missing.join("\n"));
+    }
+
+    #[test]
+    fn new_import_title_rules_preserve_sequels_chapters_editions_and_original_titles() {
+        for (old_title, incoming_title) in [
+            (
+                "蘑菇岛打工日记V1.0.2",
+                "蘑菇岛打工日记～第二章：客房的秘密～ V1.02 官中动态步兵正式版",
+            ),
+            (
+                "蘑菇岛打工日记V1.0.2",
+                "蘑菇岛打工日记～外传：客房的秘密～ V1.02",
+            ),
+            (
+                "蘑菇岛打工日记V1.0.2",
+                "蘑菇岛打工日记～NTR客房的秘密～ V1.02 Demo",
+            ),
+            (
+                "蘑菇岛打工日记V1.0.2",
+                "蘑菇岛打工日记～NTR客房的秘密～ V1.02 Remastered",
+            ),
+            (
+                "蘑菇岛打工日记V1.0.2",
+                "蘑菇岛打工日记～NTR客房的秘密2～ V1.02",
+            ),
+            (
+                "蘑菇岛打工日记V1.0.2",
+                "蘑菇岛冒险日记～NTR客房的秘密～ V1.02",
+            ),
+            ("蘑菇岛打工日记V1.0.2", "蘑菇岛打工日记NTR客房的秘密 V1.02"),
+            (
+                "蘑菇岛打工日记～海边的休假旅行～V1.0.2",
+                "蘑菇岛打工日记～NTR客房的秘密～ V1.02",
+            ),
+            (
+                "InfinityLOL-R15-pc",
+                "Infinity Love or Lust R25 InfinityLOL II",
+            ),
+            (
+                "InfinityLOL-R15-pc",
+                "Infinity Love or Lust R25 InfinityLOL Season2",
+            ),
+            (
+                "InfinityLOL-R15-pc",
+                "Infinity Love or Lust R25 InfinityLOL Ch2Up1",
+            ),
+            (
+                "InfinityLOL-R15-pc",
+                "Infinity Love or Lust R25 InfinityLOL Demo",
+            ),
+            (
+                "InfinityLOL-R15-pc",
+                "Infinity Love or Lust R25 OtherProject",
+            ),
+            (
+                "InfinityLOL-R15-pc",
+                "Infinity Love or Lust ProjectR25 InfinityLOL",
+            ),
+            (
+                "InfinityLOL-R15-pc",
+                "Infinity Love or Lust R25 R26 InfinityLOL",
+            ),
+            (
+                "InfinityLOL-R15-pc",
+                "Infinity Love or Lust R25 InfinityLOL 2",
+            ),
+            ("Adventure-R15-pc", "A Different Adventure R25"),
+            (
+                "ReSister 与妹妹两人的秘密同居生活 v1.1.0 DLC",
+                "ReSister 与妹妹两人的秘密同居生活 ReSister II v1.1.1",
+            ),
+            (
+                "ReSister 与妹妹两人的秘密同居生活 v1.1.0 DLC",
+                "ReSister 与妹妹两人的秘密同居生活 ReSister Demo v1.1.1",
+            ),
+            (
+                "ReSister 与妹妹两人的秘密同居生活 v1.1.0 DLC",
+                "ReSister 完全不同的冒险生活 ReSister v1.1.1",
+            ),
+            (
+                "ReSister 与妹妹两人的秘密同居生活 妹とふたり v1.1.0 DLC",
+                "ReSister 与妹妹两人的秘密同居生活 ReSister 森へ出かける旅 v1.1.1",
+            ),
+        ] {
+            let mut old = game("old", old_title, Path::new("Z:/missing/old"));
+            old.main_executable = Some("SharedProjectLauncher.exe".into());
+            old.save_paths = vec!["%APPDATA%/FixtureStudio/SharedProjectSaves".into()];
+            let mut candidate = scanner::pending_candidate(Path::new("Z:/missing/source")).unwrap();
+            candidate.suggested_title = incoming_title.into();
+            candidate.executables = vec![exe("SharedProjectLauncher.exe")];
+            candidate.save_paths = old.save_paths.clone();
+            assert!(
+                MatchIndex::new(&[old])
+                    .matches(&candidate, &|| false)
+                    .is_empty(),
+                "{old_title} / {incoming_title}"
+            );
+        }
+    }
+
+    #[test]
+    fn subtitle_and_revision_abbreviations_require_distinctive_metadata() {
+        for (old_title, incoming_title) in [
+            (
+                "蘑菇岛打工日记V1.0.2",
+                "蘑菇岛打工日记～NTR客房的秘密～ V1.02 官中动态步兵正式版",
+            ),
+            (
+                "InfinityLOL-R15-pc",
+                "Infinity Love or Lust R25 InfinityLOL 无限：爱或欲望",
+            ),
+        ] {
+            for mode in [
+                "exe",
+                "save",
+                "generic",
+                "different",
+                "ambiguous",
+                "missing",
+            ] {
+                let mut old = game("old", old_title, Path::new("Z:/missing/old"));
+                let mut candidate =
+                    scanner::pending_candidate(Path::new("Z:/missing/source")).unwrap();
+                candidate.suggested_title = incoming_title.into();
+                if mode == "save" {
+                    old.save_paths = vec!["%APPDATA%/FixtureStudio/DistinctiveProjectSaves".into()];
+                    candidate.save_paths = old.save_paths.clone();
+                } else {
+                    let executable = if mode == "generic" {
+                        "Game.exe"
+                    } else {
+                        "DistinctiveProject.exe"
+                    };
+                    if mode != "missing" {
+                        old.main_executable = Some(executable.into());
+                    }
+                    candidate.executables = vec![exe(if mode == "different" {
+                        "UnrelatedProject.exe"
+                    } else {
+                        executable
+                    })];
+                    if mode == "ambiguous" {
+                        candidate.executables.push(exe("AnotherProject.exe"));
+                    }
+                    old.save_paths = vec!["<GAME>/save".into()];
+                    candidate.save_paths = old.save_paths.clone();
+                }
+                let results = MatchIndex::new(&[old]).matches(&candidate, &|| false);
+                assert_eq!(
+                    results.len(),
+                    usize::from(mode == "exe" || mode == "save"),
+                    "{mode}: {incoming_title}"
+                );
+                assert!(results.iter().all(|result| !result.auto_associate));
+            }
+        }
+        let old = game(
+            "old",
+            "ReSister 与妹妹两人的秘密同居生活 v1.1.0 DLC",
+            Path::new("Z:/missing/old"),
+        );
+        let mut candidate = scanner::pending_candidate(Path::new("Z:/missing/source")).unwrap();
+        candidate.suggested_title =
+            "ReSister 与妹妹两人的秘密同居生活 ReSister 妹とふたり、ひみつの同棲生活 v1.1.1".into();
+        let results = MatchIndex::new(&[old]).matches(&candidate, &|| false);
+        assert_eq!(results.len(), 1);
+        assert!(!results[0].auto_associate && results[0].reason.contains("DLC"));
+    }
+
+    #[test]
+    fn revision_recommendations_remain_bounded_ambiguous_and_cancellable() {
+        let games = (0..8)
+            .map(|n| {
+                let mut old = game(
+                    &format!("game-{n}"),
+                    &format!("InfinityLOL-R{}-pc", 10 + n),
+                    Path::new("Z:/missing/old"),
+                );
+                old.main_executable = Some("InfinityLOL.exe".into());
+                old
+            })
+            .collect::<Vec<_>>();
+        let mut candidate = scanner::pending_candidate(Path::new("Z:/missing/source")).unwrap();
+        candidate.suggested_title = "Infinity Love or Lust R25 InfinityLOL 无限：爱或欲望".into();
+        candidate.executables = vec![exe("InfinityLOL.exe")];
+        let mut index = MatchIndex::new(&games);
+        let results = index.matches(&candidate, &|| false);
+        assert_eq!(results.len(), 5);
+        assert!(results
+            .iter()
+            .all(|r| !r.auto_associate && r.reason.contains("多个候选")));
+        assert!(index.matches(&candidate, &|| true).is_empty());
     }
 
     #[test]

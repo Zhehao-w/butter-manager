@@ -93,7 +93,17 @@ struct Title {
 }
 
 fn package_label(token: &str) -> bool {
-    package_label_v1(token) || ["官中无修", "官中无修版", "官方中文无修版"].contains(&token)
+    package_label_v1(token)
+        || [
+            "官中无修",
+            "官中无修版",
+            "官方中文无修版",
+            "官中动态步兵正式版",
+            "官中动态步兵版",
+            "官中步兵正式版",
+            "官中步兵版",
+        ]
+        .contains(&token)
 }
 
 // Persisted v1 memory keys must keep their original normalization contract.
@@ -791,6 +801,10 @@ impl Name {
     // Library recommendations are stricter than Import: a DLC bundle may update a game
     // during Import, but it must not make two existing works appear interchangeable.
     pub(super) fn library_conflict(&self, old: &Self) -> bool {
+        self.title_conflict(old) || self.title.dlc != old.title.dlc
+    }
+
+    fn title_conflict(&self, old: &Self) -> bool {
         let markers = |name: &Self| {
             let mut markers = name.title.editions.clone();
             for word in [
@@ -825,9 +839,111 @@ impl Name {
             markers.sort();
             markers
         };
-        self.numbers != old.numbers
-            || self.title.dlc != old.title.dlc
-            || markers(self) != markers(old)
+        self.numbers != old.numbers || markers(self) != markers(old)
+    }
+
+    /// Import-only recommendations for package revisions and added original titles.
+    /// These do not change memory keys, version parsing or library duplicate rules.
+    pub(super) fn import_proposal(&self, old: &Self, supported: bool) -> Option<(u8, String)> {
+        if self.title_conflict(old) || self.package.chapters != old.package.chapters {
+            return None;
+        }
+        let words = |name: &Self| name.title.words.iter().cloned().collect::<HashSet<_>>();
+        let left = words(self);
+        let right = words(old);
+        let compatible_japanese = self.title.japanese.is_empty()
+            || old.title.japanese.is_empty()
+            || self.title.japanese.concat() == old.title.japanese.concat();
+        let repeated_alias = (left.len() < self.title.words.len()
+            || right.len() < old.title.words.len())
+            && left == right
+            && left.iter().map(String::len).sum::<usize>() >= 6
+            && self.title.chinese.chars().count() >= 6
+            && self.title.chinese.chars().all(han)
+            && self.title.chinese == old.title.chinese
+            && compatible_japanese;
+        let result = if repeated_alias {
+            Some((72, "中英文主标题一致，一方补充原名或重复别称；请确认"))
+        } else if supported && (self.subtitle_of(old) || old.subtitle_of(self)) {
+            Some((60, "中文主标题一致，一方附有副标题；结合项目资料确认"))
+        } else {
+            self.revision_proposal(old, supported)
+        };
+        let (score, reason) = result?;
+        let mut reason = reason.to_owned();
+        if self.title.dlc != old.title.dlc {
+            reason.push_str(" · DLC 标记不同，请确认是否为完整更新包");
+        }
+        Some((score, reason))
+    }
+
+    fn subtitle_of(&self, other: &Self) -> bool {
+        // Only one side may add a tilde-delimited subtitle. Never compare two different
+        // subtitles by dropping both, and never discard arbitrary Chinese suffixes.
+        let Some((head, _)) = self.versionless.split_once(['~', '～', '〜']) else {
+            return false;
+        };
+        if other.versionless.contains(['~', '～', '〜']) {
+            return false;
+        }
+        let main = Title::new(&tokenize(head), head);
+        main.chinese.chars().count() >= 6
+            && main.chinese.chars().all(han)
+            && main.chinese == other.title.chinese
+            && self.title.chinese != other.title.chinese
+            && main.words == other.title.words
+            && main.japanese.is_empty()
+            && other.title.japanese.is_empty()
+    }
+
+    fn revision_proposal(&self, old: &Self, supported: bool) -> Option<(u8, &'static str)> {
+        let without_revision = |name: &Self| {
+            let mut revisions = 0;
+            let kept = tokenize(&name.versionless)
+                .into_iter()
+                .filter(|token| {
+                    let revision = token.strip_prefix('r').is_some_and(|number| {
+                        (1..=4).contains(&number.len())
+                            && number.chars().all(|c| c.is_ascii_digit())
+                    });
+                    revisions += usize::from(revision);
+                    !revision
+                })
+                .collect::<Vec<_>>();
+            (revisions == 1).then(|| Name::new(&kept.join(" ")))
+        };
+        let a = without_revision(self)?;
+        let b = without_revision(old)?;
+        if a.title_conflict(&b)
+            || a.package.chapters != b.package.chapters
+            || (!a.title.chinese.is_empty()
+                && !b.title.chinese.is_empty()
+                && a.title.chinese != b.title.chinese)
+            || (!a.title.japanese.is_empty()
+                && !b.title.japanese.is_empty()
+                && a.title.japanese.concat() != b.title.japanese.concat())
+        {
+            return None;
+        }
+        let abbreviation = |short: &Self, long: &Self| {
+            short.title.words.len() == 1
+                && short.title.words[0].len() >= 8
+                && ![
+                    "adventure",
+                    "princess",
+                    "visualnovel",
+                    "application",
+                    "collection",
+                    "compilation",
+                    "launcher",
+                ]
+                .contains(&short.title.words[0].as_str())
+                && long.title.words.contains(&short.title.words[0])
+                && (short.title.words == long.title.words
+                    || supported && long.title.words.len() >= 3)
+        };
+        (abbreviation(&a, &b) || abbreviation(&b, &a))
+            .then_some((70, "英文名称标识一致，包修订号或别称不同；请确认"))
     }
 
     /// All relaxed comparisons are recommendations. A subset score never grants auto-association.

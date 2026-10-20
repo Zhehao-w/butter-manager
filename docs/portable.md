@@ -2,17 +2,17 @@
 
 Windows Release 默认将应用资料放在 `butter-manager.exe` 旁的 `data/`。应放置在用户可写的文件夹；目录不可写时明确报错并退出，不回退到 AppData。
 
-> 1.3.0 使用 schema 13，从 1.2.x 首次升级时自动迁移；旧版 1.2.x 无法打开升级后的库。参见 [游戏库整理说明](library-organization.md)。
+> 1.3.1 沿用 schema 13，从 1.3.0 升级无需数据库迁移；从 1.2.x 首次升级时自动迁移；旧版 1.2.x 无法打开升级后的库。参见 [游戏库整理说明](library-organization.md)。
 
 ## 安装、升级与迁移
 
-1.3.0 的正式主资产为 `butter-manager-v1.3.0-windows-x64-portable.zip` 和 `butter-manager-v1.3.0-windows-x64-portable.zip.sha256`；独立 `butter-manager.exe` 通过 Actions artifact 下载，不作为本版本 Release 附件。正式下载以 [Releases](https://github.com/Zhehao-w/butter-manager/releases) 中已发布的资产为准。
+1.3.1 的正式主资产为 `butter-manager-v1.3.1-windows-x64-portable.zip` 和 `butter-manager-v1.3.1-windows-x64-portable.zip.sha256`；独立 `butter-manager.exe` 通过 Actions artifact 下载，不作为本版本 Release 附件。正式下载以 [Releases](https://github.com/Zhehao-w/butter-manager/releases) 中已发布的资产为准。
 
 首次安装：下载 ZIP，解压到可写的专用目录，运行 EXE。ZIP 内只有 `butter-manager/butter-manager.exe`；首次运行自动建立 `data/`，不携带别人的数据库、导入记录、WebView2 资料、缓存或游戏存档。
 
-校验文件与 ZIP 同名，后缀为 `.zip.sha256`，内容为一行「SHA-256 摘要、两个空格、ZIP 文件名」。两个文件放在同一目录，可用 `sha256sum -c butter-manager-v1.3.0-windows-x64-portable.zip.sha256` 校验；Windows 也可用 `Get-FileHash -Algorithm SHA256` 比对摘要。1.2.x 等历史 Release 保留原来的 `SHA256SUMS.txt` 附件。
+校验文件与 ZIP 同名，后缀为 `.zip.sha256`，内容为一行「SHA-256 摘要、两个空格、ZIP 文件名」。两个文件放在同一目录，可用 `sha256sum -c butter-manager-v1.3.1-windows-x64-portable.zip.sha256` 校验；Windows 也可用 `Get-FileHash -Algorithm SHA256` 比对摘要。1.2.x 等历史 Release 保留原来的 `SHA256SUMS.txt` 附件。
 
-升级：关闭管理器，只用新版 EXE 替换旧 EXE，保留 `data/` 及其全部内容。不要把已有用户资料删除或换成空目录。1.3.0 使用 schema 13，首次从 1.2.x 的 schema 12 升级时在事务中迁移；旧版 1.2.x 及更早 EXE 无法打开升级后的库，请勿直接降级。已使用 schema 13 的 PR 开发版资料不需要再次迁移。需要系统 [WebView2 Runtime](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution)，不随 ZIP 携带多文件运行时。未签名 EXE 可能触发 [SmartScreen](https://learn.microsoft.com/en-us/windows/security/operating-system-security/virus-and-threat-protection/microsoft-defender-smartscreen/)，请核对官方来源和校验值。
+升级：关闭管理器，只用新版 EXE 替换旧 EXE，保留 `data/` 及其全部内容。不要把已有用户资料删除或换成空目录。1.3.1 沿用 schema 13，从 1.3.0 升级无需数据库迁移；首次从 1.2.x 的 schema 12 升级时在事务中迁移；旧版 1.2.x 及更早 EXE 无法打开升级后的库，请勿直接降级。已使用 schema 13 的 PR 开发版资料不需要再次迁移。需要系统 [WebView2 Runtime](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution)，不随 ZIP 携带多文件运行时。未签名 EXE 可能触发 [SmartScreen](https://learn.microsoft.com/en-us/windows/security/operating-system-security/virus-and-threat-protection/microsoft-defender-smartscreen/)，请核对官方来源和校验值。
 
 迁移到新电脑：
 

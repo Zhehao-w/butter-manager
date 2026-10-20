@@ -1,5 +1,15 @@
 # 验证记录
 
+## 1.3.2 发布准备（2026-10-20）
+
+功能 PR #13 已合并到 main `b5caf8b`。最终功能提交 `8764333` 的 Linux / Windows 完整 CI 均通过（39469642919），包括 Windows 原生回归、所有桌面目标严格 Clippy 和 EXE 构建。发布准备统一 package、Tauri、Cargo manifest / lock 与应用内版本断言为 **1.3.2**，同步 README、变更记录、路线图、Portable、关联记忆及整理说明；保留历史记录。
+
+本版交付副标题、包修订标记、重复英文别称与补充原名的 Import 推荐改进，新增结果仍需人工确认，保留 DLC 差异提示。新回退不用于库内查重，不改记忆格式或普通版本解析。沿用 schema **13**，从 1.3.x 升级无需数据库迁移；Release 提供 Portable ZIP 与同名 `.zip.sha256`，升级只替换 EXE 并保留完整 `data/`。
+
+完整 `bash scripts/Check-Cloud.sh` 通过：锁定依赖、Prettier / Rustfmt、前端 **245 项**、TypeScript / Vite、Linux Rust 核心 **254 项**及独立 Node **8 组合成 Unity 核验**。发布脚本 **26 项**隔离回归、四处版本一致性、两处应用内版本断言、文档相对链接及差异检查通过。高风险回归保留，无新增忽略项；仅使用隔离夹具，不访问或备份正式游戏、存档、数据库、WAL、SHM 或 `data/`。
+
+本节记录发布准备；最终源码的 Windows 原生检查、Portable 打包专项、EXE 构建和自动发布以 `v1.3.2` Tag CI / Release 为准。Windows 界面与真实游戏识别、读档验收由用户完成，未使用 GUI 自动化。
+
 ## Import 副标题、修订标记与重复别称（2026-10-20，未发布）
 
 用合成记录复现截图中的三组漏配：蘑菇岛打工日记新增副标题及包描述、InfinityLOL 的包修订标记与英文全称 / 缩写并存、ReSister 重复英文别称并补充日文原名。新增回归在旧实现中三组均没有候选；修复后均返回原 UUID 的待确认推荐，ReSister 保留 DLC 差异提示。三组对应的库内查重仍不采用这些新回退。

@@ -50,11 +50,11 @@ Rust 完整缓存按 Cargo manifest / lock 的依赖集合保存，**不再每�
 
 ## Tag 自动发布
 
-先提交并推送包含工作流、版本配置及锁文件的目标源码，再推送该提交的版本 Tag。例如应用的 package、Tauri、Cargo 版本均为 `1.2.1` 时，使用 `v1.2.1`。只在本机创建 Tag 不触发远端 CI；推送 Tag 才是自动发布入口，**无需提前创建 Release**。工作流不创建 Tag、不自动改版，普通 main / PR / 手动构建不会创建 Release。
+先提交并推送包含工作流、版本配置及锁文件的目标源码，再推送该提交的版本 Tag。例如应用的 package、Tauri、Cargo 版本均为 `1.3.0` 时，使用 `v1.3.0`。只在本机创建 Tag 不触发远端 CI；推送 Tag 才是自动发布入口，**无需提前创建 Release**。工作流不创建 Tag、不自动改版，普通 main / PR / 手动构建不会创建 Release。
 
-1. Linux 与 Windows 并行执行完整检查，Windows 额外生成版本化 Portable ZIP 和 `SHA256SUMS.txt`，同时保留通常的 EXE artifact。
+1. Linux 与 Windows 并行执行完整检查，Windows 额外生成版本化 Portable ZIP 和 `<ZIP 文件名>.sha256`，同时保留通常的 EXE artifact。
 2. 只有两端成功，发布 job 才在 Ubuntu 上运行；核对两端实际检出提交一致，并解析远端轻量 / 附注 Tag，确认仍指向该提交。Windows 仍负责全部 EXE 编译及原生回归。
-3. 校验中间产物只包含构建 EXE、ZIP 和 SHA-256，ZIP 内只有与构建 EXE 内容一致的程序；校验文件仅列 ZIP。创建带 GitHub 自动生成说明的 Release 草稿，**只上传 ZIP 和 SHA256SUMS.txt**，上传后复核远端两项资产的大小和 SHA-256，再公开发布。独立 EXE 继续作为 CI artifact 提供下载，不作为 Release 附件。Tag 含预发布后缀时使用 prerelease。
+3. Windows 发布构建复用已有产物运行 Portable 专项，核对 ZIP 白名单、EXE 内容、同名 `.zip.sha256` 及失败清理；不重新编译。发布 job 再校验中间产物只包含构建 EXE、ZIP 和 SHA-256，ZIP 内只有与构建 EXE 内容一致的程序；校验文件仅列 ZIP。创建带 GitHub 自动生成说明的 Release 草稿，**只上传 ZIP 和 `<ZIP 文件名>.sha256`**，上传后复核远端两项资产的大小和 SHA-256，再公开发布。独立 EXE 继续作为 CI artifact 提供下载，不作为 Release 附件。Tag 含预发布后缀时使用 prerelease。
 4. 上传或校验失败时保留草稿，不公开发布；可在 Actions 中重跑原失败运行，继续同一 Tag 的草稿。已经成功且资产一致的 Release 重跑不重复上传；发现已公开的同名资产内容不同会停止，不自动覆盖。
 
 发布运行不被同 Tag 的后续运行自动取消；分支 / PR 的重复检查仍可自动取消。发布期间 Tag 被移动会阻止旧构建公开发布，不要通过改指向同名 Tag 来替换正式版本。

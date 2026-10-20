@@ -106,7 +106,7 @@ class PublishReleaseTests(unittest.TestCase):
         self.write_checksums()
 
     def write_checksums(self):
-        self.checksums = self.directory / "SHA256SUMS.txt"
+        self.checksums = self.directory / (self.zip.name + ".sha256")
         self.checksums.write_text("".join(
             f"{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}\n" for p in (self.zip,)
         ))
@@ -131,16 +131,17 @@ class PublishReleaseTests(unittest.TestCase):
         self.publish()
         self.assertEqual(
             {asset["name"] for asset in self.github.current["assets"]},
-            {self.zip.name, "SHA256SUMS.txt"},
+            {self.zip.name, self.checksums.name},
         )
         upload = next(a for a in self.github.calls if a[:2] == ["release", "upload"])
         self.assertEqual(
             {Path(name).name for name in upload[3:upload.index("--repo")]},
-            {self.zip.name, "SHA256SUMS.txt"},
+            {self.zip.name, self.checksums.name},
         )
 
     def test_prerelease_tag_does_not_publish_as_stable(self):
         self.zip.unlink()
+        self.checksums.unlink()
         self.make_assets("1.0.0-rc.1")
         self.publish()
         self.assertIn("--prerelease", next(a for a in self.github.calls if a[:2] == ["release", "create"]))
@@ -309,6 +310,16 @@ class PublishReleaseTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "only the Portable ZIP"):
             self.publish()
+        self.assertEqual(self.github.calls, [])
+
+    def test_checksum_filename_must_match_the_release_zip(self):
+        for name in ("SHA256SUMS.txt", "different.zip.sha256"):
+            with self.subTest(name=name):
+                wrong_name = self.directory / name
+                self.checksums.rename(wrong_name)
+                with self.assertRaisesRegex(ValueError, "matching ZIP.sha256"):
+                    self.publish()
+                wrong_name.rename(self.checksums)
         self.assertEqual(self.github.calls, [])
 
     def test_zip_with_extra_data_or_different_executable_is_rejected(self):

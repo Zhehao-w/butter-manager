@@ -26,17 +26,18 @@ def file_digest(path):
 def validate_assets(directory, tag):
     exe_name = "butter-manager.exe"
     zip_name = f"butter-manager-{tag}-windows-x64-portable.zip"
-    release_names = [zip_name, "SHA256SUMS.txt"]
+    checksum_name = zip_name + ".sha256"
+    release_names = [zip_name, checksum_name]
     # The EXE is required for CI's byte-for-byte verification, but never uploaded.
     if {p.name for p in directory.iterdir()} != {exe_name, *release_names}:
-        raise ValueError("Expected a build EXE, Portable ZIP and SHA256SUMS.txt.")
+        raise ValueError("Expected a build EXE, Portable ZIP and matching ZIP.sha256.")
     built = {}
     for name in [exe_name, *release_names]:
         path = directory / name
         if path.is_symlink() or not path.is_file() or path.stat().st_size == 0:
             raise ValueError(f"Invalid build/release asset: {name}")
         built[name] = {"digest": "sha256:" + file_digest(path), "size": path.stat().st_size}
-    lines = (directory / "SHA256SUMS.txt").read_text(encoding="utf-8-sig").splitlines()
+    lines = (directory / checksum_name).read_text(encoding="utf-8-sig").splitlines()
     if len(lines) != 1:
         raise ValueError("Expected exactly one ZIP checksum.")
     match = re.fullmatch(r"([a-f0-9]{64})  (.+)", lines[0])

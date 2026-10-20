@@ -413,7 +413,11 @@ export function ImportPage({
                   !next[source].new_override &&
                   !next[source].existing_id
                 )
-                  next[source] = { ...next[source], existing_id: suggestions[0].id };
+                  next[source] = {
+                    ...next[source],
+                    existing_id: suggestions[0].id,
+                    remember_association: true,
+                  };
               return next;
             });
           })
@@ -600,7 +604,11 @@ export function ImportPage({
         ...current[source],
         ...(Object.hasOwn(change, 'existing_id') &&
         change.existing_id !== current[source].existing_id
-          ? { working_directory: undefined, mtool_loader: undefined, remember_association: false }
+          ? {
+              working_directory: undefined,
+              mtool_loader: undefined,
+              remember_association: !!change.existing_id && change.new_override !== true,
+            }
           : {}),
         ...change,
       },
@@ -1452,6 +1460,26 @@ export function ImportPage({
                                         ? '已有游戏推荐 · 当前按新游戏导入'
                                         : '发现可能已有的游戏，请确认关联'}
                                   </strong>
+                                  {choice.existing_id && !choice.new_override && (
+                                    <label
+                                      className="check import-memory-choice"
+                                      title="导入提交成功后保存；下次优先推荐，仍需确认。不添加名称别名。"
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        aria-label="记住本次关联"
+                                        disabled={disabled}
+                                        checked={!!choice.remember_association}
+                                        onChange={(event) =>
+                                          update(source, {
+                                            remember_association: event.target.checked,
+                                          })
+                                        }
+                                      />
+                                      记住关联
+                                      <Icon name="info" size={13} />
+                                    </label>
+                                  )}
                                 </div>
                                 {associations.map((match) => (
                                   <div className="import-match-option" key={match.id}>
@@ -1550,24 +1578,6 @@ export function ImportPage({
                                 )}
                             </div>
                           </div>
-                          {choice.existing_id && !choice.new_override && (
-                            <div className="import-memory-choice">
-                              <label className="check">
-                                <input
-                                  type="checkbox"
-                                  disabled={disabled}
-                                  checked={!!choice.remember_association}
-                                  onChange={(event) =>
-                                    update(source, { remember_association: event.target.checked })
-                                  }
-                                />
-                                记住本次关联
-                              </label>
-                              <p className="muted">
-                                导入提交成功后保存；下次优先推荐，仍需确认。不添加名称别名。
-                              </p>
-                            </div>
-                          )}
                           {existing && (
                             <section
                               className="import-associated-saves"

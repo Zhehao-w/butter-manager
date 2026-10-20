@@ -411,11 +411,14 @@ impl<'a> MatchIndex<'a> {
                 .names
                 .iter()
                 .filter_map(|name| {
-                    incoming.proposal(name).or_else(|| {
-                        supported
-                            .then(|| incoming.metadata_proposal(name))
-                            .flatten()
-                    })
+                    incoming
+                        .proposal(name)
+                        .or_else(|| {
+                            supported
+                                .then(|| incoming.metadata_proposal(name))
+                                .flatten()
+                        })
+                        .or_else(|| incoming.legacy_numeric_proposal(name))
                 })
                 .max_by_key(|(score, _)| *score)
             else {
@@ -709,6 +712,104 @@ mod tests {
     fn options(root: &Path, contents: &str) {
         fs::create_dir_all(root.join("game")).unwrap();
         fs::write(root.join("game/options.rpy"), contents).unwrap();
+    }
+
+    #[test]
+    fn bilingual_legacy_numeric_suffixes_offer_import_confirmation_only() {
+        let title = "断角魔王艾莉丝的重生谭 The Rebirth Tale of Broken Horn Demon Lord Alice";
+        let old = game("old", &format!("{title} 072"), Path::new("Z:/missing/old"));
+        for suffix in [
+            "官中无修版",
+            "073 官中无修版",
+            "0073 官中无修版",
+            "v0.73 官中版",
+        ] {
+            let incoming_title = format!("{title} {suffix}");
+            let mut candidate = scanner::pending_candidate(Path::new("Z:/missing/source")).unwrap();
+            candidate.suggested_title = incoming_title.clone();
+            candidate.executables = vec![exe("Game.exe")];
+            let matches =
+                MatchIndex::new(std::slice::from_ref(&old)).matches(&candidate, &|| false);
+            assert_eq!(matches.len(), 1, "{suffix}");
+            assert_eq!(matches[0].id, "old");
+            assert!(!matches[0].auto_associate);
+            assert!(matches[0].reason.contains("末尾数字"));
+            let incoming = game("new", &incoming_title, Path::new("Z:/missing/new"));
+            assert!(MatchIndex::new(&[old.clone(), incoming])
+                .library_pairs(&|| false, &|_| {})
+                .unwrap()
+                .is_empty());
+        }
+        let games = [
+            old.clone(),
+            game(
+                "another",
+                &format!("{title} 071"),
+                Path::new("Z:/missing/another"),
+            ),
+        ];
+        let mut candidate = scanner::pending_candidate(Path::new("Z:/missing/source")).unwrap();
+        candidate.suggested_title = format!("{title} 官中无修版");
+        let matches = MatchIndex::new(&games).matches(&candidate, &|| false);
+        assert_eq!(matches.len(), 2);
+        assert!(matches.iter().all(|m| !m.auto_associate));
+
+        for incoming in [
+            format!("{title} 2 官中无修版"),
+            format!("{title} 72 官中无修版"),
+            format!("{title} 2026 官中无修版"),
+            format!("{title} 00073 官中无修版"),
+            format!("{title} 073 第二章"),
+            format!("{title} 073 Season 2"),
+            format!("{title} 073 DLC"),
+            format!("{title} 073 Demo"),
+            format!("{title} 073 II"),
+            format!("{title} 073 外传"),
+            "另一部作品 The Rebirth Tale of Broken Horn Demon Lord Alice 073".into(),
+            "断角魔王艾莉丝的重生谭 Another Broken Horn Adventure 073".into(),
+            "断角魔王艾莉丝的重生谭官中无修版 The Rebirth Tale of Broken Horn Demon Lord Alice 073"
+                .into(),
+            "断角魔王艾莉丝的重生谭 073 The Rebirth Tale of Broken Horn Demon Lord Alice 官中无修版".into(),
+        ] {
+            candidate.suggested_title = incoming.clone();
+            assert!(
+                MatchIndex::new(std::slice::from_ref(&old))
+                    .matches(&candidate, &|| false)
+                    .is_empty(),
+                "{incoming}"
+            );
+        }
+    }
+
+    #[test]
+    fn demon_is_not_demo_but_explicit_edition_markers_remain_protected() {
+        let title = "断角魔王艾莉丝的重生谭 The Rebirth Tale of Broken Horn Demon Lord Alice";
+        let old = game(
+            "old",
+            &format!("{title} v0.72"),
+            Path::new("Z:/missing/old"),
+        );
+        let mut candidate = scanner::pending_candidate(Path::new("Z:/missing/source")).unwrap();
+        candidate.suggested_title = format!("{title} v0.73 官中无修版");
+        let matches = MatchIndex::new(std::slice::from_ref(&old)).matches(&candidate, &|| false);
+        assert_eq!(matches.len(), 1);
+        assert!(!matches[0].auto_associate);
+        for edition in [
+            "v0.73 Demo",
+            "v0.73Demo1",
+            "v0.73 Demo.2",
+            "v0.73 Remake",
+            "v0.73 Remastered",
+            "v0.73 试玩版",
+        ] {
+            candidate.suggested_title = format!("{title} {edition} 官中无修版");
+            assert!(
+                MatchIndex::new(std::slice::from_ref(&old))
+                    .matches(&candidate, &|| false)
+                    .is_empty(),
+                "{edition}"
+            );
+        }
     }
 
     #[test]

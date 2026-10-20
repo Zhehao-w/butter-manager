@@ -93,6 +93,11 @@ struct Title {
 }
 
 fn package_label(token: &str) -> bool {
+    package_label_v1(token) || ["官中无修", "官中无修版", "官方中文无修版"].contains(&token)
+}
+
+// Persisted v1 memory keys must keep their original normalization contract.
+fn package_label_v1(token: &str) -> bool {
     if token
         .strip_prefix("pc")
         .is_some_and(|suffix| !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit()))
@@ -127,8 +132,17 @@ fn package_label(token: &str) -> bool {
 
 impl Title {
     fn new(tokens: &[String], full: &str) -> Self {
+        Self::parse(tokens, full, false)
+    }
+
+    fn parse(tokens: &[String], full: &str, memory_v1: bool) -> Self {
+        let is_package = if memory_v1 {
+            package_label_v1
+        } else {
+            package_label
+        };
         let mut title = Self {
-            editions: edition_markers(full),
+            editions: edition_markers_with_mode(full, memory_v1),
             ..Self::default()
         };
         let mut index = 0;
@@ -141,11 +155,11 @@ impl Title {
                 index += 1;
                 if token == "dlc" {
                     title.dlc = true;
-                } else if package_label(token)
+                } else if is_package(token)
                     || package_version(token)
                     || release_date(token)
                     || ["extended", "electron", "gg"].contains(&token)
-                    || token == "ai" && next.is_some_and(|next| package_label(next))
+                    || token == "ai" && next.is_some_and(|next| is_package(next))
                 {
                     continue;
                 } else if token.is_ascii() {
@@ -245,6 +259,23 @@ fn translation_package_label(token: &str) -> bool {
 
 // A shared original title must not hide sequel/chapter labels in its translation.
 fn edition_markers(title: &str) -> Vec<String> {
+    edition_markers_with_mode(title, false)
+}
+
+fn edition_markers_with_mode(title: &str, memory_v1: bool) -> Vec<String> {
+    let tokens = tokenize(title);
+    let bounded = |marker: &str| {
+        title.match_indices(marker).any(|(start, _)| {
+            title[..start]
+                .chars()
+                .next_back()
+                .is_none_or(|c| !c.is_ascii_alphabetic())
+                && title[start + marker.len()..]
+                    .chars()
+                    .next()
+                    .is_none_or(|c| !c.is_ascii_alphabetic())
+        })
+    };
     let mut markers = [
         "外传",
         "外傳",
@@ -263,7 +294,13 @@ fn edition_markers(title: &str) -> Vec<String> {
         "demo",
     ]
     .into_iter()
-    .filter(|marker| title.contains(marker))
+    .filter(|marker| {
+        if memory_v1 || !marker.is_ascii() {
+            title.contains(marker)
+        } else {
+            bounded(marker) || *marker == "remaster" && bounded("remastered")
+        }
+    })
     .map(str::to_owned)
     .collect::<Vec<_>>();
     let characters = title.chars().collect::<Vec<_>>();
@@ -304,7 +341,6 @@ fn edition_markers(title: &str) -> Vec<String> {
             }
         }
     }
-    let tokens = tokenize(title);
     for (index, token) in tokens.iter().enumerate() {
         let number = token
             .strip_prefix("season")
@@ -482,7 +518,9 @@ impl Name {
             .to_owned();
         // Separate scripts even without spaces, so translated names can change position.
         let tokens = tokenize(&versionless);
-        let title = Title::new(&tokens, &versionless);
+        let mut title = Title::new(&tokens, &versionless);
+        // A version qualifier can consume Demo; retain edition guards from the full name.
+        title.editions = edition_markers(&raw);
         let package = PackageTitle::new(&versionless, release);
         let mut words = Vec::new();
         let mut other = String::new();
@@ -622,7 +660,10 @@ impl Name {
     }
 
     pub(super) fn memory_key(&self) -> Option<String> {
-        let has_title = self.title.words.iter().any(|word| {
+        // Freeze v1 keys so parser fixes do not invalidate already-confirmed memories.
+        // Recommendation/conflict checks still use the corrected title parser.
+        let title = Title::parse(&tokenize(&self.versionless), &self.versionless, true);
+        let has_title = title.words.iter().any(|word| {
             ![
                 "game",
                 "games",
@@ -656,20 +697,20 @@ impl Name {
                 "mtool",
             ]
             .contains(&word.as_str())
-        }) || (!self.title.chinese.is_empty()
-            && !["游戏", "游戏资源", "游戏下载"].contains(&self.title.chinese.as_str()))
-            || !self.title.japanese.is_empty();
-        let distinctive = self.title.words.iter().map(String::len).sum::<usize>() >= 6
-            || self.title.chinese.chars().count() >= 3
-            || self.title.japanese.concat().chars().count() >= 3;
-        (has_title && distinctive && self.useful_library_name()).then(|| {
+        }) || (!title.chinese.is_empty()
+            && !["游戏", "游戏资源", "游戏下载"].contains(&title.chinese.as_str()))
+            || !title.japanese.is_empty();
+        let distinctive = title.words.iter().map(String::len).sum::<usize>() >= 6
+            || title.chinese.chars().count() >= 3
+            || title.japanese.concat().chars().count() >= 3;
+        (has_title && distinctive && self.useful_title(&title)).then(|| {
             serde_json::to_string(&(
-                &self.title.words,
-                &self.title.chinese,
-                &self.title.japanese,
+                &title.words,
+                &title.chinese,
+                &title.japanese,
                 &self.numbers,
-                &self.title.editions,
-                self.title.dlc,
+                &title.editions,
+                title.dlc,
                 &self.package.chapters,
             ))
             .unwrap()
@@ -681,6 +722,10 @@ impl Name {
     }
 
     pub(super) fn useful_library_name(&self) -> bool {
+        self.useful_title(&self.title)
+    }
+
+    fn useful_title(&self, title: &Title) -> bool {
         self.raw.chars().count() >= 3
             && ![
                 "game",
@@ -700,9 +745,49 @@ impl Name {
                 "游戏资源",
             ]
             .contains(&self.raw.as_str())
-            && (!self.title.words.is_empty()
-                || !self.title.chinese.is_empty()
-                || !self.title.japanese.is_empty())
+            && (!title.words.is_empty() || !title.chinese.is_empty() || !title.japanese.is_empty())
+    }
+
+    /// Import-only fallback for old zero-padded package suffixes. Never a version parser
+    /// or a library duplicate rule: the entire bilingual title must agree, with no other numbers.
+    pub(super) fn legacy_numeric_proposal(&self, old: &Self) -> Option<(u8, String)> {
+        let legacy_suffix = |name: &Self| {
+            let tokens = tokenize(&name.versionless);
+            let last = tokens
+                .iter()
+                .rev()
+                .map(|s| s.trim_matches('.'))
+                .find(|token| !token.is_empty() && !package_label(token));
+            name.numbers.len() == 1
+                && last.is_some_and(|token| {
+                    (3..=4).contains(&token.len())
+                        && token.starts_with('0')
+                        && token.chars().all(|c| c.is_ascii_digit())
+                        && token == name.numbers[0]
+                })
+        };
+        let left = legacy_suffix(self);
+        let right = legacy_suffix(old);
+        if !(left || right)
+            || (!left && !self.numbers.is_empty())
+            || (!right && !old.numbers.is_empty())
+            || self.title.chinese.chars().count() < 5
+            || !self.title.chinese.chars().all(han)
+            || self.title.chinese != old.title.chinese
+            || self.title.words.len() < 3
+            || self.title.words.iter().map(String::len).sum::<usize>() < 18
+            || self.title.words != old.title.words
+            || self.title.japanese != old.title.japanese
+            || self.title.editions != old.title.editions
+            || self.title.dlc != old.title.dlc
+            || self.package.chapters != old.package.chapters
+        {
+            return None;
+        }
+        Some((
+            70,
+            "完整中英标题一致，末尾数字可能是版本或整理编号；请确认".into(),
+        ))
     }
 
     // Library recommendations are stricter than Import: a DLC bundle may update a game

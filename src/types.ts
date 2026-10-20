@@ -71,6 +71,11 @@ export interface LibraryRelocationReport {
   games: Game[];
 }
 
+export interface LibraryTag {
+  id: string;
+  name: string;
+}
+
 export interface Game {
   id: string;
   canonical_title: string;
@@ -89,6 +94,8 @@ export interface Game {
   updated_at: string;
   last_launched_at: string | null;
   play_status: PlayStatus;
+  favorite: boolean;
+  tags: LibraryTag[];
   aliases: string[];
   save_paths: string[];
 }
@@ -138,7 +145,7 @@ export type GameEdit = Pick<
   | 'mtool_loader'
   | 'aliases'
   | 'save_paths'
->;
+> & { tags?: LibraryTag[] };
 
 export interface MToolRecipe {
   target_exe: string;

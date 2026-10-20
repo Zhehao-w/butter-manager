@@ -203,7 +203,27 @@ jobs:
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml --no-default-features --lib
 
       - name: Check backend and desktop targets
-        run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          $taskClippyOutput = cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets --message-format=json -- -D warnings
+          $taskClippyExit = $LASTEXITCODE
+          foreach ($taskClippyLine in $taskClippyOutput) {
+            $taskClippyEvent = $taskClippyLine | ConvertFrom-Json
+            if ($taskClippyEvent.reason -ne 'compiler-message') { continue }
+            Write-Host $taskClippyEvent.message.rendered
+            if ($taskClippyEvent.message.level -ne 'error') { continue }
+            $taskClippyText = $taskClippyEvent.message.message.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            $taskClippySpan = $taskClippyEvent.message.spans | Where-Object is_primary | Select-Object -First 1
+            if ($taskClippySpan) {
+              $taskClippyPath = $taskClippySpan.file_name.Replace('\', '/')
+              if ($taskClippyPath.StartsWith('src/') -or $taskClippyPath.StartsWith('examples/')) { $taskClippyPath = "src-tauri/$taskClippyPath" }
+              $taskClippyPath = $taskClippyPath.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A').Replace(',', '%2C')
+              Write-Host ("::error file={0},line={1},col={2}::{3}" -f $taskClippyPath, $taskClippySpan.line_start, $taskClippySpan.column_start, $taskClippyText)
+            } else {
+              Write-Host "::error::$taskClippyText"
+            }
+          }
+          exit $taskClippyExit
 
       - name: Build Windows app
         env:

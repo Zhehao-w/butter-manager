@@ -223,6 +223,7 @@ impl Fixture {
             external_player: None,
             mtool_target_exe: None,
             mtool_loader: None,
+            tags: None,
             aliases: vec!["my alias".into()],
             save_paths: vec![
                 "<GAME>/www/save".into(),
@@ -393,6 +394,7 @@ fn manual_launch_fixture(mtool: bool) -> Fixture {
         external_player: None,
         mtool_target_exe: mtool.then(|| "original/Game.exe".into()),
         mtool_loader: mtool.then(|| "loaders/custom.dll".into()),
+        tags: None,
         aliases: game.aliases,
         save_paths: game.save_paths,
     })
@@ -1743,6 +1745,17 @@ fn locked_save_and_space_exhaustion_keep_both_versions_untouched() {
 #[test]
 fn incoming_names_and_folder_are_committed_and_rollback_restores_original_identity() {
     let mut f = Fixture::new();
+    {
+        let mut db = f.db.lock().unwrap();
+        db.set_favorite(&f.id, true).unwrap();
+        let mut edit: GameEdit =
+            serde_json::from_value(serde_json::to_value(db.game(&f.id).unwrap()).unwrap()).unwrap();
+        edit.tags = Some(vec![crate::domain::LibraryTag {
+            id: String::new(),
+            name: "汉化".into(),
+        }]);
+        db.edit_game(edit).unwrap();
+    }
     let original = f.db.lock().unwrap().game(&f.id).unwrap();
     let id = f.plan_with(true, true, |s| {
         s.title = "新名称 v2".into();
@@ -1759,6 +1772,8 @@ fn incoming_names_and_folder_are_committed_and_rollback_restores_original_identi
     assert_eq!(game.canonical_title, "新名称 v2");
     assert_eq!(game.current_version, "v2");
     assert_eq!(game.id, original.id);
+    assert!(game.favorite);
+    assert_eq!(game.tags, original.tags);
     assert_eq!(
         game.install_path,
         // Windows TEMP may use an 8.3 alias; registration stores the canonical path.
@@ -1777,6 +1792,8 @@ fn incoming_names_and_folder_are_committed_and_rollback_restores_original_identi
     assert_eq!(game.canonical_title, original.canonical_title);
     assert_eq!(game.install_path, original.install_path);
     assert_eq!(game.current_version, original.current_version);
+    assert!(game.favorite);
+    assert_eq!(game.tags, original.tags);
 }
 
 #[test]

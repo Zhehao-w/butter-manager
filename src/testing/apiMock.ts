@@ -20,6 +20,7 @@ export function resetApiMock(mocked: Api) {
   const mocks = vi.mocked(mocked);
   for (const fn of [
     mocks.importPlans,
+    mocks.libraryTags,
     mocks.importRecoveryIssues,
     mocks.launchHistory,
     mocks.versionHistory,

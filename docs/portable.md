@@ -2,6 +2,8 @@
 
 Windows Release 默认将应用资料放在 `butter-manager.exe` 旁的 `data/`。应放置在用户可写的文件夹；目录不可写时明确报错并退出，不回退到 AppData。
 
+> 开发中的 v1.3 PR 构建使用 schema 13，旧版 1.2.x 无法打开升级后的库；功能尚未正式发布。参见 [游戏库整理说明](library-organization.md)。
+
 ## 安装、升级与迁移
 
 1.2.1 的正式主资产为 `butter-manager-v1.2.1-windows-x64-portable.zip` 和 `SHA256SUMS.txt`；独立 `butter-manager.exe` 通过 Actions artifact 下载，不作为本版本 Release 附件。正式下载以 [Releases](https://github.com/Zhehao-w/butter-manager/releases) 中已发布的资产为准。

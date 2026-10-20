@@ -7,6 +7,8 @@ use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use std::path::Path;
 use uuid::Uuid;
 
+mod organization;
+
 pub struct Database {
     connection: Connection,
 }
@@ -224,7 +226,7 @@ impl Database {
         connection.busy_timeout(std::time::Duration::from_secs(5))?;
         connection.execute_batch("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;")?;
         let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-        if version > 12 {
+        if version > 13 {
             return Err(Error::Validation("数据库版本较新，当前程序无法打开".into()));
         }
         if version == 0 {
@@ -302,6 +304,12 @@ impl Database {
         if version < 12 {
             let transaction = connection.unchecked_transaction()?;
             transaction.execute_batch(include_str!("../migrations/012_import_memories.sql"))?;
+            transaction.commit()?;
+        }
+        if version < 13 {
+            let transaction = connection.unchecked_transaction()?;
+            transaction
+                .execute_batch(include_str!("../migrations/013_library_organization.sql"))?;
             transaction.commit()?;
         }
         Ok(Self { connection })
@@ -863,7 +871,7 @@ impl Database {
         let suffix = ids
             .map(|ids| format!(" WHERE id IN ({})", vec!["?"; ids.len()].join(",")))
             .unwrap_or_default();
-        let query = format!("SELECT id,canonical_title,display_title,install_path,current_version,version_source,main_executable,engine,launch_type,mtool_target_exe,mtool_loader,created_at,updated_at,working_directory,last_launched_at,external_player,play_status FROM games{suffix} ORDER BY display_title COLLATE NOCASE,id");
+        let query = format!("SELECT id,canonical_title,display_title,install_path,current_version,version_source,main_executable,engine,launch_type,mtool_target_exe,mtool_loader,created_at,updated_at,working_directory,last_launched_at,external_player,play_status,favorite FROM games{suffix} ORDER BY display_title COLLATE NOCASE,id");
         let mut statement = self.connection.prepare(&query)?;
         let mut games = statement
             .query_map(rusqlite::params_from_iter(ids.unwrap_or_default()), |row| {
@@ -903,6 +911,8 @@ impl Database {
                                 Box::new(e),
                             )
                         })?,
+                    favorite: row.get(17)?,
+                    tags: vec![],
                     aliases: vec![],
                     save_paths: vec![],
                 })
@@ -933,6 +943,7 @@ impl Database {
                 }
             }
         }
+        self.load_game_tags(&mut games)?;
         Ok(games)
     }
     pub fn game(&self, id: &str) -> Result<Game> {
@@ -966,7 +977,7 @@ impl Database {
     pub fn clear_library(&mut self) -> Result<ResetReport> {
         self.connection.execute_batch("PRAGMA secure_delete=ON;")?;
         let transaction = self.connection.transaction()?;
-        transaction.execute_batch("DROP TABLE import_memories; DROP TABLE duplicate_reviews; DROP TABLE version_history; DROP TABLE launch_history; DROP TABLE aliases; DROP TABLE save_paths; DROP TABLE games; DROP TABLE settings;")?;
+        transaction.execute_batch("DROP TABLE game_tags; DROP TABLE library_tags; DROP TABLE import_memories; DROP TABLE duplicate_reviews; DROP TABLE version_history; DROP TABLE launch_history; DROP TABLE aliases; DROP TABLE save_paths; DROP TABLE games; DROP TABLE settings;")?;
         transaction.execute_batch(include_str!("../migrations/001_initial.sql"))?;
         transaction.execute_batch(include_str!("../migrations/002_working_directory.sql"))?;
         transaction.execute_batch(include_str!("../migrations/003_launch_history.sql"))?;
@@ -979,6 +990,7 @@ impl Database {
         transaction.execute_batch(include_str!("../migrations/010_duplicate_ignores.sql"))?;
         transaction.execute_batch(include_str!("../migrations/011_duplicate_reviews.sql"))?;
         transaction.execute_batch(include_str!("../migrations/012_import_memories.sql"))?;
+        transaction.execute_batch(include_str!("../migrations/013_library_organization.sql"))?;
         transaction.commit()?;
         // Logical reset has committed. A compaction failure must not leave stale records in the UI.
         let warning = self.compact_reset_file().err().map(|error| {
@@ -1116,6 +1128,9 @@ impl Database {
             "UPDATE games SET play_status=?2 WHERE id=?1",
             params![edit.id, edit.play_status.as_str()],
         )?;
+        if let Some(tags) = &edit.tags {
+            Self::replace_game_tags(&transaction, &edit.id, tags)?;
+        }
         // Replace metadata only; never delete or mutate anything in a game directory.
         transaction.execute("DELETE FROM aliases WHERE game_id=?1", [&edit.id])?;
         for alias in &edit.aliases {
@@ -1171,10 +1186,10 @@ mod tests {
                 [],
             )
             .unwrap();
-        db.connection
-            .execute_batch("DROP TABLE import_memories;PRAGMA user_version=11;")
-            .unwrap();
         let before = serde_json::to_string(&db.games().unwrap()).unwrap();
+        db.connection
+            .execute_batch("DROP TABLE game_tags;DROP TABLE library_tags;ALTER TABLE games DROP COLUMN favorite;DROP TABLE import_memories;PRAGMA user_version=11;")
+            .unwrap();
         drop(db);
         let db = Database::open(&path).unwrap();
         assert_eq!(serde_json::to_string(&db.games().unwrap()).unwrap(), before);
@@ -1183,7 +1198,7 @@ mod tests {
             db.connection
                 .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
                 .unwrap(),
-            12
+            13
         );
         assert!(!db
             .connection
@@ -1324,7 +1339,7 @@ mod tests {
         }
         let before = serde_json::to_string(&db.games().unwrap()).unwrap();
         db.connection
-            .execute_batch("DROP TABLE import_memories;DROP TABLE duplicate_reviews;")
+            .execute_batch("DROP TABLE game_tags;DROP TABLE library_tags;ALTER TABLE games DROP COLUMN favorite;DROP TABLE import_memories;DROP TABLE duplicate_reviews;")
             .unwrap();
         db.connection
             .execute_batch(include_str!("../migrations/010_duplicate_ignores.sql"))
@@ -1369,7 +1384,7 @@ mod tests {
         let before = serde_json::to_string(&db.games().unwrap()).unwrap();
         db.connection
             .execute_batch(
-                "DROP TABLE import_memories;DROP TABLE duplicate_reviews;PRAGMA user_version=9;",
+                "DROP TABLE game_tags;DROP TABLE library_tags;ALTER TABLE games DROP COLUMN favorite;DROP TABLE import_memories;DROP TABLE duplicate_reviews;PRAGMA user_version=9;",
             )
             .unwrap();
         drop(db);
@@ -1400,7 +1415,7 @@ mod tests {
             db.connection
                 .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
                 .unwrap(),
-            12
+            13
         );
         assert!(!db
             .connection
@@ -1426,7 +1441,7 @@ mod tests {
         let history = db.launch_history(&id).unwrap();
         db.connection
             .execute_batch(
-                "DROP TABLE import_memories;DROP TABLE duplicate_reviews;DROP TABLE version_history;PRAGMA user_version=8;",
+                "DROP TABLE game_tags;DROP TABLE library_tags;ALTER TABLE games DROP COLUMN favorite;DROP TABLE import_memories;DROP TABLE duplicate_reviews;DROP TABLE version_history;PRAGMA user_version=8;",
             )
             .unwrap();
         drop(db);
@@ -1441,7 +1456,7 @@ mod tests {
             db.connection
                 .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
                 .unwrap(),
-            12
+            13
         );
         assert!(!db
             .connection
@@ -1858,7 +1873,7 @@ mod tests {
             db.connection
                 .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
                 .unwrap(),
-            12
+            13
         );
     }
     #[test]
@@ -2074,6 +2089,7 @@ mod tests {
             external_player: game.external_player.clone(),
             mtool_target_exe: None,
             mtool_loader: None,
+            tags: None,
             aliases: game.aliases.clone(),
             save_paths: vec![],
         }

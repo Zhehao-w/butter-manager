@@ -28,6 +28,8 @@ export const makeGame = (overrides: Partial<Game> = {}): Game => ({
   updated_at: '',
   last_launched_at: null,
   play_status: 'UNPLAYED',
+  favorite: false,
+  tags: [],
   aliases: [],
   save_paths: [],
   ...overrides,

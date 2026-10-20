@@ -573,6 +573,8 @@ fn dummy_game() -> Game {
         updated_at: String::new(),
         last_launched_at: None,
         play_status: Default::default(),
+        favorite: false,
+        tags: vec![],
         aliases: vec![],
         save_paths: vec![],
     }

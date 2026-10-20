@@ -2,6 +2,8 @@ import { Channel, invoke } from '@tauri-apps/api/core';
 import type { SaveCatalog, SaveDocument, SaveChange } from './saveEditorTypes';
 import type {
   Game,
+  LibraryTag,
+  PlayStatus,
   RenpyAppdataPreview,
   LibraryRelocationPreview,
   LibraryRelocationReport,
@@ -104,6 +106,15 @@ export const api = {
   suggestVersion: (folder: string, executable: string | null) =>
     invoke<[string, string]>('suggest_version', { folder, executable }),
   games: () => invoke<Game[]>('list_games'),
+  libraryTags: () => invoke<LibraryTag[]>('library_tags'),
+  setFavorite: (id: string, favorite: boolean) =>
+    invoke<Game>('set_game_favorite', { id, favorite }),
+  setFavorites: (ids: string[], favorite: boolean) =>
+    invoke<Game[]>('set_game_favorites', { ids, favorite }),
+  setPlayStatuses: (ids: string[], status: PlayStatus) =>
+    invoke<Game[]>('set_game_play_statuses', { ids, status }),
+  renameTag: (id: string, name: string) => invoke<void>('rename_library_tag', { id, name }),
+  deleteTag: (id: string) => invoke<void>('delete_library_tag', { id }),
   gamesByIds: (ids: string[]) => invoke<Game[]>('games_by_ids', { ids }),
   syncScanMtool: (scanId: string) => invoke<Game[]>('sync_scan_mtool', { scanId }),
   previewMtoolLaunch: (

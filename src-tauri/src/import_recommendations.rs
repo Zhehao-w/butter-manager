@@ -691,6 +691,8 @@ mod tests {
             updated_at: String::new(),
             last_launched_at: None,
             play_status: PlayStatus::Unplayed,
+            favorite: false,
+            tags: vec![],
             aliases: vec![],
             save_paths: vec![],
         }

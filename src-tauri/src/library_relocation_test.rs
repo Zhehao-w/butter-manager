@@ -90,7 +90,12 @@ fn bulk_missing_old_root_maps_many_nested_games_and_preserves_user_records() {
     let mut f = Fixture::new(600);
     f.edit(0, |edit| {
         edit.aliases.push("用户维护的别名".into());
+        edit.tags = Some(vec![crate::domain::LibraryTag {
+            id: String::new(),
+            name: "收藏分类".into(),
+        }]);
     });
+    f.db.set_favorite(&f.ids[0], true).unwrap();
     let old_install = f.db.game(&f.ids[0]).unwrap().install_path;
     let external = path_text(&f.temp.path().join("external-save")).unwrap();
     f.edit(0, |edit| {

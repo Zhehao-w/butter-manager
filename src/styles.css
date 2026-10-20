@@ -2237,9 +2237,9 @@ button {
 .import-match-recommendations {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  margin: 12px 0;
-  padding: 14px;
+  gap: 8px;
+  margin: 10px 0;
+  padding: 10px 12px;
   border: 1px solid #ead8b8;
   border-radius: 12px;
   background: #fffaf1;
@@ -2256,7 +2256,8 @@ button {
 .import-match-heading {
   display: flex;
   align-items: center;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 6px 8px;
   color: #8b6022;
 }
 .associated .import-match-heading {
@@ -2269,7 +2270,7 @@ button {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 8px 16px;
+  gap: 6px 12px;
 }
 .import-match-game-row {
   display: flex;
@@ -2331,15 +2332,13 @@ button {
   flex-basis: 100%;
 }
 .import-memory-choice {
-  margin-top: 12px;
-  padding: 10px 12px;
-  border: 1px solid #dce8fb;
-  border-radius: 10px;
-  background: #f6f9ff;
-}
-.import-memory-choice > p {
-  margin: 5px 0 0 24px;
-  line-height: 1.6;
+  margin: 0 0 0 auto;
+  flex: none;
+  gap: 6px;
+  color: #617b9b;
+  font-size: 12px;
+  line-height: 20px;
+  white-space: nowrap;
 }
 .import-memories {
   margin-top: 16px;

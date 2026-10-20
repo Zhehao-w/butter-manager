@@ -197,6 +197,25 @@ mod tests {
     }
 
     #[test]
+    fn persisted_v1_demon_and_package_profile_remains_valid() {
+        let title =
+            "断角魔王艾莉丝的重生谭 The Rebirth Tale of Broken Horn Demon Lord Alice 官中无修版";
+        let mut old = memory("old", title, &[]);
+        // Literal v1 key from 1.3.0, including its historical Demo substring and package parsing.
+        old.profile.name_key = r#"[["alice","broken","demon","horn","lord","of","rebirth","tale","the"],"断角魔王艾莉丝的重生谭官中无修版",[],[],["demo"],false,[]]"#.into();
+        assert!(old.profile.valid());
+        assert_eq!(
+            Name::new(title).memory_key().as_ref(),
+            Some(&old.profile.name_key)
+        );
+        let index = MemoryIndex::new(&[old]);
+        let matches = index.matches("断角魔王艾莉丝的重生谭 The Rebirth Tale of Broken Horn Demon Lord Alice v0.73 官中无修版", &[]);
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].0, "old");
+        assert!(index.matches("断角魔王艾莉丝的重生谭 The Rebirth Tale of Broken Horn Demon Lord Alice v0.73 Demo 官中无修版", &[]).is_empty());
+    }
+
+    #[test]
     fn remembered_versions_and_project_identity_recall_without_changing_aliases_or_learning() {
         let m = memory(
             "old",

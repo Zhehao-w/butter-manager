@@ -104,7 +104,7 @@ beforeEach(() => {
 });
 describe('batch import flow', () => {
   it.each([false, true])(
-    'requires choosing a remembered recommendation and remembers only on opt-in: %s',
+    'requires confirming a remembered recommendation and allows opting out of remembering: %s',
     async (remember) => {
       const existing = makeGame({
         id: 'old',
@@ -133,8 +133,8 @@ describe('batch import flow', () => {
       fireEvent.click(associate);
       await expandSettings('游戏关联');
       const checkbox = screen.getByRole('checkbox', { name: '记住本次关联' }) as HTMLInputElement;
-      expect(checkbox.checked).toBe(false);
-      if (remember) fireEvent.click(checkbox);
+      expect(checkbox.checked).toBe(true);
+      if (!remember) fireEvent.click(checkbox);
       expect(api.importMemories).not.toHaveBeenCalled();
       fireEvent.click(generate);
       await waitFor(() => expect(api.importPlan).toHaveBeenCalled());
@@ -145,7 +145,7 @@ describe('batch import flow', () => {
     },
   );
 
-  it('resets the memory choice when changing the associated game or choosing a new game', async () => {
+  it('defaults each new association to remembered and clears it for a new game', async () => {
     const games = [
       makeGame({ id: 'a', display_title: '第一款游戏' }),
       makeGame({ id: 'b', display_title: '第二款游戏' }),
@@ -163,18 +163,27 @@ describe('batch import flow', () => {
     renderNewImport({ games });
     fireEvent.click(await screen.findByRole('button', { name: '关联：第一款游戏' }));
     await expandSettings('游戏关联');
+    expect(
+      (screen.getByRole('checkbox', { name: '记住本次关联' }) as HTMLInputElement).checked,
+    ).toBe(true);
     fireEvent.click(screen.getByRole('checkbox', { name: '记住本次关联' }));
     fireEvent.click(screen.getByRole('button', { name: '关联：第二款游戏' }));
     expect(
       (screen.getByRole('checkbox', { name: '记住本次关联' }) as HTMLInputElement).checked,
-    ).toBe(false);
+    ).toBe(true);
     fireEvent.click(screen.getByRole('checkbox', { name: '记住本次关联' }));
     fireEvent.click(screen.getByRole('button', { name: '改为新游戏' }));
     expect(screen.queryByRole('checkbox', { name: '记住本次关联' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: '关联：第一款游戏' }));
     expect(
       (screen.getByRole('checkbox', { name: '记住本次关联' }) as HTMLInputElement).checked,
-    ).toBe(false);
+    ).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: '改为新游戏' }));
+    fireEvent.click(screen.getByRole('button', { name: '生成导入与更新计划（1）' }));
+    await waitFor(() => expect(api.importPlan).toHaveBeenCalled());
+    const selection = vi.mocked(api.importPlan).mock.calls.at(-1)![1][0];
+    expect(selection.existing_id).toBeNull();
+    expect(selection.remember_association).toBe(false);
   });
 
   it.each(['unassociated', 'associated', 'failure'] as const)(
@@ -450,6 +459,9 @@ describe('batch import flow', () => {
     fireEvent.click(option);
     expect(screen.queryByRole('dialog', { name: '关联已有游戏' })).toBeNull();
     expect(screen.getByRole('button', { name: `已关联：${title}` })).toBeTruthy();
+    expect(
+      (screen.getByRole('checkbox', { name: '记住本次关联' }) as HTMLInputElement).checked,
+    ).toBe(true);
     expect(api.importApply).not.toHaveBeenCalled();
   });
   it('shows progress only after folder selection, and leaves cancellation unchanged', async () => {
@@ -687,6 +699,9 @@ describe('batch import flow', () => {
         .map((tab) => tab.textContent);
       if (mode === 'manual') fireEvent.click(link);
       const linked = await screen.findByRole('button', { name: '已关联：' + longTitle });
+      const remember = screen.getByRole('checkbox', { name: '记住本次关联' }) as HTMLInputElement;
+      expect(remember.checked).toBe(true);
+      fireEvent.click(remember);
       expect(linked.textContent).toBe('已关联：' + longTitle);
       expect(within(linked).getByTitle(longTitle)).toBeTruthy();
       expect(
@@ -711,6 +726,9 @@ describe('batch import flow', () => {
       expect(screen.getByRole('alert').textContent).toContain('旧游戏未配置存档位置');
       await expandSettings('游戏关联');
       fireEvent.click(screen.getByRole('radio', { name: '使用新包存档' }));
+      expect(
+        (screen.getByRole('checkbox', { name: '记住本次关联' }) as HTMLInputElement).checked,
+      ).toBe(false);
       fireEvent.click(screen.getByRole('button', { name: '收起设置' }));
       expect(screen.queryByRole('alert')).toBeNull();
       expect(screen.getByText('已关联所选游戏。')).toBeTruthy();

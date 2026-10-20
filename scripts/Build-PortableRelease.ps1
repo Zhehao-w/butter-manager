@@ -79,7 +79,7 @@ try {
         } finally { $taskArchive.Dispose() }
         # The standalone EXE remains a CI artifact; only the ZIP is distributed in Releases.
         $taskChecksums = '{0}  {1}' -f (Get-FileHash -LiteralPath $taskZip -Algorithm SHA256).Hash.ToLowerInvariant(), (Split-Path -Leaf $taskZip)
-        Set-Content -LiteralPath (Join-Path $taskOutput 'SHA256SUMS.txt') -Value $taskChecksums -Encoding ascii
+        Set-Content -LiteralPath ($taskZip + '.sha256') -Value $taskChecksums -Encoding ascii
         Write-Output "Portable ZIP and ZIP checksum ready: $taskOutput"
     }
     Write-Output "Windows EXE v$taskVersion ready: $taskOutputExe"

@@ -23,7 +23,7 @@ try {
     try { $taskHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($taskStream)).ToLowerInvariant() } finally { $taskStream.Dispose() }
     if ($taskHash -ne (Get-FileHash -LiteralPath (Join-Path $taskOutput 'butter-manager.exe') -Algorithm SHA256).Hash.ToLowerInvariant()) { throw 'ZIP executable differs from the standalone EXE.' }
 } finally { $taskArchive.Dispose() }
-$taskChecksumLines = @(Get-Content -LiteralPath (Join-Path $taskOutput 'SHA256SUMS.txt'))
+$taskChecksumLines = @(Get-Content -LiteralPath ($taskZip + '.sha256'))
 if ($taskChecksumLines.Count -ne 1) { throw 'Expected exactly one Portable ZIP checksum.' }
 if ($taskChecksumLines[0] -cnotmatch '^([a-f0-9]{64})  (.+)$') { throw 'Invalid checksum entry.' }
 $taskExpectedHash = $Matches[1]
@@ -38,13 +38,13 @@ try {
     foreach ($taskCase in @('tag', 'build')) {
         Copy-Item -LiteralPath (Join-Path $taskOutput 'butter-manager.exe') -Destination $taskFixture
         Copy-Item -LiteralPath $taskZip -Destination $taskFixture
-        Copy-Item -LiteralPath (Join-Path $taskOutput 'SHA256SUMS.txt') -Destination $taskFixture
+        Copy-Item -LiteralPath ($taskZip + '.sha256') -Destination $taskFixture
         $taskFailed = $false
         try {
             if ($taskCase -eq 'tag') { & (Join-Path $PSScriptRoot 'Build-PortableRelease.ps1') -SkipFrontendBuild -ExpectedTag 'v999.999.999' -OutputDirectory $taskFixture }
             else { & (Join-Path $PSScriptRoot 'Build-PortableRelease.ps1') -SkipFrontendBuild -CargoExecutable $taskFakeCargo -OutputDirectory $taskFixture }
         } catch { $taskFailed = $true }
-        if (-not $taskFailed -or (Test-Path -LiteralPath (Join-Path $taskFixture 'butter-manager.exe')) -or @(Get-ChildItem -LiteralPath $taskFixture -Filter '*.zip').Count -gt 0 -or (Test-Path -LiteralPath (Join-Path $taskFixture 'SHA256SUMS.txt'))) { throw "Failure cleanup did not work: $taskCase" }
+        if (-not $taskFailed -or (Test-Path -LiteralPath (Join-Path $taskFixture 'butter-manager.exe')) -or @(Get-ChildItem -LiteralPath $taskFixture -Filter '*.zip').Count -gt 0 -or @(Get-ChildItem -LiteralPath $taskFixture -Filter '*.zip.sha256').Count -gt 0) { throw "Failure cleanup did not work: $taskCase" }
     }
     # Test manifest disagreement in a synthetic project, never edit repository versions.
     $taskVersionProject = Join-Path $taskFixture 'version-fixture'
@@ -56,7 +56,7 @@ try {
     Set-Content -LiteralPath (Join-Path $taskVersionProject 'src-tauri/tauri.conf.json') -Value '{"version":"1.2.4"}'
     Set-Content -LiteralPath (Join-Path $taskVersionProject 'src-tauri/Cargo.toml') -Value @('[package]', 'version = "1.2.3"')
     $taskVersionOutput = Join-Path $taskVersionProject 'artifacts/windows'
-    foreach ($taskName in @('butter-manager.exe', 'butter-manager-v1.2.3-windows-x64-portable.zip', 'SHA256SUMS.txt')) {
+    foreach ($taskName in @('butter-manager.exe', 'butter-manager-v1.2.3-windows-x64-portable.zip', 'butter-manager-v1.2.3-windows-x64-portable.zip.sha256', 'SHA256SUMS.txt')) {
         Set-Content -LiteralPath (Join-Path $taskVersionOutput $taskName) -Value 'old fixture output'
     }
     $taskFailed = $false

@@ -236,6 +236,10 @@ jobs:
           # Reuse the frontend already checked/built above.
           ./scripts/Build-PortableRelease.ps1 -SkipFrontendBuild -ExpectedTag $env:RELEASE_TAG -PortableZip:($env:PREPARE_RELEASE -eq 'true')
 
+      - name: Verify Portable release package
+        if: github.event_name == 'release' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || (github.event_name == 'workflow_dispatch' && inputs.publish_release)
+        run: ./scripts/Test-PortableRelease.ps1
+
       - name: Upload Windows executable
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
@@ -253,7 +257,7 @@ jobs:
           path: |
             artifacts/windows/butter-manager.exe
             artifacts/windows/butter-manager-v*-windows-x64-portable.zip
-            artifacts/windows/SHA256SUMS.txt
+            artifacts/windows/butter-manager-v*-windows-x64-portable.zip.sha256
           if-no-files-found: error
 
       - name: Save complete Rust build cache

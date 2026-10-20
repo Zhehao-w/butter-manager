@@ -784,12 +784,14 @@ mod tests {
     #[test]
     fn demon_is_not_demo_but_explicit_edition_markers_remain_protected() {
         let title = "断角魔王艾莉丝的重生谭 The Rebirth Tale of Broken Horn Demon Lord Alice";
-        let old = game(
+        let mut old = game(
             "old",
             &format!("{title} v0.72"),
             Path::new("Z:/missing/old"),
         );
+        old.main_executable = Some("AliceAdventure.exe".into());
         let mut candidate = scanner::pending_candidate(Path::new("Z:/missing/source")).unwrap();
+        candidate.executables = vec![exe("AliceAdventure.exe")];
         candidate.suggested_title = format!("{title} v0.73 官中无修版");
         let matches = MatchIndex::new(std::slice::from_ref(&old)).matches(&candidate, &|| false);
         assert_eq!(matches.len(), 1);
@@ -810,6 +812,13 @@ mod tests {
                 "{edition}"
             );
         }
+        // The compact Re-package fallback must preserve qualifiers as well.
+        old.canonical_title = "Supower-Re v0.72".into();
+        old.display_title = old.canonical_title.clone();
+        candidate.suggested_title = "Supower-Re v0.73Demo".into();
+        assert!(MatchIndex::new(&[old])
+            .matches(&candidate, &|| false)
+            .is_empty());
     }
 
     #[test]

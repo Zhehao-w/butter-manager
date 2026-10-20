@@ -400,7 +400,8 @@ impl Name {
             && self.package.chapters == old.package.chapters
             && !if self.package.re && old.package.re {
                 let base = |name: &Self| {
-                    Name::new(&name.versionless.replace("重制版", "").replace("重製版", ""))
+                    // Reparse the full name so version qualifiers retain edition guards.
+                    Name::new(&name.raw.replace("重制版", "").replace("重製版", ""))
                 };
                 base(self).library_conflict(&base(old))
             } else {
@@ -440,10 +441,7 @@ impl Name {
             ));
         }
         let base = |name: &Self| {
-            let raw = name
-                .versionless
-                .replace("第一季", " ")
-                .replace("第1季", " ");
+            let raw = name.raw.replace("第一季", " ").replace("第1季", " ");
             let tokens = tokenize(&raw);
             let mut kept = Vec::new();
             let mut index = 0;

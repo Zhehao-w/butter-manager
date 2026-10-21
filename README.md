@@ -35,14 +35,14 @@
 
 ## 开始使用
 
-**当前版本 1.3.2**：改进副标题、包修订标记、重复英文别称与补充原名的导入推荐，新增结果仍需人工确认，并保留 DLC 差异提示。详见 [关联记忆说明](docs/import-association-memory.md)。默认记住关联、收藏、标签与批量操作继续保留。
+**当前版本 1.3.3**：优化导入记录的悬停和焦点高亮，使用与游戏库卡片一致的浅蓝边框和底色，使记录轮廓更清晰。保留此前的 [导入关联改进](docs/import-association-memory.md)、收藏、标签与批量操作。
 
-1. **下载程序**：通过页首下载入口获取 `butter-manager-v1.3.2-windows-x64-portable.zip`，解压到可写的专用目录。
+1. **下载程序**：通过页首下载入口获取 `butter-manager-v1.3.3-windows-x64-portable.zip`，解压到可写的专用目录。
 2. **配置游戏库**：运行 `butter-manager.exe`，在“设置”中选择游戏库根目录并保存。首次启动自动创建旁边的 `data/`。
 3. **登记已有游戏**：点击“扫描目录”，选择需要入库的游戏。扫描登记保持游戏原位；新下载的游戏从“导入”添加。
 4. **开始游玩**：从游戏库启动，或在详情中调整资料与启动配置。“正在玩”随成功提交的启动请求更新，手动设置的“已通关”保留。
 
-Windows 需要 [WebView2 Runtime](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution)。发布页提供 Portable ZIP 和 `butter-manager-v1.3.2-windows-x64-portable.zip.sha256`；独立 EXE 仅保留在 CI artifact 中。未签名程序可能出现 SmartScreen 提示，请核对来源与校验值。
+Windows 需要 [WebView2 Runtime](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution)。发布页提供 Portable ZIP 和 `butter-manager-v1.3.3-windows-x64-portable.zip.sha256`；独立 EXE 仅保留在 CI artifact 中。未签名程序可能出现 SmartScreen 提示，请核对来源与校验值。
 
 ```text
 butter-manager/
@@ -50,7 +50,7 @@ butter-manager/
 └── data/                 # 游戏库、设置、恢复记录与 WebView2 用户资料
 ```
 
-**升级**：关闭管理器，从新版 ZIP 提取 EXE 并替换旧 EXE，保留整个现有 `data/`；不要用下载目录中新建的空资料覆盖原库。“设置 → 关于应用”可查看应用版本与构建提交。**1.3.2 沿用 schema 13，从 1.3.x 升级无需数据库迁移；从 1.2.x 首次升级时自动迁移；旧版 1.2.x 及更早 EXE 无法打开升级后的库，请勿直接降级。**
+**升级**：关闭管理器，从新版 ZIP 提取 EXE 并替换旧 EXE，保留整个现有 `data/`；不要用下载目录中新建的空资料覆盖原库。“设置 → 关于应用”可查看应用版本与构建提交。**1.3.3 沿用 schema 13，从 1.3.x 升级无需数据库迁移；从 1.2.x 首次升级时自动迁移；旧版 1.2.x 及更早 EXE 无法打开升级后的库，请勿直接降级。**
 
 **迁移**：先完成或撤回文件任务，关闭程序，再复制整个程序文件夹和游戏目录。路径变化后，在“设置 → 高级维护”预览并确认新旧根目录映射；此功能重新关联记录，不搬动文件。
 

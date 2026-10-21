@@ -1110,11 +1110,13 @@ export default function App() {
                       !filters.statuses.length &&
                       !filters.engines.length &&
                       !filters.modes.length &&
-                      !otherEnginesOnly
+                      !otherEnginesOnly &&
+                      !issuesOnly
                     }
                     onClick={() => {
                       setFilters(emptyFilters());
                       setOtherEnginesOnly(false);
+                      setIssuesOnly(false);
                     }}
                   >
                     <Icon name="library" size={16} />

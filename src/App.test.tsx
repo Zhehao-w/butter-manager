@@ -2659,6 +2659,16 @@ describe('iteration interactions', () => {
     expect(filter.getAttribute('aria-pressed')).toBe('false');
     fireEvent.click(filter);
     expect(filter.getAttribute('aria-pressed')).toBe('true');
+    const all = within(screen.getByRole('group', { name: '快捷筛选' })).getByRole('button', {
+      name: '全部',
+    });
+    expect(all.getAttribute('aria-pressed')).toBe('false');
+    expect(screen.queryByRole('button', { name: other.display_title })).toBeNull();
+    fireEvent.click(all);
+    expect(all.getAttribute('aria-pressed')).toBe('true');
+    expect(filter.getAttribute('aria-pressed')).toBe('false');
+    expect(screen.getByRole('button', { name: other.display_title })).toBeTruthy();
+    fireEvent.click(filter);
     fireEvent.click(filter);
     expect(filter.getAttribute('aria-pressed')).toBe('false');
     fireEvent.click(filter);

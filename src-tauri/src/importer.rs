@@ -60,6 +60,11 @@ fn overlaps(a: &Path, b: &Path) -> Result<bool> {
     let b = PathBuf::from(paths::path_key(b)?);
     Ok(a.starts_with(&b) || b.starts_with(&a))
 }
+fn source_is_registered(source: &Path, games: &[Game]) -> bool {
+    games
+        .iter()
+        .any(|game| overlaps(source, Path::new(&game.install_path)).unwrap_or(true))
+}
 fn exists(path: &Path) -> Result<bool> {
     match fs::symlink_metadata(path) {
         Ok(_) => Ok(true),
@@ -733,10 +738,7 @@ impl ImportStore {
             {
                 blockers.push("目标目录或游戏库记录已存在；不会覆盖".into());
             }
-            if games
-                .iter()
-                .any(|g| overlaps(&source, Path::new(&g.install_path)).unwrap_or(true))
-            {
+            if source_is_registered(&source, games) {
                 blockers.push(
                     "来源已在游戏库中登记，或包含已登记目录；请使用扫描入库或目录关联".into(),
                 );
@@ -957,6 +959,16 @@ impl ImportStore {
         }
         if plan.items.iter().any(|i| !i.blockers.is_empty()) {
             return Err(invalid("计划存在冲突，请返回调整，重新生成"));
+        }
+        // Pending previews allow library maintenance. Recheck their sources against the
+        // current records before writing manifests or moving any item in the batch.
+        let games = database.lock().unwrap().games()?;
+        for item in plan.items.iter().filter(|item| item.state == "pending") {
+            if source_is_registered(Path::new(&item.selection.source), &games) {
+                return Err(invalid(
+                    "来源已在游戏库中登记，或包含已登记目录；请重新生成计划，使用扫描入库或目录关联",
+                ));
+            }
         }
         job.stage("读取目录信息", plan.items.len());
         for index in 0..plan.items.len() {
@@ -2858,6 +2870,85 @@ mod tests {
             .any(|b| b.contains("名称匹配")));
         assert!(f.apply(&id).is_err());
         assert!(second.exists());
+    }
+    #[test]
+    fn pending_import_rechecks_source_ownership_after_directory_reassociation() {
+        let f = Fixture::new();
+        let old = f.game("Old game");
+        let old_plan = f.plan(&[old]);
+        let game_id = f.apply(&old_plan).unwrap().remove(0);
+        let source = f.game("New package");
+        let plan_id = f.plan(std::slice::from_ref(&source));
+        assert!(f.store.get(&plan_id).unwrap().items[0].blockers.is_empty());
+        assert!(!f.store.has_pending_files());
+        let change = crate::maintenance::relocation_plan(
+            &f.db.lock().unwrap().game(&game_id).unwrap(),
+            &source,
+        )
+        .unwrap();
+        f.db.lock().unwrap().relocate_game(change).unwrap();
+
+        let error = f.apply(&plan_id).unwrap_err().to_string();
+        assert!(error.contains("来源已在游戏库中登记"), "{error}");
+        assert_eq!(
+            fs::read(source.join("包装/Save/存档.dat")).unwrap(),
+            b"important save"
+        );
+        assert!(!f.root.join("New package").exists());
+        assert!(!stage_path(&f.store.get(&plan_id).unwrap(), 0).exists());
+        let db = f.db.lock().unwrap();
+        assert_eq!(db.games().unwrap().len(), 1);
+        assert_eq!(
+            db.game(&game_id).unwrap().install_path,
+            paths::path_text(&source).unwrap()
+        );
+    }
+    #[test]
+    fn pending_import_blocks_new_parent_or_child_registrations_before_moving_the_batch() {
+        for register_parent in [false, true] {
+            let f = Fixture::new();
+            let first = f.game("Unrelated");
+            let source = f.game("Package");
+            let plan_id = f.plan(&[first.clone(), source.clone()]);
+            assert!(f
+                .store
+                .get(&plan_id)
+                .unwrap()
+                .items
+                .iter()
+                .all(|item| item.blockers.is_empty()));
+            let owned = if register_parent {
+                f.source.clone()
+            } else {
+                source.join("包装")
+            };
+            let ids =
+                f.db.lock()
+                    .unwrap()
+                    .register(&[scanner::analyze_directory(&owned).unwrap()])
+                    .unwrap();
+
+            assert!(f
+                .apply(&plan_id)
+                .unwrap_err()
+                .to_string()
+                .contains("来源已在游戏库中登记"));
+            for directory in [&first, &source] {
+                assert_eq!(
+                    fs::read(directory.join("包装/Save/存档.dat")).unwrap(),
+                    b"important save"
+                );
+                assert!(!f.root.join(directory.file_name().unwrap()).exists());
+            }
+            assert_eq!(f.db.lock().unwrap().games().unwrap().len(), ids.len());
+            assert!(f
+                .store
+                .get(&plan_id)
+                .unwrap()
+                .items
+                .iter()
+                .all(|item| item.state == "pending"));
+        }
     }
     #[test]
     fn confirmed_import_launch_and_engine_choices_are_not_overwritten_by_later_scans() {

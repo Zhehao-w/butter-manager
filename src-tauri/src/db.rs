@@ -576,11 +576,8 @@ impl Database {
     pub fn sync_mtool_defaults(&mut self, candidates: &[ScanCandidate]) -> Result<Vec<Game>> {
         let mut eligible = vec![];
         let mut qsp_ids = vec![];
-        let mut detected_saves = vec![];
-        for candidate in candidates
-            .iter()
-            .filter(|c| c.status == "ready" && !c.save_paths.is_empty())
-        {
+        let mut save_candidates = vec![];
+        for candidate in candidates.iter().filter(|c| c.status == "ready") {
             let Some(id) = &candidate.registered_id else {
                 continue;
             };
@@ -588,15 +585,7 @@ impl Database {
             if game.install_path != candidate.install_path || !game.save_paths.is_empty() {
                 continue;
             }
-            let paths = crate::save_detection::detect_for_engine(
-                Path::new(&game.install_path),
-                &candidate.working_directory,
-                &candidate.engine,
-                game.main_executable.as_deref(),
-            );
-            if !paths.is_empty() {
-                detected_saves.push((id.clone(), paths));
-            }
+            save_candidates.push(game);
         }
         for candidate in candidates
             .iter()
@@ -657,7 +646,25 @@ impl Database {
             transaction.execute("UPDATE games SET launch_type='MTOOL',mtool_target_exe=main_executable,mtool_loader=NULL,working_directory='.',launch_source='detected',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?1", [&game.id])?;
             changed_ids.push(game.id.clone());
         }
-        for (id, paths) in detected_saves {
+        for game in save_candidates {
+            // Use the saved configuration, including automatic defaults refreshed above.
+            // The scan's default launch candidate may not match the user's selected EXE.
+            let (work, engine, executable): (String, String, Option<String>) = transaction
+                .query_row(
+                    "SELECT working_directory,engine,main_executable FROM games WHERE id=?1",
+                    [&game.id],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )?;
+            let paths = crate::save_detection::detect_for_engine(
+                Path::new(&game.install_path),
+                &work,
+                &engine,
+                executable.as_deref(),
+            );
+            if paths.is_empty() {
+                continue;
+            }
+            let id = game.id;
             for path in paths {
                 transaction.execute(
                     "INSERT OR IGNORE INTO save_paths(id,game_id,path) VALUES(?1,?2,?3)",
@@ -1509,6 +1516,43 @@ mod tests {
         };
         let id = db.register_import(entry, "new-import").unwrap();
         assert_eq!(db.game(&id).unwrap().save_paths, vec!["<GAME>/SaveData"]);
+    }
+
+    #[test]
+    fn scan_fills_empty_saves_using_saved_engine_working_directory_and_executable() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("Novel");
+        std::fs::create_dir_all(root.join("Actual")).unwrap();
+        std::fs::write(root.join("Game.exe"), b"fixture").unwrap();
+        std::fs::write(root.join("Actual/Novel.exe"), b"fixture").unwrap();
+        let mut db = Database::open(&temp.path().join("test.db")).unwrap();
+        let id = db
+            .register(&[analyze_directory(&root).unwrap()])
+            .unwrap()
+            .remove(0);
+        let mut edit = draft(&db.game(&id).unwrap());
+        edit.main_executable = Some("Actual/Novel.exe".into());
+        edit.working_directory = "Actual".into();
+        edit.engine = "Ren'Py".into();
+        edit.save_paths.clear();
+        db.edit_game(edit).unwrap();
+        std::fs::create_dir_all(root.join("Actual/game/saves")).unwrap();
+        let mut scan = crate::scanner::analyze_quick_controlled(&root, &|| false, &|_| {}).unwrap();
+        assert!(scan.save_paths.is_empty());
+        assert_ne!(scan.working_directory, "Actual");
+        assert_ne!(scan.engine, "Ren'Py");
+        scan.registered_id = Some(id.clone());
+
+        let changed = db.sync_mtool_defaults(std::slice::from_ref(&scan)).unwrap();
+        assert_eq!(changed.len(), 1);
+        assert_eq!(changed[0].save_paths, vec!["<GAME>/Actual/game/saves"]);
+        assert_eq!(changed[0].engine, "Ren'Py");
+        assert_eq!(changed[0].working_directory, "Actual");
+        assert_eq!(
+            changed[0].main_executable.as_deref(),
+            Some("Actual/Novel.exe")
+        );
+        assert!(db.sync_mtool_defaults(&[scan]).unwrap().is_empty());
     }
 
     #[test]

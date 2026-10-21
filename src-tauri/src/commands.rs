@@ -1187,7 +1187,7 @@ fn start_game_analysis(state: State<'_, AppState>, id: String) -> CommandResult<
         .map_err(|e| e.to_string())?;
     let task_id = job.id.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        job.stage("分析 EXE / BAT", 1);
+        job.stage("分析启动文件与存档位置", 1);
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             scanner::analyze_game_controlled(&game, &|| job.stop(), &|current| {
                 job.progress(&game.install_path, current)

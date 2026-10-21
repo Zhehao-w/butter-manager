@@ -27,8 +27,22 @@ const categories: Record<string, string> = {
   actors: '角色',
   persistent: 'Persistent',
 };
-export function SaveEditor({ game, onClose }: { game: Game; onClose: () => void }) {
-  const [catalog, setCatalog] = useState<SaveCatalog>({ slots: [], warnings: [] });
+export function SaveEditor({
+  game,
+  onClose,
+  onDetectedLocations,
+}: {
+  game: Game;
+  onClose: () => void;
+  onDetectedLocations?: (paths: string[]) => void;
+}) {
+  const [catalog, setCatalog] = useState<SaveCatalog>({
+    slots: [],
+    warnings: [],
+    detected_locations: [],
+  });
+  const detectedCallback = useRef(onDetectedLocations);
+  detectedCallback.current = onDetectedLocations;
   const [document, setDocument] = useState<SaveDocument | null>(null);
   const [slotId, setSlotId] = useState('');
   const [category, setCategory] = useState('variables');
@@ -94,6 +108,7 @@ export function SaveEditor({ game, onClose }: { game: Game; onClose: () => void 
   async function refresh() {
     const next = await api.listEditableSaves(game.id);
     if (!alive.current) return;
+    if (next.detected_locations.length) detectedCallback.current?.(next.detected_locations);
     next.slots = [...next.slots, ...externalSlots.current];
     setCatalog(next);
     await load(next.slots.some((slot) => slot.id === slotId) ? slotId : (next.slots[0]?.id ?? ''));

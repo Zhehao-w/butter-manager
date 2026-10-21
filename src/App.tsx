@@ -2807,6 +2807,11 @@ function GameDetail({
   const [saves, setSaves] = useState(game.save_paths.join('\n'));
   const [saveToOpen, setSaveToOpen] = useState('');
   const [saveEditorOpen, setSaveEditorOpen] = useState(false);
+  const editorSaveBaseline = useRef<string | null>(null);
+  function openSaveEditor() {
+    editorSaveBaseline.current = saves;
+    setSaveEditorOpen(true);
+  }
   const saveLocations = lines(saves);
   const selectedSave = saveLocations.includes(saveToOpen) ? saveToOpen : saveLocations[0];
   const previousSaves = useRef(game.save_paths.join('\n'));
@@ -2871,7 +2876,11 @@ function GameDetail({
     mtool_target_exe: draft.mtool_target_exe,
     mtool_loader: draft.mtool_loader,
   };
-  const analysisBaseline = useRef<{ launch: LaunchConfiguration; engine: string } | null>(null);
+  const analysisBaseline = useRef<{
+    launch: LaunchConfiguration;
+    engine: string;
+    saves: string;
+  } | null>(null);
   const previousAnalysis = useRef(analysis);
   function analysisConfiguration(): LaunchConfiguration | null {
     if (analysis && 'recommended_launch' in analysis) return analysis.recommended_launch || null;
@@ -2904,7 +2913,7 @@ function GameDetail({
     previousAnalysis.current = analysis;
     const baseline = analysisBaseline.current;
     analysisBaseline.current = null;
-    if (!baseline || !analysisConfiguration()) return;
+    if (!baseline || analysis?.status !== 'ready') return;
     if (
       JSON.stringify(baseline.launch) !== JSON.stringify(configuration) ||
       baseline.engine !== draft.engine
@@ -2912,7 +2921,16 @@ function GameDetail({
       setMessage('分析完成；当前启动配置已修改，可手动使用分析结果。');
       return;
     }
-    useAnalysisConfiguration();
+    const detectedPaths = analysis.save_paths ?? [];
+    const fillSaves =
+      !lines(baseline.saves).length && saves === baseline.saves && !!detectedPaths.length;
+    if (fillSaves) setSaves(detectedPaths.join('\n'));
+    if (analysisConfiguration()) {
+      useAnalysisConfiguration();
+      setMessage('已填入分析结果，请检查后保存资料。');
+    } else if (fillSaves) {
+      setMessage('已识别存档位置，请检查后保存资料。');
+    }
   }, [analysis]);
   const launchChanged = Object.keys(configuration).some(
     (key) =>
@@ -3093,7 +3111,7 @@ function GameDetail({
                   type="button"
                   className="save-editor-entry"
                   disabled={busy || confirmClose}
-                  onClick={() => setSaveEditorOpen(true)}
+                  onClick={openSaveEditor}
                 >
                   <Icon name="save" size={20} />
                   编辑存档
@@ -3101,13 +3119,16 @@ function GameDetail({
                 <button
                   disabled={busy || launching || analysisLocked}
                   onClick={() => {
-                    selectDetailTab('launch');
-                    analysisBaseline.current = { launch: configuration, engine: draft.engine };
+                    analysisBaseline.current = {
+                      launch: configuration,
+                      engine: draft.engine,
+                      saves,
+                    };
                     void run(onAnalyze);
                   }}
                 >
                   <Icon name="settings" size={20} />
-                  分析启动配置
+                  分析游戏配置
                 </button>
               </div>
             </div>
@@ -3518,11 +3539,7 @@ function GameDetail({
                   </label>
                 )}
                 <div className="save-location-actions full">
-                  <button
-                    type="button"
-                    className="save-editor-entry"
-                    onClick={() => setSaveEditorOpen(true)}
-                  >
+                  <button type="button" className="save-editor-entry" onClick={openSaveEditor}>
                     <Icon name="save" size={16} />
                     编辑存档
                   </button>
@@ -3612,7 +3629,26 @@ function GameDetail({
           )}
         </details>
       </div>
-      {saveEditorOpen && <SaveEditor game={game} onClose={() => setSaveEditorOpen(false)} />}
+      {saveEditorOpen && (
+        <SaveEditor
+          game={game}
+          onClose={() => setSaveEditorOpen(false)}
+          onDetectedLocations={(paths) => {
+            const baseline = editorSaveBaseline.current;
+            if (
+              baseline === null ||
+              lines(baseline).length ||
+              game.save_paths.length ||
+              saves !== baseline ||
+              launchChanged ||
+              draft.engine !== game.engine
+            )
+              return;
+            setSaves(paths.join('\n'));
+            setMessage('已识别存档位置，请检查后保存资料。');
+          }}
+        />
+      )}
     </Modal>
   );
 }

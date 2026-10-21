@@ -391,6 +391,18 @@ pub fn analyze_game_controlled(
             });
         }
     }
+    if preferred.is_some() && candidate.status == "ready" && !stop() {
+        candidate.save_paths = crate::save_detection::detect_for_engine(
+            root,
+            &game.working_directory,
+            if game.engine == "Unknown" {
+                &candidate.engine
+            } else {
+                &game.engine
+            },
+            preferred,
+        );
+    }
     Ok(candidate)
 }
 
@@ -897,6 +909,28 @@ pub fn scan_root(path: &Path) -> Result<ScanReport> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn game_analysis_detects_saves_with_the_saved_engine_and_working_directory() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(temp.path().join("Actual/game/saves")).unwrap();
+        fs::write(temp.path().join("Game.exe"), b"fixture").unwrap();
+        let mut game = crate::maintenance::tests::fixture_game(temp.path());
+        game.main_executable = Some("Game.exe".into());
+        game.working_directory = "Actual".into();
+        game.engine = "Ren'Py".into();
+        game.save_paths.clear();
+        let candidate = analyze_game_controlled(&game, &|| false, &|_| {}).unwrap();
+        assert_eq!(candidate.save_paths, vec!["<GAME>/Actual/game/saves"]);
+        assert_eq!(
+            candidate.save_paths,
+            crate::save_detection::detect_for_engine(
+                temp.path(),
+                &game.working_directory,
+                &game.engine,
+                game.main_executable.as_deref()
+            )
+        );
+    }
     #[test]
     fn game_analysis_replaces_missing_or_helper_launchers_and_uses_bat_as_indicator_first() {
         let temp = tempfile::tempdir().unwrap();

@@ -40,7 +40,7 @@ export function resetApiMock(mocked: Api) {
     mocks.cancel,
   ])
     fn.mockResolvedValue(undefined);
-  mocks.listEditableSaves.mockResolvedValue({ slots: [], warnings: [] });
+  mocks.listEditableSaves.mockResolvedValue({ detected_locations: [], slots: [], warnings: [] });
   mocks.previewRenpyAppdata.mockResolvedValue({
     token: null,
     path: null,

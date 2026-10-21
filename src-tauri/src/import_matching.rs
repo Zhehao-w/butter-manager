@@ -862,7 +862,18 @@ impl Name {
             && self.title.chinese.chars().all(han)
             && self.title.chinese == old.title.chinese
             && compatible_japanese;
-        let result = if repeated_alias {
+        let same_bilingual_title = (left.is_empty() || right.is_empty())
+            && self.title.chinese.chars().count() >= 6
+            && self.title.chinese.chars().all(han)
+            && self.title.chinese == old.title.chinese
+            && self.title.japanese.concat().chars().count() >= 8
+            // Only this visually identical hiragana/katakana pair is relaxed, and only
+            // with a complete matching Chinese title. Do not transliterate Japanese.
+            && self.title.japanese.concat().replace('ヘ', "へ")
+                == old.title.japanese.concat().replace('ヘ', "へ");
+        let result = if same_bilingual_title {
+            Some((72, "完整中日标题一致，一方附有英文名或日文形近假名；请确认"))
+        } else if repeated_alias {
             Some((72, "中英文主标题一致，一方补充原名或重复别称；请确认"))
         } else if supported && (self.subtitle_of(old) || old.subtitle_of(self)) {
             Some((60, "中文主标题一致，一方附有副标题；结合项目资料确认"))

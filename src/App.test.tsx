@@ -734,7 +734,7 @@ describe('iteration interactions', () => {
     });
     fireEvent.click(within(detail).getByRole('radio', { name: '已通关' }));
     showDetailTab('启动配置');
-    fireEvent.change(within(detail).getByRole('combobox', { name: /启动文件（/ }), {
+    fireEvent.change(within(detail).getByRole('textbox', { name: /启动文件（/ }), {
       target: { value: 'new.exe' },
     });
     showDetailTab('存档位置');
@@ -1726,7 +1726,7 @@ describe('iteration interactions', () => {
     fireEvent.click(within(modal).getByRole('button', { name: '浏览启动文件…' }));
     await waitFor(() =>
       expect(
-        (within(modal).getByRole('combobox', { name: /启动文件（/ }) as HTMLInputElement).value,
+        (within(modal).getByRole('textbox', { name: /启动文件（/ }) as HTMLInputElement).value,
       ).toBe('包装/游戏 & test.html'),
     );
     showDetailTab('基础信息');
@@ -2376,7 +2376,7 @@ describe('iteration interactions', () => {
     expect(
       (within(modal).getByRole('textbox', { name: '启动参数' }) as HTMLInputElement).value,
     ).toBe('-dx11');
-    fireEvent.change(within(modal).getByRole('combobox', { name: /启动文件（相对游戏目录）/ }), {
+    fireEvent.change(within(modal).getByRole('textbox', { name: /启动文件（相对游戏目录）/ }), {
       target: { value: 'game.html' },
     });
     expect(within(modal).queryByRole('textbox', { name: '启动参数' })).toBeNull();
@@ -2477,7 +2477,7 @@ describe('iteration interactions', () => {
         });
       } else {
         fireEvent.change(
-          within(detail).getByRole('combobox', { name: /启动文件（相对游戏目录）/ }),
+          within(detail).getByRole('textbox', { name: /启动文件（相对游戏目录）/ }),
           { target: { value: '新版/new.exe' } },
         );
         if (mode === 'MTOOL')
@@ -2694,7 +2694,7 @@ describe('iteration interactions', () => {
     fireEvent.click(within(modal).getByRole('button', { name: '分析游戏配置' }));
     await within(modal).findByText('已填入分析结果，请检查后保存资料。');
     showDetailTab('启动配置');
-    expect(within(modal).getByText('main-v1.2.exe · Unknown')).toBeTruthy();
+    expect(within(modal).getByRole('button', { name: '选用启动文件 main-v1.2.exe' })).toBeTruthy();
     showDetailTab('基础信息');
     expect((within(modal).getByRole('textbox', { name: '版本' }) as HTMLInputElement).value).toBe(
       'Final',
@@ -2703,12 +2703,12 @@ describe('iteration interactions', () => {
     expect(engine.value).toBe('Unity');
     expect(api.saveGame).not.toHaveBeenCalled();
     showDetailTab('启动配置');
-    fireEvent.click(within(modal).getByRole('button', { name: '使用识别引擎' }));
+    fireEvent.click(within(modal).getByRole('button', { name: '采用此引擎' }));
     expect(engine.value).toBe('WOLF RPG Editor');
     expect(api.saveGame).not.toHaveBeenCalled();
     expect(
       (
-        within(modal).getByRole('combobox', {
+        within(modal).getByRole('textbox', {
           name: /^启动文件（相对游戏目录）/,
         }) as HTMLInputElement
       ).value,
@@ -2764,8 +2764,7 @@ describe('iteration interactions', () => {
       'MTOOL',
     );
     expect(
-      (screen.getByRole('combobox', { name: /启动文件（相对游戏目录）/ }) as HTMLInputElement)
-        .value,
+      (screen.getByRole('textbox', { name: /启动文件（相对游戏目录）/ }) as HTMLInputElement).value,
     ).toBe('Game.exe');
     expect(api.saveGame).not.toHaveBeenCalled();
     expect(api.play).not.toHaveBeenCalled();
@@ -2774,6 +2773,7 @@ describe('iteration interactions', () => {
   });
 
   it('keeps edits made during analysis and permits explicitly applying the recommendation', async () => {
+    vi.mocked(api.games).mockResolvedValue([{ ...game, launch_arguments: '-dx11' }]);
     let response: JobPage = {
       ...job,
       id: 'draft-analysis',
@@ -2789,7 +2789,10 @@ describe('iteration interactions', () => {
     fireEvent.click(screen.getByRole('button', { name: '分析游戏配置' }));
     await within(screen.getByRole('dialog')).findByRole('button', { name: '取消任务' });
     showDetailTab('启动配置');
-    fireEvent.change(screen.getByRole('combobox', { name: /启动文件（相对游戏目录）/ }), {
+    expect(
+      screen.getByRole('textbox', { name: /启动文件（相对游戏目录）/ }).hasAttribute('list'),
+    ).toBe(false);
+    fireEvent.change(screen.getByRole('textbox', { name: /启动文件（相对游戏目录）/ }), {
       target: { value: 'Manual.exe' },
     });
     response = {
@@ -2799,6 +2802,7 @@ describe('iteration interactions', () => {
         {
           ...candidate,
           registered_id: game.id,
+          executables: [{ ...candidate.executables[0], relative_path: 'bin/Second.exe' }],
           recommended_launch: {
             main_executable: 'New.exe',
             working_directory: '.',
@@ -2814,14 +2818,23 @@ describe('iteration interactions', () => {
     };
     await screen.findByText('分析完成；当前启动配置已修改，可手动使用分析结果。');
     expect(
-      (screen.getByRole('combobox', { name: /启动文件（相对游戏目录）/ }) as HTMLInputElement)
-        .value,
+      (screen.getByRole('textbox', { name: /启动文件（相对游戏目录）/ }) as HTMLInputElement).value,
     ).toBe('Manual.exe');
-    fireEvent.click(screen.getByRole('button', { name: '使用分析启动配置' }));
+    fireEvent.click(screen.getByRole('button', { name: '填入推荐配置' }));
     expect(
-      (screen.getByRole('combobox', { name: /启动文件（相对游戏目录）/ }) as HTMLInputElement)
-        .value,
+      (screen.getByRole('textbox', { name: /启动文件（相对游戏目录）/ }) as HTMLInputElement).value,
     ).toBe('New.exe');
+    const file = screen.getByRole('textbox', { name: /启动文件（相对游戏目录）/ });
+    expect(file.hasAttribute('list')).toBe(false);
+    expect(screen.queryByRole('combobox', { name: /启动文件（相对游戏目录）/ })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '选用启动文件 bin/Second.exe' }));
+    expect((file as HTMLInputElement).value).toBe('bin/Second.exe');
+    expect((screen.getByRole('textbox', { name: /启动工作目录/ }) as HTMLInputElement).value).toBe(
+      'bin',
+    );
+    expect((screen.getByRole('textbox', { name: '启动参数' }) as HTMLInputElement).value).toBe(
+      '-dx11',
+    );
     expect(api.saveGame).not.toHaveBeenCalled();
   });
 
@@ -2972,7 +2985,7 @@ describe('iteration interactions', () => {
       const modal = screen.getByRole('dialog');
       showDetailTab('启动配置');
       fireEvent.change(
-        within(modal).getByRole('combobox', {
+        within(modal).getByRole('textbox', {
           name: /启动文件（相对游戏目录）/,
         }),
         { target: { value: 'new.exe' } },

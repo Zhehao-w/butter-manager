@@ -103,6 +103,33 @@ beforeEach(() => {
   vi.mocked(api.cancel).mockResolvedValue();
 });
 describe('batch import flow', () => {
+  it('shows the argument indicator from a pending update snapshot after the library config changes', async () => {
+    const old = makeGame({ id: 'snapshot-game', launch_arguments: '' });
+    vi.mocked(api.importPlans).mockResolvedValue([
+      {
+        ...plan,
+        items: [
+          {
+            ...plan.items[0],
+            selection: { ...plan.items[0].selection, existing_id: old.id },
+            update: {
+              old: { launch_arguments: '-dx11' },
+              old_version: 'v1.0',
+              saves: [],
+              required_bytes: 0,
+              quarantine: '',
+              rollback_available: false,
+            },
+          },
+        ],
+      },
+    ]);
+    render(<ImportPage {...props()} games={[old]} />);
+    fireEvent.click(await screen.findByRole('tab', { name: /待确认/ }));
+    expect((await screen.findByText('含启动参数')).getAttribute('title')).toBe('启动参数：-dx11');
+    await expandSettings('基本信息');
+    expect(screen.getByText('启动参数：-dx11')).toBeTruthy();
+  });
   it.each(['new', 'inherit', 'override', 'clear', 'reset'])(
     'passes explicit arguments and preserves update inheritance: %s',
     async (mode) => {
@@ -132,6 +159,9 @@ describe('batch import flow', () => {
         fireEvent.click(screen.getByRole('button', { name: '恢复继承旧配置' }));
         expect(input.value).toBe('-dx11');
       }
+      const indicator = screen.queryByText('含启动参数');
+      if (mode === 'clear') expect(indicator).toBeNull();
+      else expect(indicator?.getAttribute('title')).toBe(`启动参数：${input.value}`);
       fireEvent.click(screen.getByRole('button', { name: '生成导入与更新计划（1）' }));
       await waitFor(() => expect(api.importPlan).toHaveBeenCalledOnce());
       expect(vi.mocked(api.importPlan).mock.calls[0][1][0].launch_arguments).toBe(
@@ -157,11 +187,13 @@ describe('batch import flow', () => {
     fireEvent.change(input, { target: { value: '-dx11' } });
     fireEvent.click(screen.getByRole('checkbox', { name: '公共 MTool' }));
     expect(screen.queryByRole('textbox', { name: '启动参数' })).toBeNull();
+    expect(screen.queryByText('含启动参数')).toBeNull();
     expect(screen.queryByText(/仅用于直接启动 EXE/)).toBeNull();
     fireEvent.click(screen.getByRole('checkbox', { name: '公共 MTool' }));
     expect((screen.getByRole('textbox', { name: '启动参数' }) as HTMLInputElement).value).toBe(
       '-dx11',
     );
+    expect(screen.getByText('含启动参数').getAttribute('title')).toBe('启动参数：-dx11');
   });
   it.each([false, true])(
     'requires confirming a remembered recommendation and allows opting out of remembering: %s',

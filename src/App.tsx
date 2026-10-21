@@ -2911,7 +2911,19 @@ function GameDetail({
     const next = analysisConfiguration();
     if (!next) return;
     setDraft((current) => ({ ...current, ...next, launch_arguments: current.launch_arguments }));
-    setMessage('已填入分析启动配置，请检查后保存资料。');
+    setMessage('已填入推荐配置，请检查后保存资料。');
+  }
+  function chooseAnalyzedExecutable(executable: string) {
+    setDraft((current) => ({
+      ...current,
+      main_executable: executable,
+      ...(current.launch_type === 'MTOOL'
+        ? { mtool_target_exe: executable }
+        : current.launch_type === 'DIRECT'
+          ? { working_directory: parentOf(executable) }
+          : {}),
+    }));
+    setDebugText('');
   }
   useEffect(() => {
     if (previousAnalysis.current === analysis) return;
@@ -3254,6 +3266,9 @@ function GameDetail({
                     onChange={(event) => field('canonical_title', event.target.value)}
                   />
                 </label>
+                <p className="muted full detail-name-help">
+                  标准名称用于游戏识别与关联。目录名请在「记录与管理 → 重命名目录」修改。
+                </p>
                 <label>
                   游戏引擎
                   <EngineSelect
@@ -3361,7 +3376,6 @@ function GameDetail({
                     启动文件（相对游戏目录）
                     <div className="path-input">
                       <input
-                        list="exe-candidates"
                         onBlur={(event) => {
                           const file = optional(event.target.value);
                           if (isQspFile(file))
@@ -3437,6 +3451,72 @@ function GameDetail({
                     disabled={busy || analyzing}
                   />
                 )}
+                {analysis && (
+                  <section className="full launch-analysis" aria-label="游戏配置分析结果">
+                    <div className="section-heading launch-analysis-heading">
+                      <h4>
+                        <Icon name="scan" size={16} />
+                        分析结果
+                      </h4>
+                      {analysisConfiguration() && (
+                        <button
+                          type="button"
+                          disabled={busy || launching || analyzing}
+                          onClick={useAnalysisConfiguration}
+                        >
+                          填入推荐配置
+                        </button>
+                      )}
+                    </div>
+                    <div className="launch-analysis-engine">
+                      <span className="muted">识别引擎</span>
+                      <span className="mode">
+                        {analysis.engine === 'Unknown' ? '未识别' : analysis.engine}
+                      </span>
+                      {analysis.status === 'ready' &&
+                        analysis.engine !== 'Unknown' &&
+                        analysis.engine !== draft.engine && (
+                          <button
+                            type="button"
+                            disabled={busy || launching || analyzing}
+                            onClick={() => field('engine', analysis.engine)}
+                          >
+                            采用此引擎
+                          </button>
+                        )}
+                    </div>
+                    {!!analysis.executables.length && (
+                      <div
+                        className="launch-analysis-files"
+                        role="group"
+                        aria-label="发现的启动文件"
+                      >
+                        {analysis.executables.map((exe) => (
+                          <button
+                            type="button"
+                            key={exe.relative_path}
+                            className={`launch-analysis-file${draft.main_executable === exe.relative_path ? ' is-selected' : ''}`}
+                            aria-label={`选用启动文件 ${exe.relative_path}`}
+                            aria-pressed={draft.main_executable === exe.relative_path}
+                            disabled={busy || launching || analyzing}
+                            onClick={() => chooseAnalyzedExecutable(exe.relative_path)}
+                          >
+                            <Icon
+                              name={draft.main_executable === exe.relative_path ? 'check' : 'play'}
+                              size={16}
+                            />
+                            <span className="launch-analysis-path">{exe.relative_path}</span>
+                            <span className="mode">
+                              {exe.architecture === 'Unknown' ? '位数未知' : exe.architecture}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    <Warnings warnings={analysis.warnings} />
+                    <p className="muted launch-analysis-note">填入当前草稿，保存资料后保留。</p>
+                  </section>
+                )}
                 <details className="full advanced-launch">
                   <summary>高级启动选项</summary>
                   <label>
@@ -3447,62 +3527,25 @@ function GameDetail({
                       onChange={(event) => field('working_directory', event.target.value)}
                     />
                   </label>
+                  {!!analysis?.bats.length && <BatResults candidate={analysis} />}
+                  {game.launch_type === 'MTOOL' && (
+                    <div className="launch-debug">
+                      <button
+                        type="button"
+                        disabled={busy || dirty}
+                        onClick={() =>
+                          void run(async () => {
+                            setDebugText(await api.debugBat(game.id));
+                          })
+                        }
+                      >
+                        预览调试 BAT
+                      </button>
+                      {debugText && <CodeBlock>{debugText}</CodeBlock>}
+                    </div>
+                  )}
                 </details>
               </div>
-
-              {analysis && (
-                <details className="analysis" open>
-                  <summary>查看分析详情</summary>
-                  {analysisConfiguration() && (
-                    <button
-                      type="button"
-                      disabled={busy || launching || analyzing}
-                      onClick={useAnalysisConfiguration}
-                    >
-                      使用分析启动配置
-                    </button>
-                  )}
-                  <p>
-                    识别引擎：{analysis.engine === 'Unknown' ? '未识别' : analysis.engine}{' '}
-                    {analysis.status === 'ready' &&
-                      analysis.engine !== 'Unknown' &&
-                      analysis.engine !== draft.engine && (
-                        <button
-                          type="button"
-                          disabled={busy || launching || analyzing}
-                          onClick={() => field('engine', analysis.engine)}
-                        >
-                          使用识别引擎
-                        </button>
-                      )}
-                  </p>
-                  <Warnings warnings={analysis.warnings} />
-                  <ul>
-                    {analysis.executables.map((exe) => (
-                      <li key={exe.relative_path}>
-                        {exe.relative_path} · {exe.architecture}
-                      </li>
-                    ))}
-                  </ul>
-                  <BatResults candidate={analysis} />
-                </details>
-              )}
-              {game.launch_type === 'MTOOL' && (
-                <div className="analysis">
-                  <button
-                    type="button"
-                    disabled={busy || dirty}
-                    onClick={() =>
-                      void run(async () => {
-                        setDebugText(await api.debugBat(game.id));
-                      })
-                    }
-                  >
-                    预览调试 BAT
-                  </button>
-                  {debugText && <CodeBlock>{debugText}</CodeBlock>}
-                </div>
-              )}
             </section>
             <section className="panel detail-card" {...panelProps('aliases')}>
               <CardTitle icon="tag">别名管理</CardTitle>
@@ -3587,11 +3630,6 @@ function GameDetail({
               </div>
             </section>
           </div>
-          <datalist id="exe-candidates">
-            {analysis?.executables.map((exe) => (
-              <option key={exe.relative_path} value={exe.relative_path} />
-            ))}
-          </datalist>
         </fieldset>
       </form>
       <div {...panelProps('records')}>

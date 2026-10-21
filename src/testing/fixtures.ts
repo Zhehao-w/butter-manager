@@ -18,6 +18,7 @@ export const makeGame = (overrides: Partial<Game> = {}): Game => ({
   current_version: 'Unknown',
   version_source: 'manual',
   main_executable: 'Game.exe',
+  launch_arguments: '',
   working_directory: '.',
   engine: 'Unknown',
   launch_type: 'DIRECT',

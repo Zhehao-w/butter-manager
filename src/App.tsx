@@ -1,3 +1,4 @@
+import { LaunchArgumentsField } from './LaunchArgumentsField';
 import { createElement, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, RefObject } from 'react';
 import { isTauri } from '@tauri-apps/api/core';
@@ -2771,7 +2772,10 @@ function GameDetail({
   onSaved: (game: Game) => void;
   onClose: () => void;
 }) {
-  const [draft, setDraft] = useState<GameEdit>({ ...game });
+  const [draft, setDraft] = useState<GameEdit>({
+    ...game,
+    launch_arguments: game.launch_arguments ?? '',
+  });
   const [tagInput, setTagInput] = useState('');
   const formId = useId();
   const detailTabs = [
@@ -2868,14 +2872,15 @@ function GameDetail({
     aliases: lines(aliases),
     save_paths: lines(saves),
   };
-  const configuration: LaunchConfiguration = {
+  const configuration = {
+    launch_arguments: draft.launch_arguments,
     main_executable: draft.main_executable,
     working_directory: draft.working_directory,
     launch_type: draft.launch_type,
     external_player: draft.external_player ?? null,
     mtool_target_exe: draft.mtool_target_exe,
     mtool_loader: draft.mtool_loader,
-  };
+  } satisfies LaunchConfiguration;
   const analysisBaseline = useRef<{
     launch: LaunchConfiguration;
     engine: string;
@@ -2905,7 +2910,7 @@ function GameDetail({
   function useAnalysisConfiguration() {
     const next = analysisConfiguration();
     if (!next) return;
-    setDraft((current) => ({ ...current, ...next }));
+    setDraft((current) => ({ ...current, ...next, launch_arguments: current.launch_arguments }));
     setMessage('已填入分析启动配置，请检查后保存资料。');
   }
   useEffect(() => {
@@ -2951,6 +2956,7 @@ function GameDetail({
         'play_status',
         'main_executable',
         'working_directory',
+        'launch_arguments',
         'launch_type',
         'mtool_target_exe',
         'mtool_loader',
@@ -3414,6 +3420,14 @@ function GameDetail({
                     </span>
                   </label>
                 )}
+                <LaunchArgumentsField
+                  value={draft.launch_arguments}
+                  onChange={(value) => field('launch_arguments', value)}
+                  applicable={
+                    draft.launch_type === 'DIRECT' && /\.exe$/i.test(draft.main_executable ?? '')
+                  }
+                  disabled={busy}
+                />
                 <details className="full advanced-launch">
                   <summary>高级启动选项</summary>
                   <label>

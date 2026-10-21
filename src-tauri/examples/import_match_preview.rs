@@ -22,7 +22,7 @@ fn main() -> Result<()> {
             id: row.get(0)?, canonical_title: row.get(1)?, display_title: row.get(2)?,
             install_path: row.get(3)?, working_directory: row.get(4)?, current_version: row.get(5)?,
             main_executable: row.get(6)?, engine: row.get(7)?, mtool_target_exe: row.get(8)?,
-            version_source: String::new(), launch_type: String::new(), external_player: None,
+            launch_arguments: String::new(), version_source: String::new(), launch_type: String::new(), external_player: None,
             mtool_loader: None, created_at: String::new(), updated_at: String::new(),
             last_launched_at: None, play_status: PlayStatus::Unplayed, favorite: false,
             tags: vec![], aliases: vec![], save_paths: vec![],

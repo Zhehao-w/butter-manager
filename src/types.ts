@@ -77,6 +77,7 @@ export interface LibraryTag {
 }
 
 export interface Game {
+  launch_arguments: string;
   id: string;
   canonical_title: string;
   display_title: string;
@@ -127,10 +128,11 @@ export type LaunchConfiguration = Pick<
   | 'external_player'
   | 'mtool_target_exe'
   | 'mtool_loader'
->;
+> & { launch_arguments?: string | null };
 
 export type GameEdit = Pick<
   Game,
+  | 'launch_arguments'
   | 'id'
   | 'canonical_title'
   | 'display_title'
@@ -276,6 +278,8 @@ export interface RegistrationSelection {
 }
 
 export interface ImportSelection {
+  // Omitted/null inherits; an empty string clears.
+  launch_arguments?: string | null;
   cleanup_mtool?: boolean;
   external_player?: ExternalPlayer | null;
   working_directory?: string | null;

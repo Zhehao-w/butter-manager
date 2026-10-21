@@ -388,6 +388,7 @@ pub fn analyze_game_controlled(
                 external_player: None,
                 mtool_target_exe: mtool.then_some(exe),
                 mtool_loader: loader,
+                launch_arguments: None,
             });
         }
     }

@@ -15,6 +15,7 @@ pub struct Database {
 
 pub(crate) fn config_from_game(game: &Game) -> crate::importer::VersionConfig {
     crate::importer::VersionConfig {
+        launch_arguments: game.launch_arguments.clone(),
         version: game.current_version.clone(),
         version_source: game.version_source.clone(),
         engine: game.engine.clone(),
@@ -83,6 +84,11 @@ impl Database {
         tx.execute("UPDATE games SET current_version=?2,version_source=?3,engine=?4,engine_source=?5,launch_source=?6,main_executable=?7,working_directory=?8,launch_type=?9,external_player=?10,mtool_target_exe=?11,mtool_loader=?12,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?1",
             params![id,config.version,config.version_source,config.engine,config.engine_source,config.launch_source,config.executable,config.working_directory,config.launch_type,
                 config.external_player.as_ref().map(serde_json::to_string).transpose().map_err(|e| Error::Validation(e.to_string()))?,config.mtool_target,config.mtool_loader])?;
+        crate::launch_arguments::parse(&config.launch_arguments)?;
+        tx.execute(
+            "UPDATE games SET launch_arguments=?2 WHERE id=?1",
+            params![id, config.launch_arguments],
+        )?;
         Ok(())
     }
     pub fn commit_version(
@@ -226,7 +232,7 @@ impl Database {
         connection.busy_timeout(std::time::Duration::from_secs(5))?;
         connection.execute_batch("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;")?;
         let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-        if version > 13 {
+        if version > 14 {
             return Err(Error::Validation("数据库版本较新，当前程序无法打开".into()));
         }
         if version == 0 {
@@ -310,6 +316,11 @@ impl Database {
             let transaction = connection.unchecked_transaction()?;
             transaction
                 .execute_batch(include_str!("../migrations/013_library_organization.sql"))?;
+            transaction.commit()?;
+        }
+        if version < 14 {
+            let transaction = connection.unchecked_transaction()?;
+            transaction.execute_batch(include_str!("../migrations/014_launch_arguments.sql"))?;
             transaction.commit()?;
         }
         Ok(Self { connection })
@@ -447,6 +458,7 @@ impl Database {
         let entries = candidates
             .iter()
             .map(|c| RegistrationEntry {
+                launch_arguments: String::new(),
                 candidate: c.clone(),
                 executable: if let Some(qsp) = &c.qsp {
                     qsp.recommended_player.clone()
@@ -491,6 +503,7 @@ impl Database {
             if cancelled() {
                 return Err(Error::Validation("登记已取消，尚未提交的记录已回滚".into()));
             }
+            crate::launch_arguments::parse(&entry.launch_arguments)?;
             let candidate = &entry.candidate;
             let key = path_key(Path::new(&candidate.install_path))?;
             let existing = transaction
@@ -536,6 +549,10 @@ impl Database {
                 "detected"
             };
             transaction.prepare_cached("INSERT INTO games(id,canonical_title,display_title,install_path,install_path_key,main_executable,engine,current_version,version_source,working_directory,launch_type,mtool_target_exe,launch_source,engine_source) VALUES(?1,?2,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?12)")?.execute(params![id,candidate.suggested_title,candidate.install_path,key,entry.executable,candidate.engine,entry.version,entry.version_source,work,mode,if mtool { entry.executable.as_deref() } else { None },source])?;
+            transaction.execute(
+                "UPDATE games SET launch_arguments=?2 WHERE id=?1",
+                params![id, entry.launch_arguments],
+            )?;
             transaction.execute(
                 "UPDATE games SET external_player=?2 WHERE id=?1",
                 params![
@@ -878,7 +895,7 @@ impl Database {
         let suffix = ids
             .map(|ids| format!(" WHERE id IN ({})", vec!["?"; ids.len()].join(",")))
             .unwrap_or_default();
-        let query = format!("SELECT id,canonical_title,display_title,install_path,current_version,version_source,main_executable,engine,launch_type,mtool_target_exe,mtool_loader,created_at,updated_at,working_directory,last_launched_at,external_player,play_status,favorite FROM games{suffix} ORDER BY display_title COLLATE NOCASE,id");
+        let query = format!("SELECT id,canonical_title,display_title,install_path,current_version,version_source,main_executable,engine,launch_type,mtool_target_exe,mtool_loader,created_at,updated_at,working_directory,last_launched_at,external_player,play_status,favorite,launch_arguments FROM games{suffix} ORDER BY display_title COLLATE NOCASE,id");
         let mut statement = self.connection.prepare(&query)?;
         let mut games = statement
             .query_map(rusqlite::params_from_iter(ids.unwrap_or_default()), |row| {
@@ -897,6 +914,7 @@ impl Database {
                     created_at: row.get(11)?,
                     updated_at: row.get(12)?,
                     working_directory: row.get(13)?,
+                    launch_arguments: row.get(18)?,
                     last_launched_at: row.get(14)?,
                     external_player: row
                         .get::<_, Option<String>>(15)?
@@ -998,6 +1016,7 @@ impl Database {
         transaction.execute_batch(include_str!("../migrations/011_duplicate_reviews.sql"))?;
         transaction.execute_batch(include_str!("../migrations/012_import_memories.sql"))?;
         transaction.execute_batch(include_str!("../migrations/013_library_organization.sql"))?;
+        transaction.execute_batch(include_str!("../migrations/014_launch_arguments.sql"))?;
         transaction.commit()?;
         // Logical reset has committed. A compaction failure must not leave stale records in the UI.
         let warning = self.compact_reset_file().err().map(|error| {
@@ -1043,7 +1062,13 @@ impl Database {
         if !["DIRECT", "MTOOL", "EXTERNAL_PLAYER"].contains(&edit.launch_type.as_str()) {
             return Err(Error::Validation("请选择有效启动方式".into()));
         }
-        let launch_changed = edit.launch_type != existing.launch_type
+        let launch_arguments = edit
+            .launch_arguments
+            .clone()
+            .unwrap_or_else(|| existing.launch_arguments.clone());
+        crate::launch_arguments::parse(&launch_arguments)?;
+        let launch_changed = launch_arguments != existing.launch_arguments
+            || edit.launch_type != existing.launch_type
             || edit.main_executable != existing.main_executable
             || edit.external_player != existing.external_player
             || edit.mtool_target_exe != existing.mtool_target_exe
@@ -1109,6 +1134,10 @@ impl Database {
         transaction.execute("UPDATE games SET canonical_title=?2,display_title=?3,current_version=?4,version_source=?5,main_executable=?6,launch_type=?7,mtool_target_exe=?8,mtool_loader=?9,working_directory=?10,engine=?11,engine_source=?12,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?1",
             params![edit.id, edit.canonical_title.trim(), edit.display_title.trim(), edit.current_version.trim(), version_source, edit.main_executable, edit.launch_type, edit.mtool_target_exe, edit.mtool_loader, edit.working_directory, engine, engine_source])?;
         transaction.execute(
+            "UPDATE games SET launch_arguments=?2 WHERE id=?1",
+            params![edit.id, launch_arguments],
+        )?;
+        transaction.execute(
             "UPDATE games SET external_player=?2 WHERE id=?1",
             params![
                 edit.id,
@@ -1119,7 +1148,8 @@ impl Database {
                     .map_err(|e| Error::Validation(e.to_string()))?
             ],
         )?;
-        if edit.external_player != existing.external_player
+        if launch_arguments != existing.launch_arguments
+            || edit.external_player != existing.external_player
             || edit.launch_type != existing.launch_type
             || edit.main_executable != existing.main_executable
             || edit.mtool_target_exe != existing.mtool_target_exe
@@ -1182,6 +1212,70 @@ mod tests {
     }
 
     #[test]
+    fn schema_13_arguments_migration_persists_clears_and_preserves_old_edit_callers() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("fixture");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(root.join("Game.exe"), b"synthetic").unwrap();
+        let path = temp.path().join("isolated.db");
+        let mut db = Database::open(&path).unwrap();
+        let id = db
+            .register(&[analyze_directory(&root).unwrap()])
+            .unwrap()
+            .remove(0);
+        db.record_launch(&id).unwrap();
+        let before = serde_json::to_value(db.game(&id).unwrap()).unwrap();
+        let history = db.launch_history(&id).unwrap();
+        db.connection
+            .execute_batch("ALTER TABLE games DROP COLUMN launch_arguments;PRAGMA user_version=13;")
+            .unwrap();
+        drop(db);
+        let mut db = Database::open(&path).unwrap();
+        assert_eq!(serde_json::to_value(db.game(&id).unwrap()).unwrap(), before);
+        assert_eq!(db.launch_history(&id).unwrap(), history);
+        assert_eq!(
+            db.connection
+                .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            14
+        );
+        let mut edit = draft(&db.game(&id).unwrap());
+        edit.launch_arguments = Some(r#"-dx11 --profile "my saves""#.into());
+        db.edit_game(edit).unwrap();
+        drop(db);
+        let mut db = Database::open(&path).unwrap();
+        assert_eq!(
+            db.game(&id).unwrap().launch_arguments,
+            r#"-dx11 --profile "my saves""#
+        );
+        let mut legacy = serde_json::to_value(draft(&db.game(&id).unwrap())).unwrap();
+        legacy.as_object_mut().unwrap().remove("launch_arguments");
+        db.edit_game(serde_json::from_value(legacy).unwrap())
+            .unwrap();
+        assert_eq!(
+            db.game(&id).unwrap().launch_arguments,
+            r#"-dx11 --profile "my saves""#
+        );
+        let mut edit = draft(&db.game(&id).unwrap());
+        edit.launch_arguments = Some("\"unfinished".into());
+        assert!(db.edit_game(edit).is_err());
+        let mut edit = draft(&db.game(&id).unwrap());
+        edit.launch_arguments = Some(String::new());
+        db.edit_game(edit).unwrap();
+        drop(db);
+        let mut db = Database::open(&path).unwrap();
+        assert!(db.game(&id).unwrap().launch_arguments.is_empty());
+        db.clear_library().unwrap();
+        assert_eq!(
+            db.connection
+                .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            14
+        );
+        assert!(db.games().unwrap().is_empty());
+    }
+
+    #[test]
     fn import_memory_upgrade_from_11_is_empty_and_preserves_library_records() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("fixture.db");
@@ -1195,7 +1289,7 @@ mod tests {
             .unwrap();
         let before = serde_json::to_string(&db.games().unwrap()).unwrap();
         db.connection
-            .execute_batch("DROP TABLE game_tags;DROP TABLE library_tags;ALTER TABLE games DROP COLUMN favorite;DROP TABLE import_memories;PRAGMA user_version=11;")
+            .execute_batch("ALTER TABLE games DROP COLUMN launch_arguments;DROP TABLE game_tags;DROP TABLE library_tags;ALTER TABLE games DROP COLUMN favorite;DROP TABLE import_memories;PRAGMA user_version=11;")
             .unwrap();
         drop(db);
         let db = Database::open(&path).unwrap();
@@ -1205,7 +1299,7 @@ mod tests {
             db.connection
                 .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
                 .unwrap(),
-            13
+            14
         );
         assert!(!db
             .connection
@@ -1346,7 +1440,7 @@ mod tests {
         }
         let before = serde_json::to_string(&db.games().unwrap()).unwrap();
         db.connection
-            .execute_batch("DROP TABLE game_tags;DROP TABLE library_tags;ALTER TABLE games DROP COLUMN favorite;DROP TABLE import_memories;DROP TABLE duplicate_reviews;")
+            .execute_batch("ALTER TABLE games DROP COLUMN launch_arguments;DROP TABLE game_tags;DROP TABLE library_tags;ALTER TABLE games DROP COLUMN favorite;DROP TABLE import_memories;DROP TABLE duplicate_reviews;")
             .unwrap();
         db.connection
             .execute_batch(include_str!("../migrations/010_duplicate_ignores.sql"))
@@ -1391,7 +1485,7 @@ mod tests {
         let before = serde_json::to_string(&db.games().unwrap()).unwrap();
         db.connection
             .execute_batch(
-                "DROP TABLE game_tags;DROP TABLE library_tags;ALTER TABLE games DROP COLUMN favorite;DROP TABLE import_memories;DROP TABLE duplicate_reviews;PRAGMA user_version=9;",
+                "ALTER TABLE games DROP COLUMN launch_arguments;DROP TABLE game_tags;DROP TABLE library_tags;ALTER TABLE games DROP COLUMN favorite;DROP TABLE import_memories;DROP TABLE duplicate_reviews;PRAGMA user_version=9;",
             )
             .unwrap();
         drop(db);
@@ -1422,7 +1516,7 @@ mod tests {
             db.connection
                 .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
                 .unwrap(),
-            13
+            14
         );
         assert!(!db
             .connection
@@ -1448,7 +1542,7 @@ mod tests {
         let history = db.launch_history(&id).unwrap();
         db.connection
             .execute_batch(
-                "DROP TABLE game_tags;DROP TABLE library_tags;ALTER TABLE games DROP COLUMN favorite;DROP TABLE import_memories;DROP TABLE duplicate_reviews;DROP TABLE version_history;PRAGMA user_version=8;",
+                "ALTER TABLE games DROP COLUMN launch_arguments;DROP TABLE game_tags;DROP TABLE library_tags;ALTER TABLE games DROP COLUMN favorite;DROP TABLE import_memories;DROP TABLE duplicate_reviews;DROP TABLE version_history;PRAGMA user_version=8;",
             )
             .unwrap();
         drop(db);
@@ -1463,7 +1557,7 @@ mod tests {
             db.connection
                 .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
                 .unwrap(),
-            13
+            14
         );
         assert!(!db
             .connection
@@ -1507,6 +1601,7 @@ mod tests {
         std::fs::write(target.join("Game.exe"), b"fixture").unwrap();
         let candidate = analyze_directory(&target).unwrap();
         let entry = RegistrationEntry {
+            launch_arguments: String::new(),
             candidate,
             executable: Some("Game.exe".into()),
             external_player: None,
@@ -1917,7 +2012,7 @@ mod tests {
             db.connection
                 .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
                 .unwrap(),
-            13
+            14
         );
     }
     #[test]
@@ -2088,6 +2183,7 @@ mod tests {
             std::fs::create_dir_all(path.join("包装")).unwrap();
             std::fs::write(path.join("包装/任意.exe"), b"fixture").unwrap();
             entries.push(RegistrationEntry {
+                launch_arguments: String::new(),
                 candidate: analyze_directory(&path).unwrap(),
                 executable: Some("包装/任意.exe".into()),
                 external_player: None,
@@ -2121,6 +2217,7 @@ mod tests {
     }
     fn draft(game: &Game) -> GameEdit {
         GameEdit {
+            launch_arguments: Some(game.launch_arguments.clone()),
             id: game.id.clone(),
             canonical_title: game.canonical_title.clone(),
             display_title: game.display_title.clone(),

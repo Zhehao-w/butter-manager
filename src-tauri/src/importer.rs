@@ -162,6 +162,9 @@ pub struct Selection {
     /// Update-only overrides; absent values inherit the previous configuration.
     #[serde(default)]
     pub working_directory: Option<String>,
+    /// Omitted/null inherits on updates; an empty string clears arguments.
+    #[serde(default)]
+    pub launch_arguments: Option<String>,
     /// An explicit empty string selects automatic loader detection.
     #[serde(default)]
     pub mtool_loader: Option<String>,
@@ -795,6 +798,11 @@ impl ImportStore {
             } else {
                 paths::launch_file(&source, &selection.executable).map(|_| ())
             };
+            if let Err(e) = crate::launch_arguments::parse(
+                selection.launch_arguments.as_deref().unwrap_or_default(),
+            ) {
+                blockers.push(e.to_string());
+            }
             if let Err(e) = launch_check {
                 blockers.push(e.to_string());
             }
@@ -1246,6 +1254,7 @@ impl ImportStore {
                     Some(item.selection.executable.clone())
                 },
                 external_player: item.selection.external_player.clone(),
+                launch_arguments: item.selection.launch_arguments.clone().unwrap_or_default(),
                 version: item.selection.version.clone(),
                 version_source: "manual".into(),
                 working_directory: if item.selection.external_player.is_some() {
@@ -1437,6 +1446,12 @@ fn finish_container(container: &Path, id: &str) -> Result<()> {
     Ok(())
 }
 fn validate_paths(plan: &Plan, item: &Item, journal: &Path) -> Result<()> {
+    crate::launch_arguments::parse(
+        item.selection
+            .launch_arguments
+            .as_deref()
+            .unwrap_or_default(),
+    )?;
     let root = checked_dir(Path::new(&plan.root))?;
     require_identity(&root, Some(&plan.root_id))?;
     folder_name(&item.selection.target_name)?;
@@ -1858,6 +1873,35 @@ fn remove_partial_copy(source: &Path, target: &Path, manifest: &[Entry], job: &J
 #[cfg(test)]
 mod tests {
     #[test]
+    fn new_import_arguments_persist_and_malformed_journals_stop_before_moving() {
+        for arguments in ["-dx11 --profile \"my saves\"", "", "\"unfinished"] {
+            let f = Fixture::new();
+            let source = f.game("Synthetic game");
+            fs::write(source.join("Game.exe"), b"synthetic executable").unwrap();
+            let id = f.plan(std::slice::from_ref(&source));
+            let mut plan = f.store.get(&id).unwrap();
+            plan.items[0].selection.executable = "Game.exe".into();
+            plan.items[0].selection.launch_arguments = Some(arguments.into());
+            f.store.save(&plan).unwrap();
+            if arguments == "\"unfinished" {
+                assert!(f.apply(&id).is_err());
+                assert!(source.join("Game.exe").exists());
+                assert!(f.db.lock().unwrap().games().unwrap().is_empty());
+            } else {
+                let game_id = f.apply(&id).unwrap().remove(0);
+                assert_eq!(
+                    f.db.lock()
+                        .unwrap()
+                        .game(&game_id)
+                        .unwrap()
+                        .launch_arguments,
+                    arguments
+                );
+            }
+        }
+    }
+
+    #[test]
     fn shared_qsp_engine_only_strengthens_an_existing_name_match() {
         let temp = tempfile::tempdir().unwrap();
         let mut candidate = scanner::pending_candidate(temp.path()).unwrap();
@@ -1891,6 +1935,7 @@ mod tests {
             external_player: crate::external_player::qsp_config(&candidate),
             working_directory: None,
             mtool_loader: None,
+            launch_arguments: None,
             mtool: false,
             existing_id: None,
             new_override: false,
@@ -1984,6 +2029,7 @@ mod tests {
                 external_player: crate::external_player::qsp_config(c),
                 working_directory: None,
                 mtool_loader: None,
+                launch_arguments: None,
                 mtool: false,
                 existing_id: None,
                 new_override: false,
@@ -2097,6 +2143,7 @@ mod tests {
                     executable: "包装/游戏.html".into(),
                     working_directory: None,
                     mtool_loader: None,
+                    launch_arguments: None,
                     external_player: None,
                     mtool: false,
                     existing_id: None,
@@ -2527,6 +2574,7 @@ mod tests {
         let mut candidate = item.candidate.clone();
         candidate.install_path = item.target.clone();
         let entry = RegistrationEntry {
+            launch_arguments: String::new(),
             candidate,
             executable: Some(item.selection.executable.clone()),
             external_player: None,
@@ -2827,6 +2875,7 @@ mod tests {
         let mut candidate = p.items[0].candidate.clone();
         candidate.install_path = p.items[0].target.clone();
         let entry = RegistrationEntry {
+            launch_arguments: String::new(),
             candidate,
             executable: Some("包装/游戏.html".into()),
             external_player: None,

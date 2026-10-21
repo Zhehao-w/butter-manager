@@ -2309,6 +2309,89 @@ describe('iteration interactions', () => {
     expect(api.games).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps saved parameters when analysis returns an empty default and when switching to MTool', async () => {
+    vi.mocked(api.games).mockResolvedValue([{ ...game, launch_arguments: '-dx11' }]);
+    vi.mocked(api.startGameAnalysis).mockResolvedValue('arguments-analysis');
+    vi.mocked(api.job).mockResolvedValue({
+      ...job,
+      id: 'arguments-analysis',
+      kind: 'analysis',
+      changes: [
+        {
+          ...candidate,
+          registered_id: game.id,
+          recommended_launch: {
+            main_executable: 'New.exe',
+            working_directory: '.',
+            launch_type: 'DIRECT',
+            launch_arguments: '',
+            external_player: null,
+            mtool_target_exe: null,
+            mtool_loader: null,
+          },
+        },
+      ],
+    });
+    const modal = await openDetail();
+    fireEvent.click(within(modal).getByRole('button', { name: '分析游戏配置' }));
+    await within(modal).findByText('已填入分析结果，请检查后保存资料。');
+    showDetailTab('启动配置');
+    const input = within(modal).getByRole('textbox', { name: '启动参数' }) as HTMLInputElement;
+    expect(input.value).toBe('-dx11');
+    fireEvent.change(within(modal).getByRole('combobox', { name: '启动方式' }), {
+      target: { value: 'MTOOL' },
+    });
+    expect(input.disabled).toBe(true);
+    expect(input.value).toBe('-dx11');
+    expect(within(modal).getByText(/MTool、外部播放器和文档启动不传递/)).toBeTruthy();
+    expect(api.saveGame).not.toHaveBeenCalled();
+  });
+
+  it('uses draft arguments for temporary launch, persists them and clears them explicitly', async () => {
+    vi.mocked(api.saveGame).mockImplementation(async (edit) => ({ ...game, ...edit }));
+    vi.mocked(api.play).mockResolvedValue({ ...game, play_status: 'PLAYING' });
+    const modal = await openDetail();
+    showDetailTab('启动配置');
+    const input = within(modal).getByRole('textbox', { name: '启动参数' });
+    expect(input.getAttribute('placeholder')).toBe('-dx11');
+    fireEvent.change(input, { target: { value: '-dx11 --profile "my saves"' } });
+    fireEvent.click(within(modal).getByRole('button', { name: '启动' }));
+    await waitFor(() =>
+      expect(api.play).toHaveBeenCalledWith(
+        game.id,
+        expect.objectContaining({ launch_arguments: '-dx11 --profile "my saves"' }),
+      ),
+    );
+    expect(api.saveGame).not.toHaveBeenCalled();
+    await waitForEnabledButton('保存资料', within(modal));
+    fireEvent.click(within(modal).getByRole('button', { name: '保存资料' }));
+    await waitFor(() =>
+      expect(api.saveGame).toHaveBeenCalledWith(
+        expect.objectContaining({ launch_arguments: '-dx11 --profile "my saves"' }),
+      ),
+    );
+    await waitForEnabledButton('启动', within(modal));
+    fireEvent.click(within(modal).getByRole('button', { name: '关闭弹窗' }));
+    fireEvent.click(await screen.findByRole('button', { name: `启动 ${game.display_title}` }));
+    await waitFor(() => expect(vi.mocked(api.play).mock.lastCall).toEqual([game.id]));
+    fireEvent.click(screen.getByRole('button', { name: game.display_title }));
+    const reopened = screen.getByRole('dialog', { name: game.display_title });
+    showDetailTab('启动配置');
+    const restored = within(reopened).getByRole('textbox', {
+      name: '启动参数',
+    }) as HTMLInputElement;
+    expect(restored.value).toBe('-dx11 --profile "my saves"');
+    fireEvent.change(restored, { target: { value: '"unfinished' } });
+    expect(within(reopened).getByRole('alert').textContent).toContain('双引号未闭合');
+    expect(restored.checkValidity()).toBe(false);
+    fireEvent.change(restored, { target: { value: '' } });
+    await waitForEnabledButton('保存资料', within(reopened));
+    fireEvent.click(within(reopened).getByRole('button', { name: '保存资料' }));
+    await waitFor(() =>
+      expect(vi.mocked(api.saveGame).mock.lastCall?.[0].launch_arguments).toBe(''),
+    );
+  });
+
   it.each(['DIRECT', 'MTOOL', 'EXTERNAL_PLAYER'] as const)(
     'launches unsaved %s configuration without saving, then saves through the fixed hero toolbar',
     async (mode) => {
@@ -2376,6 +2459,7 @@ describe('iteration interactions', () => {
       fireEvent.click(within(detail).getByRole('button', { name: '启动' }));
       await within(detail).findByText('启动请求已发送。');
       expect(api.play).toHaveBeenCalledWith(game.id, {
+        launch_arguments: '',
         launch_type: mode,
         main_executable: mode === 'EXTERNAL_PLAYER' ? '新版/player.exe' : '新版/new.exe',
         working_directory: '新版',

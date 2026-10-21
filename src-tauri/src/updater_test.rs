@@ -223,6 +223,7 @@ impl Fixture {
             external_player: None,
             mtool_target_exe: None,
             mtool_loader: None,
+            launch_arguments: None,
             tags: None,
             aliases: vec!["my alias".into()],
             save_paths: vec![
@@ -264,6 +265,7 @@ impl Fixture {
             executable: "游戏.html".into(),
             working_directory: None,
             mtool_loader: None,
+            launch_arguments: None,
             external_player: None,
             mtool: false,
             existing_id: Some(self.id.clone()),
@@ -394,6 +396,7 @@ fn manual_launch_fixture(mtool: bool) -> Fixture {
         external_player: None,
         mtool_target_exe: mtool.then(|| "original/Game.exe".into()),
         mtool_loader: mtool.then(|| "loaders/custom.dll".into()),
+        launch_arguments: Some(r#"-dx11 --profile "fixture saves""#.into()),
         tags: None,
         aliases: game.aliases,
         save_paths: game.save_paths,
@@ -419,6 +422,7 @@ fn update_inherits_manual_launch_configuration_across_exe_changes_and_restart_th
         f.store = ImportStore::open(f.store.directory.clone()).unwrap();
         f.apply(&id).unwrap();
         let updated = f.db.lock().unwrap().game(&f.id).unwrap();
+        assert_eq!(updated.launch_arguments, before.launch_arguments);
         assert_eq!(updated.working_directory, before.working_directory);
         assert_eq!(updated.mtool_loader, before.mtool_loader);
         assert_eq!(
@@ -504,6 +508,7 @@ fn launch_mode_transitions_drop_or_detect_loader_and_restore_configuration_on_ro
             f.apply(&id).unwrap();
             let updated = f.db.lock().unwrap().version_config(&f.id).unwrap();
             assert_eq!(updated.launch_type, launch_type);
+            assert_eq!(updated.launch_arguments, before.launch_arguments);
             assert_eq!(updated.working_directory, before.working_directory);
             assert_eq!(
                 updated.mtool_loader.as_deref(),
@@ -1316,6 +1321,7 @@ fn source_containing_an_external_save_is_blocked_but_ordinary_payload_changes_ar
         executable: "游戏.html".into(),
         working_directory: None,
         mtool_loader: None,
+        launch_arguments: None,
         external_player: None,
         mtool: false,
         existing_id: Some(f.id.clone()),
@@ -1898,4 +1904,65 @@ fn new_name_collision_is_blocked_and_foreign_directory_is_not_overwritten() {
     );
     assert!(f.old().is_dir());
     assert!(f.source.is_dir());
+}
+
+#[test]
+fn update_arguments_override_clear_recover_and_restore_on_rollback() {
+    for arguments in [Some("-dx12 --profile \"new saves\""), Some(""), None] {
+        for checkpoint in ["update_ready", "update_commit", "update_cleanup"] {
+            let mut f = manual_launch_fixture(false);
+            let before = f.db.lock().unwrap().version_config(&f.id).unwrap();
+            let id = f.plan_with(true, true, |selection| {
+                selection.executable = "replacement/Game.exe".into();
+                selection.launch_arguments = arguments.map(str::to_owned);
+            });
+            assert!(f.store.get(&id).unwrap().items[0].blockers.is_empty());
+            let job = f
+                .tasks
+                .begin("import_apply", paths::path_text(&f.root).unwrap())
+                .unwrap();
+            let mut plan = f.store.get(&id).unwrap();
+            FAIL_CHECKPOINT.with(|failure| *failure.borrow_mut() = Some(checkpoint.into()));
+            assert!(f.store.update_one(&mut plan, 0, &job, &f.db).is_err());
+            job.finish(Err("synthetic interruption".into()));
+            f.store = ImportStore::open(f.store.directory.clone()).unwrap();
+            f.apply(&id).unwrap();
+            assert_eq!(
+                f.db.lock().unwrap().game(&f.id).unwrap().launch_arguments,
+                arguments.unwrap_or(&before.launch_arguments)
+            );
+            f.rollback(&id).unwrap();
+            assert_eq!(f.db.lock().unwrap().version_config(&f.id).unwrap(), before);
+        }
+    }
+}
+
+#[test]
+fn pre_arguments_journal_resumes_and_rolls_back_with_empty_defaults() {
+    let mut f = Fixture::new();
+    let before = f.db.lock().unwrap().version_config(&f.id).unwrap();
+    let id = f.plan(true, true);
+    let path = f.store.directory.join(format!("{id}.json"));
+    let mut record: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    record["items"][0]["selection"]
+        .as_object_mut()
+        .unwrap()
+        .remove("launch_arguments");
+    record["items"][0]["update"]["old"]
+        .as_object_mut()
+        .unwrap()
+        .remove("launch_arguments");
+    fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
+    f.store = ImportStore::open(f.store.directory.clone()).unwrap();
+    f.apply(&id).unwrap();
+    assert!(f
+        .db
+        .lock()
+        .unwrap()
+        .game(&f.id)
+        .unwrap()
+        .launch_arguments
+        .is_empty());
+    f.rollback(&id).unwrap();
+    assert_eq!(f.db.lock().unwrap().version_config(&f.id).unwrap(), before);
 }

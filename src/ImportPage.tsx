@@ -1375,18 +1375,19 @@ export function ImportPage({
                               </label>
                             </div>
                           )}
-                          <div className="form-grid">
-                            <LaunchArgumentsField
-                              value={choice.launch_arguments ?? existing?.launch_arguments ?? ''}
-                              onChange={(value) => update(source, { launch_arguments: value })}
-                              applicable={
-                                !choice.mtool &&
-                                !choice.external_player &&
-                                /\.exe$/i.test(choice.executable)
-                              }
-                              disabled={disabled}
-                            />
-                          </div>
+                          {!choice.mtool &&
+                            !choice.external_player &&
+                            /\.exe$/i.test(choice.executable) && (
+                              <div className="form-grid">
+                                <LaunchArgumentsField
+                                  value={
+                                    choice.launch_arguments ?? existing?.launch_arguments ?? ''
+                                  }
+                                  onChange={(value) => update(source, { launch_arguments: value })}
+                                  disabled={disabled}
+                                />
+                              </div>
+                            )}
                           {existing && (
                             <details className="import-launch-update">
                               <summary>更新启动配置</summary>

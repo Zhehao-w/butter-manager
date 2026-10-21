@@ -4,12 +4,10 @@ import { launchArgumentsError } from './launchArguments';
 export function LaunchArgumentsField({
   value,
   onChange,
-  applicable,
   disabled = false,
 }: {
   value: string;
   onChange: (value: string) => void;
-  applicable: boolean;
   disabled?: boolean;
 }) {
   const id = useId();
@@ -26,14 +24,13 @@ export function LaunchArgumentsField({
         aria-label="启动参数"
         value={value}
         placeholder="-dx11"
-        disabled={disabled || !applicable}
+        disabled={disabled}
         aria-invalid={!!error}
         aria-describedby={`${id}-hint${error ? ` ${id}-error` : ''}`}
         onChange={(event) => onChange(event.target.value)}
       />
       <span id={`${id}-hint`} className="muted">
-        仅用于直接启动
-        EXE；多个参数用空格分隔，含空格的参数用双引号包裹。MTool、外部播放器和文档启动不传递这些参数，已填内容保留。
+        仅用于直接启动 EXE；多个参数用空格分隔，含空格的参数用双引号包裹。
       </span>
       {error && (
         <span id={`${id}-error`} className="error" role="alert">

@@ -143,7 +143,7 @@ describe('batch import flow', () => {
       );
     },
   );
-  it('blocks malformed parameter quotes and disables parameters for MTool', async () => {
+  it('blocks malformed parameter quotes and hides parameters for MTool without losing them', async () => {
     renderNewImport();
     await expandSettings('启动配置');
     const input = screen.getByRole('textbox', { name: '启动参数' }) as HTMLInputElement;
@@ -156,8 +156,12 @@ describe('batch import flow', () => {
     expect(api.importPlan).not.toHaveBeenCalled();
     fireEvent.change(input, { target: { value: '-dx11' } });
     fireEvent.click(screen.getByRole('checkbox', { name: '公共 MTool' }));
-    expect(input.disabled).toBe(true);
-    expect(input.value).toBe('-dx11');
+    expect(screen.queryByRole('textbox', { name: '启动参数' })).toBeNull();
+    expect(screen.queryByText(/仅用于直接启动 EXE/)).toBeNull();
+    fireEvent.click(screen.getByRole('checkbox', { name: '公共 MTool' }));
+    expect((screen.getByRole('textbox', { name: '启动参数' }) as HTMLInputElement).value).toBe(
+      '-dx11',
+    );
   });
   it.each([false, true])(
     'requires confirming a remembered recommendation and allows opting out of remembering: %s',
@@ -1607,6 +1611,7 @@ describe('batch import flow', () => {
       (screen.getByRole('checkbox', { name: '选择 Game v1.2' }) as HTMLInputElement).checked,
     ).toBe(true);
     expect(screen.queryByLabelText('公共 MTool')).toBeNull();
+    expect(screen.queryByRole('textbox', { name: '启动参数' })).toBeNull();
     expect(
       (screen.getByRole('button', { name: '生成导入与更新计划（1）' }) as HTMLButtonElement)
         .disabled,

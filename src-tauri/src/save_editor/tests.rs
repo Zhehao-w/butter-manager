@@ -10,6 +10,27 @@ fn game(root: &Path) -> Game {
 fn rpg_value() -> Value {
     json!({"@":"Object","variables":{"@":"Game_Variables","_data":[null,5,"text",true,{"@":"Custom","keep":[1,2]}]},"switches":{"@":"Game_Switches","_data":[null,false,true]},"party":{"@":"Game_Party","_gold":120,"_items":{"1":2},"_weapons":{},"_armors":{}},"actors":{"_data":[null,{"_name":"勇者","_level":5,"_hp":100}]},"unknown":{"@":["custom"],"preserve":42}})
 }
+#[test]
+fn catalog_reports_detected_locations_without_associating_or_replacing_paths() {
+    let temp = tempfile::tempdir().unwrap();
+    fs::create_dir(temp.path().join("save")).unwrap();
+    fs::write(
+        temp.path().join("save/file1.rpgsave"),
+        b"synthetic unreadable slot",
+    )
+    .unwrap();
+    let mut game = game(temp.path());
+    game.save_paths.clear();
+    let catalog = list(&game).unwrap();
+    assert_eq!(catalog.detected_locations, vec!["<GAME>/save"]);
+    assert_eq!(catalog.slots.len(), 1);
+    assert!(game.save_paths.is_empty());
+    game.save_paths = vec!["<GAME>/manual".into()];
+    let catalog = list(&game).unwrap();
+    assert!(catalog.detected_locations.is_empty());
+    assert!(catalog.slots.is_empty());
+    assert_eq!(game.save_paths, vec!["<GAME>/manual"]);
+}
 fn fixtures() -> Value {
     serde_json::from_str(include_str!("fixtures/renpy.json")).unwrap()
 }

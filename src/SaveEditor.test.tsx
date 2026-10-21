@@ -70,6 +70,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   vi.mocked(api.releaseExternalSaves).mockResolvedValue();
   vi.mocked(api.listEditableSaves).mockResolvedValue({
+    detected_locations: [],
     slots: [doc().slot, doc('two').slot],
     warnings: [],
   });
@@ -82,11 +83,25 @@ beforeEach(() => {
 });
 afterEach(() => vi.restoreAllMocks());
 describe('Save Editor Lite', () => {
+  it('reports detected locations even when a slot cannot be decoded', async () => {
+    const onDetectedLocations = vi.fn();
+    vi.mocked(api.listEditableSaves).mockResolvedValue({
+      slots: [doc().slot],
+      warnings: [],
+      detected_locations: ['<GAME>/save'],
+    });
+    vi.mocked(api.readEditableSave).mockRejectedValue(new Error('存档暂时无法读取'));
+    render(<SaveEditor game={game} onClose={vi.fn()} onDetectedLocations={onDetectedLocations} />);
+    await screen.findByText('Error: 存档暂时无法读取');
+    expect(onDetectedLocations).toHaveBeenCalledWith(['<GAME>/save']);
+    expect(api.applySaveEdits).not.toHaveBeenCalled();
+  });
   it('unlocks ES3 with a session password, retries errors and saves only the chosen slot', async () => {
     const locked = { ...doc(), fields: [], password_required: true };
     locked.slot.format = 'ES3';
     const unlocked = { ...locked, password_required: false, fields: [field('金钱', 5, 'number')] };
     vi.mocked(api.listEditableSaves).mockResolvedValue({
+      detected_locations: [],
       slots: [locked.slot, doc('two').slot],
       warnings: [],
     });
@@ -137,7 +152,11 @@ describe('Save Editor Lite', () => {
     const nani = doc();
     nani.slot.format = 'Naninovel';
     nani.slot.name = 'GameSave001.nson';
-    vi.mocked(api.listEditableSaves).mockResolvedValue({ slots: [nani.slot], warnings: [] });
+    vi.mocked(api.listEditableSaves).mockResolvedValue({
+      detected_locations: [],
+      slots: [nani.slot],
+      warnings: [],
+    });
     vi.mocked(api.readEditableSave).mockResolvedValue(nani);
     vi.mocked(api.applySaveEdits).mockRejectedValue('存档已被游戏更新，请刷新');
     render(<SaveEditor game={game} onClose={vi.fn()} />);
@@ -271,7 +290,11 @@ describe('Save Editor Lite', () => {
         child_count: 2,
       },
     ];
-    vi.mocked(api.listEditableSaves).mockResolvedValue({ slots: [original.slot], warnings: [] });
+    vi.mocked(api.listEditableSaves).mockResolvedValue({
+      detected_locations: [],
+      slots: [original.slot],
+      warnings: [],
+    });
     vi.mocked(api.readEditableSave).mockResolvedValue(original);
     render(<SaveEditor game={game} onClose={vi.fn()} />);
     fireEvent.click(await screen.findByRole('button', { name: '编辑成员 (2)' }));
@@ -337,6 +360,7 @@ describe('Save Editor Lite', () => {
       one.slot.external = two.slot.external = external;
       const documents = { one, two };
       vi.mocked(api.listEditableSaves).mockResolvedValue({
+        detected_locations: [],
         slots: [one.slot, two.slot],
         warnings: [],
       });
@@ -425,6 +449,7 @@ describe('Save Editor Lite', () => {
     persistent.slot.format = 'Persistent';
     persistent.fields = [field('persistent.money', 10, 'number', 'persistent')];
     vi.mocked(api.listEditableSaves).mockResolvedValue({
+      detected_locations: [],
       slots: [normal.slot, persistent.slot],
       warnings: [],
     });
@@ -549,7 +574,11 @@ describe('Save Editor Lite', () => {
     expect((screen.getByLabelText('金钱') as HTMLInputElement).value).toBe('8');
   });
   it('explains missing slots and persistent runtime overwrite risk', async () => {
-    vi.mocked(api.listEditableSaves).mockResolvedValueOnce({ slots: [], warnings: [] });
+    vi.mocked(api.listEditableSaves).mockResolvedValueOnce({
+      detected_locations: [],
+      slots: [],
+      warnings: [],
+    });
     const view = render(<SaveEditor game={game} onClose={vi.fn()} />);
     await screen.findByText(/支持 MV、MZ、Ren’Py/);
     expect(api.readEditableSave).not.toHaveBeenCalled();
@@ -571,6 +600,7 @@ describe('Save Editor Lite', () => {
     persistent.fields = [field('persistent.money', 10, 'number', 'persistent')];
     const documents = { one, two, persistent };
     vi.mocked(api.listEditableSaves).mockResolvedValue({
+      detected_locations: [],
       slots: [one.slot, two.slot, persistent.slot],
       warnings: [],
     });
@@ -591,6 +621,7 @@ describe('Save Editor Lite', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'Persistent' }));
     await screen.findByLabelText('persistent.money');
     vi.mocked(api.listEditableSaves).mockResolvedValue({
+      detected_locations: [],
       slots: [one.slot, persistent.slot],
       warnings: [],
     });

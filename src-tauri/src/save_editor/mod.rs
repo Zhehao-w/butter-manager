@@ -164,6 +164,7 @@ pub struct Slot {
 pub struct Catalog {
     pub slots: Vec<Slot>,
     pub warnings: Vec<String>,
+    pub detected_locations: Vec<String>,
 }
 #[derive(Debug, Serialize)]
 pub struct Document {
@@ -203,6 +204,7 @@ fn discover_with(
     };
     let mut entries = Vec::new();
     let mut warnings = Vec::new();
+    let mut detected_locations = Vec::new();
     let mut seen = HashSet::new();
     for location in locations {
         let root = match crate::deletion::resolve_save(game, &location) {
@@ -222,6 +224,9 @@ fn discover_with(
             }
         } else {
             plain(&root)?;
+        }
+        if game.save_paths.is_empty() {
+            detected_locations.push(location);
         }
         let directory = if root_info.is_file() {
             root.parent()
@@ -374,6 +379,7 @@ fn discover_with(
         Catalog {
             slots: entries.iter().map(|(s, _)| s.clone()).collect(),
             warnings,
+            detected_locations,
         },
         entries,
     ))

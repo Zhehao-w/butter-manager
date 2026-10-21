@@ -706,7 +706,7 @@ describe('iteration interactions', () => {
       within(actions)
         .getAllByRole('button')
         .map((button) => button.textContent),
-    ).toEqual(['启动', '打开目录', '编辑存档', '分析启动配置']);
+    ).toEqual(['启动', '打开目录', '编辑存档', '分析游戏配置']);
     fireEvent.click(within(actions).getByRole('button', { name: '编辑存档' }));
     const editor = await screen.findByRole('dialog', { name: `编辑存档 · ${game.display_title}` });
     await waitFor(() => expect(api.listEditableSaves).toHaveBeenCalledWith(game.id));
@@ -1112,7 +1112,8 @@ describe('iteration interactions', () => {
     await openDetail();
     expect(screen.queryByRole('combobox', { name: 'QSP 播放器' })).toBeNull();
     expect(screen.queryByRole('combobox', { name: 'QSP 主游戏文件' })).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: '分析启动配置' }));
+    fireEvent.click(screen.getByRole('button', { name: '分析游戏配置' }));
+    showDetailTab('启动配置');
     fireEvent.click(await screen.findByRole('button', { name: '使用 QSP 启动' }));
     expect((screen.getByRole('combobox', { name: 'QSP 播放器' }) as HTMLInputElement).value).toBe(
       'Qqsp-1.9.0-win64/Qqsp.exe',
@@ -2409,6 +2410,129 @@ describe('iteration interactions', () => {
     },
   );
 
+  it.each([
+    { savedPaths: [], draftPath: '' },
+    { savedPaths: ['<GAME>/manual'], draftPath: '' },
+    { savedPaths: [], draftPath: '<GAME>/draft' },
+  ])(
+    'shows editor-discovered locations only in an empty detail draft ($savedPaths)',
+    async ({ savedPaths, draftPath }) => {
+      vi.mocked(api.games).mockResolvedValue([{ ...game, save_paths: savedPaths }]);
+      vi.mocked(api.listEditableSaves).mockResolvedValue({
+        slots: [],
+        warnings: [],
+        detected_locations: ['%USERPROFILE%/AppData/LocalLow/fixture/Dice'],
+      });
+      const modal = await openDetail();
+      showDetailTab('存档位置');
+      const panel = within(modal).getByRole('tabpanel', { name: '存档位置' });
+      if (draftPath)
+        fireEvent.change(within(panel).getByRole('textbox', { name: /存档位置/ }), {
+          target: { value: draftPath },
+        });
+      fireEvent.click(within(panel).getByRole('button', { name: '编辑存档' }));
+      const editor = await screen.findByRole('dialog', {
+        name: `编辑存档 · ${game.display_title}`,
+      });
+      await waitFor(() => expect(api.listEditableSaves).toHaveBeenCalledWith(game.id));
+      fireEvent.click(within(editor).getByRole('button', { name: '关闭弹窗' }));
+      expect(
+        (within(panel).getByRole('textbox', { name: /存档位置/ }) as HTMLTextAreaElement).value,
+      ).toBe(
+        draftPath ||
+          (savedPaths.length
+            ? savedPaths.join('\n')
+            : '%USERPROFILE%/AppData/LocalLow/fixture/Dice'),
+      );
+      expect(api.saveGame).not.toHaveBeenCalled();
+    },
+  );
+
+  it('fills analyzed saves without a launch recommendation and stays on the selected tab', async () => {
+    vi.mocked(api.startGameAnalysis).mockResolvedValue('saves-analysis');
+    vi.mocked(api.job).mockResolvedValue({
+      ...job,
+      id: 'saves-analysis',
+      kind: 'analysis',
+      changes: [
+        {
+          ...candidate,
+          registered_id: game.id,
+          recommended_launch: null,
+          save_paths: ['%USERPROFILE%/AppData/LocalLow/fixture/Dice'],
+        },
+      ],
+    });
+    vi.mocked(api.saveGame).mockImplementation(async (edit) => ({ ...game, ...edit }));
+    const modal = await openDetail();
+    showDetailTab('存档位置');
+    fireEvent.click(within(modal).getByRole('button', { name: '分析游戏配置' }));
+    await waitFor(() =>
+      expect(
+        (within(modal).getByRole('textbox', { name: /存档位置/ }) as HTMLTextAreaElement).value,
+      ).toBe('%USERPROFILE%/AppData/LocalLow/fixture/Dice'),
+    );
+    expect(within(modal).getByRole('tab', { name: '存档位置' }).getAttribute('aria-selected')).toBe(
+      'true',
+    );
+    expect(api.saveGame).not.toHaveBeenCalled();
+    fireEvent.click(within(modal).getByRole('button', { name: '保存资料' }));
+    await waitFor(() =>
+      expect(api.saveGame).toHaveBeenCalledWith(
+        expect.objectContaining({
+          save_paths: ['%USERPROFILE%/AppData/LocalLow/fixture/Dice'],
+        }),
+      ),
+    );
+  });
+
+  it.each(['saved', 'draft', 'during'])(
+    'keeps manual save associations before and during game analysis (%s)',
+    async (mode) => {
+      vi.mocked(api.games).mockResolvedValue([
+        { ...game, save_paths: mode === 'saved' ? ['<GAME>/manual'] : [] },
+      ]);
+      let response: JobPage = {
+        ...job,
+        id: 'manual-saves-analysis',
+        kind: 'analysis',
+        status: 'running',
+        changes: [],
+        next_cursor: 0,
+        change_count: 0,
+      };
+      vi.mocked(api.startGameAnalysis).mockResolvedValue(response.id);
+      vi.mocked(api.job).mockImplementation(async () => response);
+      const modal = await openDetail();
+      showDetailTab('存档位置');
+      const paths = within(modal).getByRole('textbox', { name: /存档位置/ });
+      if (mode === 'draft') fireEvent.change(paths, { target: { value: '<GAME>/manual' } });
+      fireEvent.click(within(modal).getByRole('button', { name: '分析游戏配置' }));
+      await within(modal).findByRole('button', { name: '取消任务' });
+      if (mode === 'during') fireEvent.change(paths, { target: { value: '<GAME>/manual' } });
+      response = {
+        ...response,
+        status: 'completed',
+        changes: [
+          {
+            ...candidate,
+            registered_id: game.id,
+            recommended_launch: null,
+            save_paths: ['<GAME>/detected'],
+          },
+        ],
+        next_cursor: 1,
+        change_count: 1,
+      };
+      await within(modal).findByText('分析结束，可查看下方详情。');
+      expect((paths as HTMLTextAreaElement).value).toBe('<GAME>/manual');
+      expect(
+        within(modal).getByRole('tab', { name: '存档位置' }).getAttribute('aria-selected'),
+      ).toBe('true');
+      expect(api.saveGame).not.toHaveBeenCalled();
+    },
+  );
+
   it('reports and cancels optional EXE / BAT analysis inside the detail modal', async () => {
     let response: JobPage = {
       ...job,
@@ -2426,12 +2550,12 @@ describe('iteration interactions', () => {
     vi.mocked(api.job).mockImplementation(() => Promise.resolve(response));
     vi.mocked(api.cancel).mockResolvedValue();
     const modal = await openDetail();
-    fireEvent.click(within(modal).getByRole('button', { name: '分析启动配置' }));
+    fireEvent.click(within(modal).getByRole('button', { name: '分析游戏配置' }));
     fireEvent.click(await within(modal).findByRole('button', { name: '取消任务' }));
     await waitFor(() => expect(api.cancel).toHaveBeenCalledWith('detail-analysis'));
     response = { ...response, status: 'cancelled', active: {} };
     await within(modal).findByText('分析已取消，原有结果保留。');
-    await waitForEnabledButton('分析启动配置', within(modal));
+    await waitForEnabledButton('分析游戏配置', within(modal));
     response = {
       ...response,
       id: 'detail-analysis-2',
@@ -2447,8 +2571,9 @@ describe('iteration interactions', () => {
       target: { value: 'Unity' },
     });
     response.changes = [{ ...candidate, registered_id: game.id, engine: 'WOLF RPG Editor' }];
-    fireEvent.click(within(modal).getByRole('button', { name: '分析启动配置' }));
-    await within(modal).findByText('已填入分析启动配置，请检查后保存资料。');
+    fireEvent.click(within(modal).getByRole('button', { name: '分析游戏配置' }));
+    await within(modal).findByText('已填入分析结果，请检查后保存资料。');
+    showDetailTab('启动配置');
     expect(within(modal).getByText('main-v1.2.exe · Unknown')).toBeTruthy();
     showDetailTab('基础信息');
     expect((within(modal).getByRole('textbox', { name: '版本' }) as HTMLInputElement).value).toBe(
@@ -2512,8 +2637,9 @@ describe('iteration interactions', () => {
     });
     vi.mocked(api.saveGame).mockImplementation(async (edit) => ({ ...game, ...edit }));
     await openDetail();
-    fireEvent.click(screen.getByRole('button', { name: '分析启动配置' }));
-    await screen.findByText('已填入分析启动配置，请检查后保存资料。');
+    fireEvent.click(screen.getByRole('button', { name: '分析游戏配置' }));
+    await screen.findByText('已填入分析结果，请检查后保存资料。');
+    showDetailTab('启动配置');
     expect((screen.getByRole('combobox', { name: '启动方式' }) as HTMLSelectElement).value).toBe(
       'MTOOL',
     );
@@ -2540,8 +2666,9 @@ describe('iteration interactions', () => {
     vi.mocked(api.startGameAnalysis).mockResolvedValue(response.id);
     vi.mocked(api.job).mockImplementation(async () => response);
     await openDetail();
-    fireEvent.click(screen.getByRole('button', { name: '分析启动配置' }));
+    fireEvent.click(screen.getByRole('button', { name: '分析游戏配置' }));
     await within(screen.getByRole('dialog')).findByRole('button', { name: '取消任务' });
+    showDetailTab('启动配置');
     fireEvent.change(screen.getByRole('combobox', { name: /启动文件（相对游戏目录）/ }), {
       target: { value: 'Manual.exe' },
     });

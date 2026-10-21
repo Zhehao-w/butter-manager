@@ -20,7 +20,7 @@ export type SaveSlot = {
   modified: number;
   external?: boolean;
 };
-export type SaveCatalog = { slots: SaveSlot[]; warnings: string[] };
+export type SaveCatalog = { slots: SaveSlot[]; warnings: string[]; detected_locations: string[] };
 export type SaveDocument = {
   slot: SaveSlot;
   revision: string;

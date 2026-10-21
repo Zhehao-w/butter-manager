@@ -438,12 +438,10 @@ tbody td:last-child {
 .library tbody tr {
   cursor: pointer;
 }
-.library tbody tr:hover td,
-.import-history-row:hover {
+.library tbody tr:hover td {
   background: #f6f9fe;
 }
-.library tbody tr.selected td,
-.import-history-row.selected {
+.library tbody tr.selected td {
   background: #f0f6ff;
 }
 .library tbody td:first-child {
@@ -5188,9 +5186,18 @@ textarea,
   min-height: 86px;
   margin-bottom: 8px;
   padding: 16px 20px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--line);
   border-radius: 14px;
-  background: #ffffff;
+  background: #fff;
+  transition:
+    border-color 120ms,
+    background 120ms;
+}
+.import-history-row:hover,
+.import-history-row.selected,
+.import-history-row:focus-within {
+  border-color: #aacbfa;
+  background: #f5f9ff;
 }
 .import-history-icon {
   flex: 0 0 38px;

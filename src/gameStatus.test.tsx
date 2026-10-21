@@ -12,6 +12,7 @@ import { useLibraryLayout, useSavedSort } from './preferences';
 import type { Game } from './types';
 
 export const statusGame: Game = {
+  launch_arguments: '',
   id: 'g',
   canonical_title: 'Game',
   display_title: 'Game',

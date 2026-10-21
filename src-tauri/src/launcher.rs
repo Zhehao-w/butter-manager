@@ -5,6 +5,9 @@ use std::process::Command;
 
 /// A one-time launch keeps the library identity and directory; it never saves the draft.
 pub fn with_configuration(mut game: Game, config: LaunchConfiguration) -> Game {
+    if let Some(arguments) = config.launch_arguments {
+        game.launch_arguments = arguments;
+    }
     game.main_executable = config.main_executable;
     game.working_directory = config.working_directory;
     game.launch_type = config.launch_type;
@@ -20,6 +23,28 @@ pub fn direct_file(game: &Game) -> Result<std::path::PathBuf> {
         .as_deref()
         .ok_or_else(|| Error::Validation("请先配置启动文件".into()))?;
     crate::paths::launch_file(Path::new(&game.install_path), executable)
+}
+
+/// A direct EXE is the only launch mode that receives the user parameter field.
+pub(crate) fn direct_command(game: &Game) -> Result<Command> {
+    if game.launch_type != "DIRECT" {
+        return Err(Error::Validation("启动参数仅用于直接启动 EXE".into()));
+    }
+    let file = direct_file(game)?;
+    if !file
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("exe"))
+    {
+        return Err(Error::Validation("启动参数仅用于直接启动 EXE".into()));
+    }
+    let mut command = Command::new(file);
+    command
+        .args(crate::launch_arguments::parse(&game.launch_arguments)?)
+        .current_dir(crate::paths::working_directory(
+            Path::new(&game.install_path),
+            &game.working_directory,
+        )?);
+    Ok(command)
 }
 
 pub fn launch(game: &Game, settings: &Settings) -> Result<()> {
@@ -42,7 +67,7 @@ fn launch_observed(
                 .extension()
                 .is_some_and(|s| s.eq_ignore_ascii_case("exe"))
             {
-                let child = Command::new(file).current_dir(&working).spawn()?;
+                let child = direct_command(game)?.spawn()?;
                 if let Some(running) = running {
                     running.observe(&game.id, crate::runtime::ProcessLease::from_child(child)?)?;
                 }
@@ -302,6 +327,67 @@ mod tests {
     use super::*;
     use crate::{db::Database, scanner::analyze_directory};
     #[test]
+    fn direct_exe_process_receives_argument_vector_and_clearing_removes_it() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = dunce::canonicalize(temp.path()).unwrap();
+        let source = root.join("fixture.rs");
+        let executable = root.join("synthetic game.exe");
+        std::fs::write(
+            &source,
+            r#"fn main() { println!("{:?}", std::env::args().skip(1).collect::<Vec<_>>()); }"#,
+        )
+        .unwrap();
+        assert!(Command::new("rustc")
+            .arg(&source)
+            .arg("--crate-name")
+            .arg("launch_args_fixture")
+            .arg("-o")
+            .arg(&executable)
+            .status()
+            .unwrap()
+            .success());
+        let mut game = crate::maintenance::tests::fixture_game(&root);
+        game.main_executable = Some("synthetic game.exe".into());
+        for (text, expected) in [
+            (
+                r#"-dx11 --profile "含空格 名称" "" & %PATH% a\"b"#,
+                vec![
+                    "-dx11",
+                    "--profile",
+                    "含空格 名称",
+                    "",
+                    "&",
+                    "%PATH%",
+                    "a\"b",
+                ],
+            ),
+            ("-dx11", vec!["-dx11"]),
+            ("", vec![]),
+        ] {
+            game.launch_arguments = text.into();
+            let mut command = direct_command(&game).unwrap();
+            assert_eq!(command.get_program(), executable.as_os_str());
+            assert_eq!(command.get_current_dir(), Some(root.as_path()));
+            let output = command.output().unwrap();
+            assert!(output.status.success());
+            assert_eq!(
+                String::from_utf8(output.stdout).unwrap().trim(),
+                format!("{expected:?}")
+            );
+        }
+        game.launch_arguments = "\"unfinished".into();
+        assert!(direct_command(&game).is_err());
+        for mode in ["MTOOL", "EXTERNAL_PLAYER"] {
+            game.launch_type = mode.into();
+            assert!(direct_command(&game).is_err());
+        }
+        game.launch_type = "DIRECT".into();
+        std::fs::write(root.join("game.html"), b"synthetic document").unwrap();
+        game.main_executable = Some("game.html".into());
+        assert!(direct_command(&game).is_err());
+    }
+
+    #[test]
     fn directory_browsing_accepts_only_existing_folders_without_modifying_contents() {
         let temp = tempfile::tempdir().unwrap();
         let folder = temp.path().join("ゲーム 中文 spaces");
@@ -442,6 +528,7 @@ mod tests {
                     working_directory: "新版".into(),
                     mtool_target_exe: Some("新版/new.exe".into()),
                     mtool_loader: Some("loaders/custom.dll".into()),
+                    launch_arguments: Some("-dx11".into()),
                     external_player: Some(crate::domain::ExternalPlayer {
                         player_type: "QSP".into(),
                         scope: "GAME_LOCAL".into(),
@@ -465,6 +552,7 @@ mod tests {
                 }
                 "MTOOL" => {
                     let (injector, _) = mtool_commands(&draft, &settings).unwrap();
+                    assert!(!injector.get_args().any(|arg| arg == "-dx11"));
                     assert_eq!(
                         injector.get_args().collect::<Vec<_>>(),
                         vec![
@@ -482,6 +570,7 @@ mod tests {
                 }
                 _ => {
                     let command = crate::external_player::command(&draft).unwrap();
+                    assert!(!command.get_args().any(|arg| arg == "-dx11"));
                     assert_eq!(
                         command.get_program(),
                         game_root.join("新版").join("player.exe").as_os_str()
@@ -628,6 +717,7 @@ mod tests {
                 external_player: None,
                 mtool_target_exe: None,
                 mtool_loader: None,
+                launch_arguments: Some("-dx11".into()),
             },
         );
         assert!(launch_tracked(&game, &db.settings().unwrap(), || db.record_launch(&id)).is_err());

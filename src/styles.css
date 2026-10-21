@@ -1002,27 +1002,12 @@ button.game-link:focus-visible {
   margin: 0 0 20px;
   line-height: 1.7;
 }
-.mtool-configuration {
-  padding: 16px;
-  border: 1px solid #dce9fc;
-  border-radius: 13px;
-  background: #f5f9ff;
-}
-.shared-tool-summary {
+.launch-tool-info {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  margin-bottom: 15px;
-}
-.mtool-preview {
-  color: #5d749a;
+  gap: 7px;
   font-size: 12px;
-  line-height: 1.7;
-  padding-top: 12px;
-  overflow-wrap: anywhere;
-}
-.mtool-configuration > p {
-  margin: 10px 0 0;
+  color: var(--field-label);
 }
 .advanced-launch {
   font-size: 12px;

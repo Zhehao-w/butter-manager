@@ -10,6 +10,7 @@ pub mod import_duplicate;
 pub mod import_sources;
 pub mod importer;
 pub mod jobs;
+pub mod launch_arguments;
 pub mod launcher;
 pub mod library_duplicates;
 pub mod library_relocation;

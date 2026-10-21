@@ -1087,6 +1087,24 @@ describe('iteration interactions', () => {
       ),
     );
   });
+  it.each(['DIRECT', 'MTOOL'])(
+    'does not claim QSP files were detected after an unsaved QSP choice followed by %s',
+    async (mode) => {
+      const detail = await openDetail();
+      showDetailTab('启动配置');
+      const launchMode = within(detail).getByRole('combobox', { name: '启动方式' });
+      expect(within(detail).queryByText(/目录中发现 .qsp 文件/)).toBeNull();
+      fireEvent.change(launchMode, { target: { value: 'EXTERNAL_PLAYER' } });
+      expect(within(detail).getByRole('combobox', { name: 'QSP 主游戏文件' })).toBeTruthy();
+      fireEvent.change(launchMode, { target: { value: mode } });
+      expect(within(detail).queryByText(/目录中发现 .qsp 文件/)).toBeNull();
+      expect(within(detail).queryByRole('button', { name: '使用 QSP 启动' })).toBeNull();
+      expect(api.startGameAnalysis).not.toHaveBeenCalled();
+      expect(api.choosePlayerFile).not.toHaveBeenCalled();
+      expect(api.saveGame).not.toHaveBeenCalled();
+      expect(api.play).not.toHaveBeenCalled();
+    },
+  );
   it('offers an explicit QSP setup after analyzing an existing direct-launch game', async () => {
     vi.mocked(api.startGameAnalysis).mockResolvedValue('qsp-analysis');
     vi.mocked(api.job).mockResolvedValue({
@@ -1125,6 +1143,11 @@ describe('iteration interactions', () => {
     expect((screen.getByRole('combobox', { name: /游戏引擎/ }) as HTMLSelectElement).value).toBe(
       'QSP',
     );
+    showDetailTab('启动配置');
+    fireEvent.change(screen.getByRole('combobox', { name: '启动方式' }), {
+      target: { value: 'DIRECT' },
+    });
+    expect(screen.getByRole('button', { name: '使用 QSP 启动' })).toBeTruthy();
     expect(api.saveGame).not.toHaveBeenCalled();
     expect(api.play).not.toHaveBeenCalled();
   });
@@ -2309,6 +2332,102 @@ describe('iteration interactions', () => {
     expect(api.games).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps parameters through analysis and hides them outside direct EXE mode', async () => {
+    vi.mocked(api.games).mockResolvedValue([{ ...game, launch_arguments: '-dx11' }]);
+    vi.mocked(api.startGameAnalysis).mockResolvedValue('arguments-analysis');
+    vi.mocked(api.job).mockResolvedValue({
+      ...job,
+      id: 'arguments-analysis',
+      kind: 'analysis',
+      changes: [
+        {
+          ...candidate,
+          registered_id: game.id,
+          recommended_launch: {
+            main_executable: 'New.exe',
+            working_directory: '.',
+            launch_type: 'DIRECT',
+            launch_arguments: '',
+            external_player: null,
+            mtool_target_exe: null,
+            mtool_loader: null,
+          },
+        },
+      ],
+    });
+    const modal = await openDetail();
+    fireEvent.click(within(modal).getByRole('button', { name: '分析游戏配置' }));
+    await within(modal).findByText('已填入分析结果，请检查后保存资料。');
+    showDetailTab('启动配置');
+    const input = within(modal).getByRole('textbox', { name: '启动参数' }) as HTMLInputElement;
+    expect(input.value).toBe('-dx11');
+    fireEvent.change(within(modal).getByRole('combobox', { name: '启动方式' }), {
+      target: { value: 'MTOOL' },
+    });
+    expect(within(modal).queryByRole('textbox', { name: '启动参数' })).toBeNull();
+    expect(within(modal).queryByText(/仅用于直接启动 EXE/)).toBeNull();
+    fireEvent.change(within(modal).getByRole('combobox', { name: '启动方式' }), {
+      target: { value: 'EXTERNAL_PLAYER' },
+    });
+    expect(within(modal).queryByRole('textbox', { name: '启动参数' })).toBeNull();
+    fireEvent.change(within(modal).getByRole('combobox', { name: '启动方式' }), {
+      target: { value: 'DIRECT' },
+    });
+    expect(
+      (within(modal).getByRole('textbox', { name: '启动参数' }) as HTMLInputElement).value,
+    ).toBe('-dx11');
+    fireEvent.change(within(modal).getByRole('combobox', { name: /启动文件（相对游戏目录）/ }), {
+      target: { value: 'game.html' },
+    });
+    expect(within(modal).queryByRole('textbox', { name: '启动参数' })).toBeNull();
+    expect(api.saveGame).not.toHaveBeenCalled();
+  });
+
+  it('uses draft arguments for temporary launch, persists them and clears them explicitly', async () => {
+    vi.mocked(api.saveGame).mockImplementation(async (edit) => ({ ...game, ...edit }));
+    vi.mocked(api.play).mockResolvedValue({ ...game, play_status: 'PLAYING' });
+    const modal = await openDetail();
+    showDetailTab('启动配置');
+    const input = within(modal).getByRole('textbox', { name: '启动参数' });
+    expect(input.getAttribute('placeholder')).toBe('-dx11');
+    fireEvent.change(input, { target: { value: '-dx11 --profile "my saves"' } });
+    fireEvent.click(within(modal).getByRole('button', { name: '启动' }));
+    await waitFor(() =>
+      expect(api.play).toHaveBeenCalledWith(
+        game.id,
+        expect.objectContaining({ launch_arguments: '-dx11 --profile "my saves"' }),
+      ),
+    );
+    expect(api.saveGame).not.toHaveBeenCalled();
+    await waitForEnabledButton('保存资料', within(modal));
+    fireEvent.click(within(modal).getByRole('button', { name: '保存资料' }));
+    await waitFor(() =>
+      expect(api.saveGame).toHaveBeenCalledWith(
+        expect.objectContaining({ launch_arguments: '-dx11 --profile "my saves"' }),
+      ),
+    );
+    await waitForEnabledButton('启动', within(modal));
+    fireEvent.click(within(modal).getByRole('button', { name: '关闭弹窗' }));
+    fireEvent.click(await screen.findByRole('button', { name: `启动 ${game.display_title}` }));
+    await waitFor(() => expect(vi.mocked(api.play).mock.lastCall).toEqual([game.id]));
+    fireEvent.click(screen.getByRole('button', { name: game.display_title }));
+    const reopened = screen.getByRole('dialog', { name: game.display_title });
+    showDetailTab('启动配置');
+    const restored = within(reopened).getByRole('textbox', {
+      name: '启动参数',
+    }) as HTMLInputElement;
+    expect(restored.value).toBe('-dx11 --profile "my saves"');
+    fireEvent.change(restored, { target: { value: '"unfinished' } });
+    expect(within(reopened).getByRole('alert').textContent).toContain('双引号未闭合');
+    expect(restored.checkValidity()).toBe(false);
+    fireEvent.change(restored, { target: { value: '' } });
+    await waitForEnabledButton('保存资料', within(reopened));
+    fireEvent.click(within(reopened).getByRole('button', { name: '保存资料' }));
+    await waitFor(() =>
+      expect(vi.mocked(api.saveGame).mock.lastCall?.[0].launch_arguments).toBe(''),
+    );
+  });
+
   it.each(['DIRECT', 'MTOOL', 'EXTERNAL_PLAYER'] as const)(
     'launches unsaved %s configuration without saving, then saves through the fixed hero toolbar',
     async (mode) => {
@@ -2376,6 +2495,7 @@ describe('iteration interactions', () => {
       fireEvent.click(within(detail).getByRole('button', { name: '启动' }));
       await within(detail).findByText('启动请求已发送。');
       expect(api.play).toHaveBeenCalledWith(game.id, {
+        launch_arguments: '',
         launch_type: mode,
         main_executable: mode === 'EXTERNAL_PLAYER' ? '新版/player.exe' : '新版/new.exe',
         working_directory: '新版',
@@ -2894,7 +3014,7 @@ describe('iteration interactions', () => {
     await waitFor(() =>
       expect(api.previewMtoolLaunch).toHaveBeenCalledWith(game.id, game.main_executable, null, '.'),
     );
-    await within(detail).findByText(/游戏 任意.exe · 32 位 · mzHook32.dll/);
+    await within(detail).findByText('32 位 · mzHook32.dll', { selector: '[role="status"]' });
     fireEvent.click(within(detail).getByRole('button', { name: '保存资料' }));
     await waitFor(() =>
       expect(api.saveGame).toHaveBeenCalledWith(

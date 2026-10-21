@@ -98,6 +98,8 @@ pub struct Game {
     pub display_title: String,
     pub install_path: String,
     pub working_directory: String,
+    #[serde(default)]
+    pub launch_arguments: String,
     pub current_version: String,
     pub version_source: String,
     pub main_executable: Option<String>,
@@ -123,6 +125,8 @@ pub struct Game {
 pub struct LaunchConfiguration {
     pub main_executable: Option<String>,
     pub working_directory: String,
+    #[serde(default)]
+    pub launch_arguments: Option<String>,
     pub launch_type: String,
     pub external_player: Option<ExternalPlayer>,
     pub mtool_target_exe: Option<String>,
@@ -140,6 +144,8 @@ pub struct GameEdit {
     pub play_status: PlayStatus,
     pub main_executable: Option<String>,
     pub working_directory: String,
+    #[serde(default)]
+    pub launch_arguments: Option<String>,
     pub launch_type: String,
     #[serde(default)]
     pub external_player: Option<ExternalPlayer>,
@@ -268,6 +274,7 @@ pub struct RegistrationEntry {
     pub version: String,
     pub version_source: String,
     pub working_directory: String,
+    pub launch_arguments: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

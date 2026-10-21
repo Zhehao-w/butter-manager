@@ -691,6 +691,7 @@ mod tests {
             external_player: None,
             mtool_target_exe: None,
             mtool_loader: None,
+            launch_arguments: String::new(),
             created_at: String::new(),
             updated_at: String::new(),
             last_launched_at: None,

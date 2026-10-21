@@ -39,6 +39,7 @@ pub fn prepare(
                 "manual".into()
             };
         return Ok(RegistrationEntry {
+            launch_arguments: String::new(),
             candidate,
             executable: selection.executable,
             external_player: Some(config),
@@ -105,6 +106,7 @@ pub fn prepare(
             "manual".into()
         };
     Ok(RegistrationEntry {
+        launch_arguments: String::new(),
         candidate,
         executable: selection.executable,
         external_player: None,

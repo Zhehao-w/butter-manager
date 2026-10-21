@@ -1035,6 +1035,7 @@ pub(crate) mod tests {
             external_player: None,
             mtool_target_exe: None,
             mtool_loader: None,
+            launch_arguments: String::new(),
             created_at: "unchanged".into(),
             updated_at: "unchanged".into(),
             last_launched_at: None,

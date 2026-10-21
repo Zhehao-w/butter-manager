@@ -1,3 +1,5 @@
+import { LaunchArgumentsField } from './LaunchArgumentsField';
+import { launchArgumentsError } from './launchArguments';
 import {
   Children,
   isValidElement,
@@ -606,6 +608,7 @@ export function ImportPage({
         change.existing_id !== current[source].existing_id
           ? {
               working_directory: undefined,
+              launch_arguments: undefined,
               mtool_loader: undefined,
               remember_association: !!change.existing_id && change.new_override !== true,
             }
@@ -697,11 +700,20 @@ export function ImportPage({
   const missingLaunchFiles = validSelections.filter((selection) =>
     selection.external_player ? !selection.external_player.game_file : !selection.executable,
   ).length;
+  const invalidArguments = validSelections
+    .map((selection) =>
+      launchArgumentsError(
+        selection.launch_arguments ??
+          games.find((game) => game.id === selection.existing_id)?.launch_arguments ??
+          '',
+      ),
+    )
+    .find(Boolean);
   const planBlockReason = unresolvedMatches
     ? `还有 ${unresolvedMatches} 项需要确认关联，请选择已有游戏或“改为新游戏”。`
     : missingLaunchFiles
       ? `还有 ${missingLaunchFiles} 项需要选择启动文件。`
-      : '';
+      : invalidArguments || '';
   const canApply =
     !!plan &&
     !['completed', 'withdrawn'].includes(plan.status) &&
@@ -1363,6 +1375,19 @@ export function ImportPage({
                               </label>
                             </div>
                           )}
+                          {!choice.mtool &&
+                            !choice.external_player &&
+                            /\.exe$/i.test(choice.executable) && (
+                              <div className="form-grid">
+                                <LaunchArgumentsField
+                                  value={
+                                    choice.launch_arguments ?? existing?.launch_arguments ?? ''
+                                  }
+                                  onChange={(value) => update(source, { launch_arguments: value })}
+                                  disabled={disabled}
+                                />
+                              </div>
+                            )}
                           {existing && (
                             <details className="import-launch-update">
                               <summary>更新启动配置</summary>
@@ -1421,6 +1446,7 @@ export function ImportPage({
                                 onClick={() =>
                                   update(source, {
                                     working_directory: undefined,
+                                    launch_arguments: undefined,
                                     mtool_loader: undefined,
                                   })
                                 }

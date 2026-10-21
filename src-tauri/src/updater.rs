@@ -32,6 +32,8 @@ pub struct VersionConfig {
     pub launch_source: String,
     pub executable: Option<String>,
     pub working_directory: String,
+    #[serde(default)]
+    pub launch_arguments: String,
     pub launch_type: String,
     pub external_player: Option<crate::domain::ExternalPlayer>,
     pub mtool_target: Option<String>,
@@ -556,6 +558,7 @@ fn delete_sized_source(source: &Path, copy: &Path, entry: &Entry) -> Result<()> 
 }
 fn dummy_game() -> Game {
     Game {
+        launch_arguments: String::new(),
         id: String::new(),
         canonical_title: String::new(),
         display_title: String::new(),
@@ -758,7 +761,11 @@ fn selection_configuration(
     selection: &Selection,
     previous: Option<&VersionConfig>,
 ) -> Result<VersionConfig> {
+    crate::launch_arguments::parse(selection.launch_arguments.as_deref().unwrap_or_default())?;
     Ok(VersionConfig {
+        launch_arguments: selection.launch_arguments.clone().unwrap_or_else(|| {
+            previous.map_or_else(String::new, |old| old.launch_arguments.clone())
+        }),
         version: selection.version.clone(),
         version_source: "manual".into(),
         engine: selection.engine.clone(),
@@ -799,6 +806,12 @@ pub(super) fn configuration(item: &Item) -> Result<VersionConfig> {
         .as_ref()
         .filter(|update| update.inherit_launch_config);
     let mut config = selection_configuration(&item.selection, previous.map(|update| &update.old))?;
+    // Parameter inheritance is independent of legacy working-directory/loader semantics.
+    if item.selection.launch_arguments.is_none() {
+        if let Some(update) = &item.update {
+            config.launch_arguments = update.old.launch_arguments.clone();
+        }
+    }
     if let Some(update) = previous.filter(|update| !update.mtool_loader_launch_scoped) {
         // Preserve the configuration already published (or staged) by an older journal.
         config.mtool_loader = match &item.selection.mtool_loader {
@@ -844,6 +857,7 @@ fn validate_update_launch(
     Ok(())
 }
 fn validate_launch(target: &Path, config: &VersionConfig) -> Result<()> {
+    crate::launch_arguments::parse(&config.launch_arguments)?;
     if let Some(player) = &config.external_player {
         crate::external_player::validate(target, config.executable.as_deref(), player)?;
     } else {

@@ -4,6 +4,8 @@ Windows Release 默认将应用资料放在 `butter-manager.exe` 旁的 `data/`�
 
 > 1.3.4 沿用 schema 13，从 1.3.x 升级无需数据库迁移；从 1.2.x 首次升级时自动迁移；旧版 1.2.x 无法打开升级后的库。参见 [游戏库整理说明](library-organization.md)。
 
+开发构建的 [启动参数功能](launch-arguments.md) 会将 schema 13 迁移到 **14**；旧 EXE 无法打开升级后的库。版本号暂未改动，请按构建提交区分。以下 1.3.4 资产和 schema 13 描述指已发布正式版；新功能通过对应 Actions artifact 验收，不创建 Tag / Release。
+
 ## 安装、升级与迁移
 
 1.3.4 的正式主资产为 `butter-manager-v1.3.4-windows-x64-portable.zip` 和 `butter-manager-v1.3.4-windows-x64-portable.zip.sha256`；独立 `butter-manager.exe` 通过 Actions artifact 下载，不作为本版本 Release 附件。正式下载以 [Releases](https://github.com/Zhehao-w/butter-manager/releases) 中已发布的资产为准。

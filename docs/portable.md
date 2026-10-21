@@ -2,17 +2,17 @@
 
 Windows Release 默认将应用资料放在 `butter-manager.exe` 旁的 `data/`。应放置在用户可写的文件夹；目录不可写时明确报错并退出，不回退到 AppData。
 
-> 1.3.3 沿用 schema 13，从 1.3.x 升级无需数据库迁移；从 1.2.x 首次升级时自动迁移；旧版 1.2.x 无法打开升级后的库。参见 [游戏库整理说明](library-organization.md)。
+> 1.3.4 沿用 schema 13，从 1.3.x 升级无需数据库迁移；从 1.2.x 首次升级时自动迁移；旧版 1.2.x 无法打开升级后的库。参见 [游戏库整理说明](library-organization.md)。
 
 ## 安装、升级与迁移
 
-1.3.3 的正式主资产为 `butter-manager-v1.3.3-windows-x64-portable.zip` 和 `butter-manager-v1.3.3-windows-x64-portable.zip.sha256`；独立 `butter-manager.exe` 通过 Actions artifact 下载，不作为本版本 Release 附件。正式下载以 [Releases](https://github.com/Zhehao-w/butter-manager/releases) 中已发布的资产为准。
+1.3.4 的正式主资产为 `butter-manager-v1.3.4-windows-x64-portable.zip` 和 `butter-manager-v1.3.4-windows-x64-portable.zip.sha256`；独立 `butter-manager.exe` 通过 Actions artifact 下载，不作为本版本 Release 附件。正式下载以 [Releases](https://github.com/Zhehao-w/butter-manager/releases) 中已发布的资产为准。
 
 首次安装：下载 ZIP，解压到可写的专用目录，运行 EXE。ZIP 内只有 `butter-manager/butter-manager.exe`；首次运行自动建立 `data/`，不携带别人的数据库、导入记录、WebView2 资料、缓存或游戏存档。
 
-校验文件与 ZIP 同名，后缀为 `.zip.sha256`，内容为一行「SHA-256 摘要、两个空格、ZIP 文件名」。两个文件放在同一目录，可用 `sha256sum -c butter-manager-v1.3.3-windows-x64-portable.zip.sha256` 校验；Windows 也可用 `Get-FileHash -Algorithm SHA256` 比对摘要。1.2.x 等历史 Release 保留原来的 `SHA256SUMS.txt` 附件。
+校验文件与 ZIP 同名，后缀为 `.zip.sha256`，内容为一行「SHA-256 摘要、两个空格、ZIP 文件名」。两个文件放在同一目录，可用 `sha256sum -c butter-manager-v1.3.4-windows-x64-portable.zip.sha256` 校验；Windows 也可用 `Get-FileHash -Algorithm SHA256` 比对摘要。1.2.x 等历史 Release 保留原来的 `SHA256SUMS.txt` 附件。
 
-升级：关闭管理器，只用新版 EXE 替换旧 EXE，保留 `data/` 及其全部内容。不要把已有用户资料删除或换成空目录。1.3.3 沿用 schema 13，从 1.3.x 升级无需数据库迁移；首次从 1.2.x 的 schema 12 升级时在事务中迁移；旧版 1.2.x 及更早 EXE 无法打开升级后的库，请勿直接降级。已使用 schema 13 的 PR 开发版资料不需要再次迁移。需要系统 [WebView2 Runtime](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution)，不随 ZIP 携带多文件运行时。未签名 EXE 可能触发 [SmartScreen](https://learn.microsoft.com/en-us/windows/security/operating-system-security/virus-and-threat-protection/microsoft-defender-smartscreen/)，请核对官方来源和校验值。
+升级：关闭管理器，只用新版 EXE 替换旧 EXE，保留 `data/` 及其全部内容。不要把已有用户资料删除或换成空目录。1.3.4 沿用 schema 13，从 1.3.x 升级无需数据库迁移；首次从 1.2.x 的 schema 12 升级时在事务中迁移；旧版 1.2.x 及更早 EXE 无法打开升级后的库，请勿直接降级。已使用 schema 13 的 PR 开发版资料不需要再次迁移。需要系统 [WebView2 Runtime](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution)，不随 ZIP 携带多文件运行时。未签名 EXE 可能触发 [SmartScreen](https://learn.microsoft.com/en-us/windows/security/operating-system-security/virus-and-threat-protection/microsoft-defender-smartscreen/)，请核对官方来源和校验值。
 
 迁移到新电脑：
 
@@ -48,7 +48,7 @@ butter-manager/
 
 当前本机正式程序位于 `E:\butter-manager\butter-manager.exe`，完整正式资料位于 `E:\butter-manager\data\`；开发仓库（包括 `.git`、源码及未提交修改）位于 `E:\butter-manager\dev\`。日常从根目录 EXE 或指向它的快捷方式启动。构建输出旁首次启动会建立独立空库，因此不能以输出目录的新 `data/` 覆盖正式资料。
 
-开发命令在 `dev/` 中执行。Rust 工具链和 Visual Studio 2026 C++ Build Tools 全局共享；`scripts/Use-Toolchain.ps1` 发现已安装的最新编译工具，将 Cargo registry、pnpm、临时文件缓存保留在项目 `.tools/`，`node_modules/` 和 Rust target 也留在仓库内。CI 使用 Windows Server 2025 / Visual Studio 2026 镜像。后续将源码及未提交修改完整转移到云端后，可清理整个 `dev/`，根目录 EXE 与 `data/` 可继续使用；全局编译工具按系统安装方式管理。
+开发命令在 `dev/` 中执行。Rust 工具链和 Visual Studio 2026 C++ Build Tools 全局共享；`scripts/Use-Toolchain.ps1` 发现已安装的最新编译工具，将 Cargo registry、pnpm、临时文件缓存保留在项目 `.tools/`，`node_modules/` 和 Rust target 也留在仓库内。CI 使用 Windows Server 2025 / Visual Studio 2026 镜像。仅在云端验证、Windows CI、下载 EXE 实机验收都完成且用户明确安排后，才清理 `dev/` 或卸载工具；此前保留本机开发目录。根目录 EXE 与完整 `data/` 继续保留。
 
 本机升级先完成构建，关闭根目录管理器，只将 `dev/artifacts/windows/butter-manager.exe` 替换到根目录，再从根目录重新启动。构建脚本本身不覆盖正式程序；无需为这种单纯替换 EXE 的升级每次执行 Portable 专项测试，不移动或备份正式数据库。
 
@@ -85,7 +85,7 @@ Windows 开发模式或 debug 构建在创建 Tauri 应用之前把覆盖根切�
 
 ## 验证
 
-Portable 专项测试是手动回归，不随常规构建或 CI 执行。首次准备分发、数据目录 / 启动协议或打包脚本改变时，按改动范围选择验证：先用 `-PortableZip` 构建，再执行 `./scripts/Test-PortableRelease.ps1` 检查包内结构、哈希与失败清理；涉及资料目录和迁移时执行下面的真实 WebView2 检查。普通业务改动保留对应回归与 EXE 构建即可。
+Portable 打包专项 `Test-PortableRelease.ps1` 在 Tag / Release / 显式手动发布的 Windows CI 中执行，复用构建产物检查 ZIP 白名单、EXE 内容、同名 `.zip.sha256` 和失败清理；普通 PR / main 构建不运行该专项。Linux CI 另运行发布脚本的隔离回归。涉及数据目录、启动协议或资料迁移时，另由 Windows 手动执行下述 `Test-Portable.ps1` 真实 WebView2 检查；CI 打包通过不代表该项实机验收已完成。
 
 后端使用独立临时夹具，合并验证开发/正式隔离、同目录实例保护、不可写提示与已有内容保留；未完成更新记录在数据文件夹移动后继续执行及回退。前端验证关于区按钮及失败提示。
 

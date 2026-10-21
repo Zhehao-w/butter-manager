@@ -50,7 +50,7 @@ Rust 完整缓存按 Cargo manifest / lock 的依赖集合保存，**不再每�
 
 ## Tag 自动发布
 
-先提交并推送包含工作流、版本配置及锁文件的目标源码，再推送该提交的版本 Tag。例如应用的 package、Tauri、Cargo 版本均为 `1.3.3` 时，使用 `v1.3.3`。只在本机创建 Tag 不触发远端 CI；推送 Tag 才是自动发布入口，**无需提前创建 Release**。工作流不创建 Tag、不自动改版，普通 main / PR / 手动构建不会创建 Release。
+先提交并推送包含工作流、版本配置及锁文件的目标源码，再推送该提交的版本 Tag。例如应用的 package、Tauri、Cargo 版本均为 `1.3.4` 时，使用 `v1.3.4`。只在本机创建 Tag 不触发远端 CI；推送 Tag 才是自动发布入口，**无需提前创建 Release**。工作流不创建 Tag、不自动改版，普通 main / PR / 手动构建不会创建 Release。
 
 1. Linux 与 Windows 并行执行完整检查，Windows 额外生成版本化 Portable ZIP 和 `<ZIP 文件名>.sha256`，同时保留通常的 EXE artifact。
 2. 只有两端成功，发布 job 才在 Ubuntu 上运行；核对两端实际检出提交一致，并解析远端轻量 / 附注 Tag，确认仍指向该提交。Windows 仍负责全部 EXE 编译及原生回归。

@@ -1,3 +1,4 @@
+import { engineLabel, supportedEngines } from './engines';
 import { useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { launchLabel } from './qsp';
 import { engineTone, Icon, Modal } from './ui';
@@ -102,6 +103,7 @@ function filterAppearance(group: FilterGroup, key: string): { icon: IconName; to
     (
       {
         Godot: { icon: 'bot', tone: 'sky' },
+        'RPG Developer Bakin': { icon: 'boxes', tone: 'amber' },
         QSP: { icon: 'feather', tone: 'blue' },
         "Ren'Py": { icon: 'flower', tone: 'pink' },
         'RPG Maker (legacy)': { icon: 'swords', tone: 'violet' },
@@ -184,7 +186,7 @@ export function EngineQuickFilters({
   const options = [
     ...popular.map(({ engine, count }) => ({
       key: `engine:${engine}`,
-      label: engine === 'RPG Maker (legacy)' ? 'RPG Maker' : engine,
+      label: engine === 'RPG Maker (legacy)' ? 'RPG Maker' : engineLabel(engine),
       count,
       icon: filterAppearance('engines', engine).icon,
       active: !other && engines.length === 1 && engines[0] === engine,
@@ -273,8 +275,10 @@ export function LibraryFilters({
     Number(!!value.favoritesOnly);
   const engines = useMemo(
     () =>
-      [...new Set([...games.map((g) => g.engine), ...value.engines])].sort(
-        (a, b) => Number(a === 'Unknown') - Number(b === 'Unknown') || a.localeCompare(b, 'zh-CN'),
+      [...new Set([...supportedEngines, ...games.map((g) => g.engine), ...value.engines])].sort(
+        (a, b) =>
+          Number(a === 'Unknown') - Number(b === 'Unknown') ||
+          engineLabel(a).localeCompare(engineLabel(b), 'zh-CN'),
       ),
     [games, value.engines],
   );
@@ -338,29 +342,35 @@ export function LibraryFilters({
           }
         >
           <div className="library-filter-groups">
-            <fieldset>
+            <fieldset className="filter-group-favorites">
               <legend>收藏</legend>
-              <label className="favorite-filter-option">
-                <input
-                  type="checkbox"
-                  checked={!!draft.favoritesOnly}
-                  onChange={(event) =>
-                    setDraft((current) => ({ ...current, favoritesOnly: event.target.checked }))
-                  }
-                />
-                <Icon name="star" size={17} />
-                只看收藏
-              </label>
+              <div className="filter-options filter-options-favorites">
+                <label
+                  className={`filter-option filter-tone-pink${draft.favoritesOnly ? ' selected' : ''}`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={!!draft.favoritesOnly}
+                    onChange={(event) =>
+                      setDraft((current) => ({ ...current, favoritesOnly: event.target.checked }))
+                    }
+                  />
+                  <span className="filter-option-icon">
+                    <Icon name="star" size={18} filled={!!draft.favoritesOnly} />
+                  </span>
+                  <span className="filter-option-label">只看收藏</span>
+                </label>
+              </div>
             </fieldset>
             {(
               [
                 ['statuses', '游玩状态', Object.entries(playLabels)],
-                ['engines', '游戏引擎', engines.map((e) => [e, e === 'Unknown' ? '未识别' : e])],
+                ['engines', '游戏引擎', engines.map((e) => [e, engineLabel(e)])],
                 ['modes', '启动方式', launchModes.map((m) => [m, m])],
                 ['tags', '自定义标签（同时满足）', tags.map((tag) => [tag.id, tag.name])],
               ] as [FilterGroup, string, string[][]][]
             ).map(([group, title, options]) => (
-              <fieldset key={group}>
+              <fieldset key={group} className={`filter-group-${group}`}>
                 <legend>{title}</legend>
                 <div className={`filter-options filter-options-${group}`}>
                   {options.map(([key, label]) => {
@@ -370,6 +380,7 @@ export function LibraryFilters({
                       <label
                         key={key}
                         className={`filter-option filter-tone-${appearance.tone}${selected ? ' selected' : ''}`}
+                        title={group === 'engines' ? key : undefined}
                       >
                         <input
                           type="checkbox"
@@ -377,7 +388,7 @@ export function LibraryFilters({
                           onChange={() => toggle(group, key)}
                         />
                         <span className="filter-option-icon">
-                          <Icon name={appearance.icon} size={group === 'engines' ? 19 : 23} />
+                          <Icon name={appearance.icon} size={18} />
                         </span>
                         <span className="filter-option-label">{label}</span>
                       </label>

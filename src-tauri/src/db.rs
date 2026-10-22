@@ -612,6 +612,7 @@ impl Database {
     pub fn sync_mtool_defaults(&mut self, candidates: &[ScanCandidate]) -> Result<Vec<Game>> {
         let mut eligible = vec![];
         let mut qsp_ids = vec![];
+        let mut bakin_ids = vec![];
         let mut save_candidates = vec![];
         for candidate in candidates.iter().filter(|c| c.status == "ready") {
             let Some(id) = &candidate.registered_id else {
@@ -641,6 +642,18 @@ impl Database {
                     .any(|file| contained_file(Path::new(&game.install_path), file, "qsp").is_ok())
             {
                 qsp_ids.push(id.clone());
+            }
+        }
+        for candidate in candidates
+            .iter()
+            .filter(|c| c.status == "ready" && c.engine == "RPG Developer Bakin")
+        {
+            let Some(id) = &candidate.registered_id else {
+                continue;
+            };
+            let game = self.game(id)?;
+            if game.install_path == candidate.install_path {
+                bakin_ids.push(id.clone());
             }
         }
         for candidate in candidates
@@ -675,6 +688,12 @@ impl Database {
         for id in qsp_ids {
             // A complete scan can refresh detected engines, but never a manual engine or launch.
             if transaction.execute("UPDATE games SET engine='QSP',engine_source='detected',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?1 AND engine!='QSP' AND engine_source!='manual'", [&id])? > 0 {
+                changed_ids.push(id);
+            }
+        }
+        for id in bakin_ids {
+            // Refresh detected engine metadata without touching an existing per-game strategy.
+            if transaction.execute("UPDATE games SET engine='RPG Developer Bakin',engine_source='detected',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?1 AND engine!='RPG Developer Bakin' AND (engine_source!='manual' OR engine='Unknown')", [&id])? > 0 {
                 changed_ids.push(id);
             }
         }
@@ -2379,6 +2398,75 @@ mod tests {
             .aliases
             .is_empty());
         assert_eq!(std::fs::read(root.join("Game.exe")).unwrap(), b"fixture");
+    }
+
+    #[test]
+    fn completed_bakin_scan_refreshes_existing_detected_engine_without_changing_launch_config() {
+        use crate::domain::MToolStrategy;
+        for source in ["detected", "manual"] {
+            let temp = tempfile::tempdir().unwrap();
+            let root = temp.path().join("synthetic Bakin");
+            std::fs::create_dir_all(root.join("data")).unwrap();
+            std::fs::write(root.join("みゆつれ.exe"), b"synthetic").unwrap();
+            let mut db = Database::open(&temp.path().join("fixture.db")).unwrap();
+            let id = db
+                .register(&[analyze_directory(&root).unwrap()])
+                .unwrap()
+                .remove(0);
+            assert_eq!(db.game(&id).unwrap().engine, "Unknown");
+            let mut edit = draft(&db.game(&id).unwrap());
+            edit.launch_type = "MTOOL".into();
+            edit.mtool_strategy = Some(MToolStrategy::Bakin);
+            edit.launch_arguments = Some("-keep-direct-arguments".into());
+            edit.mtool_loader = Some("loaders/keep-inactive.dll".into());
+            db.edit_game(edit).unwrap();
+            // Import historically marked even an unrecognized engine as manual.
+            db.connection
+                .execute(
+                    "UPDATE games SET engine_source=?2 WHERE id=?1",
+                    params![id, source],
+                )
+                .unwrap();
+            let before = db.version_config(&id).unwrap();
+            for file in ["bakinplayer.exe", "bakinengine.dll", "data.rbpack"] {
+                std::fs::write(root.join("data").join(file), b"synthetic").unwrap();
+            }
+            let mut scan =
+                crate::scanner::analyze_quick_controlled(&root, &|| false, &|_| {}).unwrap();
+            scan.registered_id = Some(id.clone());
+            assert_eq!(scan.engine, "RPG Developer Bakin");
+            let mut wrong_path = scan.clone();
+            wrong_path.install_path = temp.path().join("unrelated").display().to_string();
+            let mut incomplete = scan.clone();
+            incomplete.status = "incomplete".into();
+            let mut conflict = scan.clone();
+            conflict.engine = "Unknown".into();
+            assert!(db
+                .sync_mtool_defaults(&[wrong_path, incomplete, conflict])
+                .unwrap()
+                .is_empty());
+            assert_eq!(db.version_config(&id).unwrap(), before);
+            let changed = db.sync_mtool_defaults(std::slice::from_ref(&scan)).unwrap();
+            assert_eq!(changed.len(), 1);
+            assert_eq!(changed[0].engine, "RPG Developer Bakin");
+            let mut expected = before;
+            expected.engine = "RPG Developer Bakin".into();
+            expected.engine_source = "detected".into();
+            assert_eq!(db.version_config(&id).unwrap(), expected);
+            assert!(db
+                .sync_mtool_defaults(std::slice::from_ref(&scan))
+                .unwrap()
+                .is_empty());
+            let mut edit = draft(&db.game(&id).unwrap());
+            edit.engine = "My Manual Engine".into();
+            db.edit_game(edit).unwrap();
+            assert!(db.sync_mtool_defaults(&[scan]).unwrap().is_empty());
+            assert_eq!(db.game(&id).unwrap().engine, "My Manual Engine");
+            assert_eq!(
+                std::fs::read(root.join("みゆつれ.exe")).unwrap(),
+                b"synthetic"
+            );
+        }
     }
 
     #[test]

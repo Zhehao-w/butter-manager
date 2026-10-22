@@ -6,7 +6,9 @@ RPG Developer Bakin 使用公共 MTool 的 `loaders/BakinLauncher.exe` 启动，
 
 分析组合检查 `data/bakinplayer.exe`、`data/bakinengine.dll`、`data/data.rbpack`。完整资源布局与唯一的根目录游戏 EXE 可识别 Bakin；多个 EXE 时，Windows 进一步读取 ProductName / FileDescription 的 `RPG Developer Bakin`、`BAKIN Game Launcher` 资源，帮助选择游戏启动器。只有产品名或单个资源文件不足以确认引擎；存在其他引擎冲突时继续要求人工确认。
 
-`data/bakinplayer.exe` 属于内部播放器，不作为游戏启动文件推荐。详情页重新分析后检查草稿并保存；Import 在「启动配置」使用同一策略选项，可手动选择「普通注入」或「Bakin 专用启动」。切换策略不修改公共 injector，也不会给游戏自动添加直接 EXE 启动参数。
+`data/bakinplayer.exe` 属于内部播放器，不作为游戏启动文件推荐。已有游戏可通过「游戏整理 → 目录扫描」手动完成扫描，或使用游戏库的「扫描目录」入口：完整扫描发现 Bakin 后，会刷新未识别或非手动指定的引擎信息，保留已保存的 MTool 策略、启动参数及手动启动配置。若此前手动指定了其他引擎，在详情点击「分析游戏配置」，进入启动配置的分析结果，点击「采用此引擎」，然后「保存资料」；也可在基础信息直接选择 Bakin 并保存。
+
+引擎选择与筛选共用支持列表，Bakin 在筛选弹窗中始终可选；游戏库快捷筛选仍按库中引擎数量和可用宽度展示，更多引擎通过筛选弹窗选择。Bakin 使用独立的浅暖色徽标。详情页重新分析后检查草稿并保存；Import 在「启动配置」使用同一策略选项，可手动选择「普通注入」或「Bakin 专用启动」。切换策略不修改公共 injector，也不会给游戏自动添加直接 EXE 启动参数。
 
 Bakin 模式隐藏普通注入的位数 / DLL 选项，工作目录固定为游戏根目录。直接启动参数继续保留，但不传入 MTool 进程。详情临时启动使用当前草稿；游戏库使用已保存的配置。
 

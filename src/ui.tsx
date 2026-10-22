@@ -204,6 +204,7 @@ export function engineTone(engine: string) {
     'RPG Maker MZ': 'rpg',
     'RPG Maker (legacy)': 'rpg',
     Godot: 'godot',
+    'RPG Developer Bakin': 'bakin',
     'NW.js': 'web',
     HTML: 'web',
     QSP: 'qsp',

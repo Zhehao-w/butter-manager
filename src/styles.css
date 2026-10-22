@@ -3625,6 +3625,11 @@ tbody tr:not(:last-child) td {
   --engine-color: #9491cf;
   --engine-label: #6965a5;
 }
+.tone-bakin {
+  --engine-background: linear-gradient(145deg, #faf0df, #f1e0bf);
+  --engine-color: #be9c68;
+  --engine-label: #8b703f;
+}
 .tone-godot {
   --engine-background: linear-gradient(145deg, #dcecff, #cfe3ff);
   --engine-color: #5b99e6;
@@ -3863,20 +3868,28 @@ tbody tr:not(:last-child) td {
 }
 .library-filter-groups {
   display: grid;
-  gap: 20px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px 8px;
 }
 .library-filter-groups fieldset {
+  grid-column: 1 / -1;
   margin: 0;
   padding: 0;
   border: 0;
   min-width: 0;
 }
+.library-filter-groups .filter-group-favorites {
+  grid-column: span 1;
+}
+.library-filter-groups .filter-group-statuses {
+  grid-column: span 3;
+}
 .library-filter-groups legend {
   position: relative;
-  padding-left: 14px;
-  margin-bottom: 12px;
+  padding-left: 12px;
+  margin-bottom: 8px;
   color: #243b60;
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 600;
 }
 .library-filter-groups legend::before {
@@ -3892,8 +3905,12 @@ tbody tr:not(:last-child) td {
 .filter-options {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
+  gap: 8px;
 }
+.filter-options-favorites {
+  grid-template-columns: minmax(0, 1fr);
+}
+.filter-options-engines,
 .filter-options-modes {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
@@ -3901,13 +3918,13 @@ tbody tr:not(:last-child) td {
   --filter-tint: #f0f3f8;
   --filter-color: #657590;
   display: grid;
-  grid-template-columns: 18px 34px minmax(0, 1fr);
+  grid-template-columns: 16px 24px minmax(0, 1fr);
   align-items: center;
-  gap: 10px;
-  min-height: 68px;
-  padding: 10px 12px;
+  gap: 6px;
+  min-height: 44px;
+  padding: 8px;
   border: 1px solid transparent;
-  border-radius: 13px;
+  border-radius: 11px;
   background: var(--filter-tint);
   cursor: pointer;
   transition:
@@ -3926,58 +3943,27 @@ tbody tr:not(:last-child) td {
   outline-offset: 2px;
 }
 .filter-options .filter-option input {
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   margin: 0;
   accent-color: #247ce2;
 }
 .filter-option-icon {
-  width: 34px;
-  height: 34px;
+  width: 24px;
+  height: 24px;
   display: grid;
   place-items: center;
   color: var(--filter-color);
   background: #ffffffb3;
-  border-radius: 10px;
+  border-radius: 7px;
 }
 .filter-option-label {
   min-width: 0;
   color: #283d5d;
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1.4;
   font-weight: 500;
   overflow-wrap: anywhere;
-}
-.filter-options-engines {
-  gap: 8px;
-}
-.filter-options-engines .filter-option {
-  grid-template-columns: 16px 26px minmax(0, 1fr);
-  gap: 8px;
-  min-height: 48px;
-  padding: 8px 10px;
-  border-radius: 11px;
-}
-.filter-options-engines .filter-option input {
-  width: 16px;
-  height: 16px;
-}
-.filter-options-engines .filter-option-icon {
-  width: 26px;
-  height: 26px;
-  border-radius: 8px;
-}
-.filter-options-engines .filter-option-label {
-  font-size: 13px;
-}
-.filter-options-modes .filter-option {
-  grid-template-columns: 18px 30px minmax(0, 1fr);
-  gap: 8px;
-  padding-inline: 10px;
-}
-.filter-options-modes .filter-option-icon {
-  width: 30px;
-  height: 30px;
 }
 .filter-options-modes .filter-option-label {
   color: var(--filter-color);
@@ -4001,6 +3987,9 @@ tbody tr:not(:last-child) td {
 .filter-options .filter-tone-pink {
   --filter-tint: #fcf0f6;
   --filter-color: #c56097;
+}
+.filter-options-favorites .filter-tone-pink {
+  --filter-color: #e89abd;
 }
 .filter-options-statuses .filter-tone-pink {
   --filter-tint: #ffedf4;
@@ -5082,16 +5071,18 @@ textarea,
 }
 .modal.modal-filters {
   width: min(800px, calc(100vw - 44px));
+  height: min(660px, calc(100dvh - 40px));
   max-height: calc(100dvh - 40px);
   background: #fbfcff;
 }
 .modal-filters .modal-header {
-  padding: 20px 26px;
+  flex: none;
+  padding: 14px 22px;
   background: #f6f9ff;
 }
 .modal-filters .modal-header h2 {
   margin: 0;
-  font-size: 22px;
+  font-size: 19px;
 }
 .modal-filters .modal-close-icon {
   width: 34px;
@@ -5105,14 +5096,14 @@ textarea,
   background: #e9f1fc;
 }
 .modal-filters .modal-body {
-  padding: 24px 26px;
+  padding: 16px 22px;
 }
 .modal-filters .modal-scroll-shell {
   padding-bottom: 0;
 }
 .modal-filters .modal-footer {
   flex: none;
-  padding: 16px 26px;
+  padding: 12px 22px;
   border-top: 1px solid #e2ebf7;
   background: #f6f9ff;
 }
@@ -5130,6 +5121,10 @@ textarea,
   min-height: 40px;
 }
 @media (max-width: 700px) {
+  .library-filter-groups .filter-group-favorites,
+  .library-filter-groups .filter-group-statuses {
+    grid-column: 1 / -1;
+  }
   .filter-options,
   .filter-options-modes {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -5859,8 +5854,7 @@ button.save-editor-entry:active:not(:disabled) {
   margin-right: 0;
 }
 .library-item-controls input,
-.library-select-all input,
-.favorite-filter-option input {
+.library-select-all input {
   width: 16px;
   height: 16px;
   margin: 0;
@@ -6024,8 +6018,7 @@ button.save-editor-entry:active:not(:disabled) {
   width: 16px;
   height: 16px;
 }
-.library-select-all,
-.favorite-filter-option {
+.library-select-all {
   display: inline-flex;
   align-items: center;
   gap: 7px;

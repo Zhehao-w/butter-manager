@@ -21,49 +21,12 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: checks-${{ github.workflow }}-${{ inputs.release_tag && format('refs/tags/{0}', inputs.release_tag) || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'release' && !startsWith(github.ref, 'refs/tags/') && !inputs.publish_release }}
+
 jobs:
-  changes:
-    name: CI scope
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    outputs:
-      run_checks: ${{ steps.decide.outputs.run_checks }}
-      source_key: ${{ steps.plan.outputs.source_key }}
-      commit: ${{ steps.plan.outputs.commit }}
-      validation_hit: ${{ steps.validated.outputs.cache-hit }}
-    steps:
-      - name: Check out source and comparison history
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          persist-credentials: false
-          fetch-depth: 0
-          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || (inputs.publish_release && inputs.release_tag) || github.sha }}
-
-      - name: Test CI scope with isolated Git fixtures
-        run: python3 -B -m unittest discover -s scripts -p 'test_ci_scope.py' -v
-
-      - name: Identify documentation changes and checkout source
-        id: plan
-        run: python3 -B scripts/ci_scope.py plan --plan-file .tools/ci-scope.json
-
-      - name: Look up successful validation of identical source
-        id: validated
-        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
-        with:
-          path: .tools/ci-validation
-          key: ci-validated-v1-${{ steps.plan.outputs.source_key }}
-          lookup-only: true
-
-      - name: Decide whether full checks and EXE are needed
-        id: decide
-        run: python3 -B scripts/ci_scope.py decide --plan-file .tools/ci-scope.json --cache-hit '${{ steps.validated.outputs.cache-hit }}'
-
   linux:
-    needs: changes
-    if: needs.changes.outputs.run_checks == 'true'
-    concurrency:
-      group: checks-${{ github.workflow }}-linux-${{ inputs.release_tag && format('refs/tags/{0}', inputs.release_tag) || github.ref }}
-      cancel-in-progress: ${{ github.event_name != 'release' && !startsWith(github.ref, 'refs/tags/') && !inputs.publish_release }}
     name: Linux frontend and core
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -103,7 +66,6 @@ jobs:
             .tools/pnpm-store
             .tools/pnpm-cache
           key: ${{ runner.os }}-${{ runner.arch }}-pnpm-${{ hashFiles('.node-version', 'package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml') }}
-          restore-keys: ${{ runner.os }}-${{ runner.arch }}-pnpm-
 
       - name: Identify checkout and runner image
         id: image
@@ -155,11 +117,6 @@ jobs:
           key: ${{ steps.image.outputs.cache-prefix }}-partial-${{ hashFiles('src-tauri/Cargo.toml', 'src-tauri/Cargo.lock') }}
 
   windows:
-    needs: changes
-    if: needs.changes.outputs.run_checks == 'true'
-    concurrency:
-      group: checks-${{ github.workflow }}-windows-${{ inputs.release_tag && format('refs/tags/{0}', inputs.release_tag) || github.ref }}
-      cancel-in-progress: ${{ github.event_name != 'release' && !startsWith(github.ref, 'refs/tags/') && !inputs.publish_release }}
     runs-on: windows-2025-vs2026
     timeout-minutes: 30
     outputs:
@@ -201,7 +158,6 @@ jobs:
             .tools/pnpm-store
             .tools/pnpm-cache
           key: ${{ runner.os }}-${{ runner.arch }}-pnpm-${{ hashFiles('.node-version', 'package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml') }}
-          restore-keys: ${{ runner.os }}-${{ runner.arch }}-pnpm-
 
       - name: Identify checkout and runner image
         id: image
@@ -231,7 +187,15 @@ jobs:
       - name: Install locked frontend dependencies
         run: pnpm install --frozen-lockfile
 
-      # Linux owns portable frontend tests and formatting; keep the Windows build/native suite.
+      - name: Check formatting
+        run: |
+          pnpm format:check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+
+      - name: Run interface tests
+        run: pnpm test:ui
+
       - name: Build interface
         run: pnpm build
 
@@ -316,34 +280,7 @@ jobs:
             src-tauri/target
           key: ${{ steps.image.outputs.cache-prefix }}-partial-${{ hashFiles('src-tauri/Cargo.toml', 'src-tauri/Cargo.lock') }}
 
-  validated:
-    name: Remember successful source validation
-    needs: [changes, linux, windows]
-    if: needs.changes.outputs.run_checks == 'true' && needs.changes.outputs.validation_hit != 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - name: Record successful Linux and Windows validation
-        env:
-          SOURCE_KEY: ${{ needs.changes.outputs.source_key }}
-          SCOPE_COMMIT: ${{ needs.changes.outputs.commit }}
-          LINUX_COMMIT: ${{ needs.linux.outputs.commit }}
-          WINDOWS_COMMIT: ${{ needs.windows.outputs.commit }}
-        run: |
-          [[ "$SCOPE_COMMIT" == "$LINUX_COMMIT" && "$SCOPE_COMMIT" == "$WINDOWS_COMMIT" ]] || { echo 'Checkout commits differ; refusing to cache validation.' >&2; exit 1; }
-          mkdir -p .tools/ci-validation
-          printf '%s\n' "$SOURCE_KEY" > .tools/ci-validation/source-key
-
-      - name: Cache validation marker for identical source
-        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
-        with:
-          path: .tools/ci-validation
-          key: ci-validated-v1-${{ needs.changes.outputs.source_key }}
-
   publish:
-    concurrency:
-      group: publish-${{ github.workflow }}-${{ inputs.release_tag && format('refs/tags/{0}', inputs.release_tag) || github.ref }}
-      cancel-in-progress: false
     needs: [linux, windows]
     if: github.event_name == 'release' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || (github.event_name == 'workflow_dispatch' && inputs.publish_release)
     runs-on: ubuntu-24.04

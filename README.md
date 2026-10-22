@@ -26,7 +26,7 @@
 | -------------- | ------------------------------------------------------------------------------------------ |
 | 游戏库         | 列表 / 卡片视图，名称、别名和路径搜索，按游玩状态、引擎与启动方式组合筛选                  |
 | 收藏与标签     | 手动收藏、自定义标签与组合筛选；批量修改游玩状态、收藏 / 取消收藏                          |
-| 启动与配置     | 直接 EXE、Windows 默认应用、共享 MTool、本地 QSP；支持可保存的 EXE 参数、手动配置与重新分析           |
+| 启动与配置     | 直接 EXE、Windows 默认应用、共享 MTool（普通注入 / Bakin）、本地 QSP；可保存 EXE 参数           |
 | 导入与更新     | 批量导入、关联已有游戏，预览名称、目录和存档处理，保留游戏标识及历史；可记住人工确认的关联 |
 | 恢复与回退     | 中断任务继续 / 撤回，从仍在回收站中的原旧版本回退，并带回当前内部存档                      |
 | 查重与工具清理 | 查看重复推荐，确认 / 排除 / 撤销；导入后回收已识别的随包 MTool，切换公共工具               |
@@ -35,18 +35,18 @@
 
 [直接 EXE 启动参数](docs/launch-arguments.md)支持多参数和双引号分组；MTool / QSP 模式隐藏参数，切回直接 EXE 时保留原值。分析结果可直接选用发现的文件，高级选项位于末尾；Import 顶部标记生效的启动参数。标准名称用于识别与关联，目录名在「记录与管理 → 重命名目录」修改。
 
-**开发中（未发布）**：[MTool Bakin 专用启动](docs/mtool-bakin.md)按游戏保存策略，使用公共 `BakinLauncher.exe`，不更改全局 injector。本分支会迁移至 schema 15；已发布的 1.4.0 及更早 EXE 无法打开该库，请勿直接降级。
+[MTool Bakin 专用启动](docs/mtool-bakin.md)按游戏保存策略，使用公共 `BakinLauncher.exe`，不更改全局 injector。已有 Bakin + MTool 游戏可完成一次手动目录扫描，补齐引擎识别及专用启动策略。
 
 ## 开始使用
 
-**当前版本 1.4.0**：新增直接 EXE 启动参数，改进启动分析与 Import 配置展示，补齐详情识别到的存档路径，并优化中日标题关联推荐。正式下载以 Release 页面为准。
+**当前版本 1.5.0**：新增 MTool Bakin 专用启动和已有游戏扫描补全，统一紧凑筛选与标签交互。正式下载以 Release 页面为准。
 
-1. **下载程序**：通过页首下载入口获取 `butter-manager-v1.4.0-windows-x64-portable.zip`，解压到可写的专用目录。
+1. **下载程序**：通过页首下载入口获取 `butter-manager-v1.5.0-windows-x64-portable.zip`，解压到可写的专用目录。
 2. **配置游戏库**：运行 `butter-manager.exe`，在“设置”中选择游戏库根目录并保存。首次启动自动创建旁边的 `data/`。
 3. **登记已有游戏**：点击“扫描目录”，选择需要入库的游戏。扫描登记保持游戏原位；完整扫描也会按已保存配置补齐已有游戏的空存档路径，不覆盖已有路径。新下载的游戏从“导入”添加。
 4. **开始游玩**：从游戏库启动，或在详情中调整资料与启动配置。“正在玩”随成功提交的启动请求更新，手动设置的“已通关”保留。
 
-Windows 需要 [WebView2 Runtime](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution)。发布页提供 Portable ZIP 和 `butter-manager-v1.4.0-windows-x64-portable.zip.sha256`；独立 EXE 仅保留在 CI artifact 中。未签名程序可能出现 SmartScreen 提示，请核对来源与校验值。
+Windows 需要 [WebView2 Runtime](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution)。发布页提供 Portable ZIP 和 `butter-manager-v1.5.0-windows-x64-portable.zip.sha256`；独立 EXE 仅保留在 CI artifact 中。未签名程序可能出现 SmartScreen 提示，请核对来源与校验值。
 
 ```text
 butter-manager/
@@ -54,7 +54,7 @@ butter-manager/
 └── data/                 # 游戏库、设置、恢复记录与 WebView2 用户资料
 ```
 
-**升级**：关闭管理器，从新版 ZIP 提取 EXE 并替换旧 EXE，保留整个现有 `data/`；不要用下载目录中新建的空资料覆盖原库。“设置 → 关于应用”可查看应用版本与构建提交。**1.4.0 使用 schema 14；从 1.3.4 及更早版本升级时自动迁移。已使用 schema 14 的开发构建无需再次迁移；已发布的 1.3.4 及更早 EXE 无法打开升级后的库，请勿直接降级。**
+**升级**：关闭管理器，从新版 ZIP 提取 EXE 并替换旧 EXE，保留整个现有 `data/`；不要用下载目录中新建的空资料覆盖原库。“设置 → 关于应用”可查看应用版本与构建提交。**1.5.0 使用 schema 15；从 1.4.0 及更早版本升级时自动迁移。已使用 schema 15 的开发构建无需再次迁移；1.4.0 及更早 EXE 无法打开升级后的库，请勿直接降级。**
 
 **迁移**：先完成或撤回文件任务，关闭程序，再复制整个程序文件夹和游戏目录。路径变化后，在“设置 → 高级维护”预览并确认新旧根目录映射；此功能重新关联记录，不搬动文件。
 

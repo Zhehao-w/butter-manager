@@ -1,4 +1,4 @@
-# MTool 的 Bakin 专用启动（未发布）
+# MTool 的 Bakin 专用启动（1.5.0）
 
 RPG Developer Bakin 使用公共 MTool 的 `loaders/BakinLauncher.exe` 启动，普通游戏继续使用既有 injector / loader。策略按游戏保存；不需要为某个游戏修改「MTool」页的全局 injector。
 
@@ -31,11 +31,11 @@ BAT 继续只作为静态证据，新增明确的 `BakinLauncher.exe <游戏启�
 
 ## 数据兼容与验收
 
-开发构建增加 **schema 15** 的每游戏 `mtool_strategy` 字段，应用版本暂仍为 **1.4.0**，尚未发布新版本。旧数据库默认 `INJECT`；手动完整扫描可按上述条件为已识别的 Bakin + MTool 补齐专用策略。旧 Journal 缺少字段时继续采用普通注入，更新计划未显式覆盖则继承保存的策略。更新提交、中断恢复和版本回退保存 / 还原策略，撤回文件操作不依赖共享专用启动器存在。
+1.5.0 使用 **schema 15** 的每游戏 `mtool_strategy` 字段；旧库自动迁移，已使用 schema 15 的开发构建无需再次迁移。旧数据库默认 `INJECT`；手动完整扫描可按上述条件为已识别的 Bakin + MTool 补齐专用策略。旧 Journal 缺少字段时继续采用普通注入，更新计划未显式覆盖则继承保存的策略。更新提交、中断恢复和版本回退保存 / 还原策略，撤回文件操作不依赖共享专用启动器存在。
 
 **已发布的 1.4.0 及更早 EXE 无法打开迁移至 schema 15 的数据库，请勿直接降级。** 测试仅使用临时夹具，不备份或导出正式数据库。
 
-Windows EXE 由 PR 的 GitHub Actions 构建。实机验收：
+Windows EXE 由 GitHub Actions 构建，正式交付为 Portable ZIP 与同名 `.zip.sha256`。实机验收：
 
 1. 对已有 Bakin + MTool 普通注入记录完成一次手动目录扫描，确认自动切换为 Bakin 专用策略，重开管理器仍保留；直接启动与手动指定的其他引擎不改。使用完整公共 MTool，检查 `loaders/BakinLauncher.exe` 存在。对 Bakin 游戏分析，确认选中根目录游戏启动器、策略为「Bakin 专用启动」，保存后重开管理器。
 2. 从游戏库启动，确认实际游戏及 MTool 正常打开；详情临时启动和 Import 后启动应保持一致。使用游戏自己的存档验证读档，Linux 测试不能替代此步骤。

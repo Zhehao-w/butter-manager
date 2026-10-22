@@ -965,6 +965,16 @@ export function ImportPage({
                 !existing.save_paths.length &&
                 choice.preserve_saves !== false;
               const toolLaunch = !!choice.mtool || !!choice.cleanup_mtool;
+              const launchArguments =
+                choice.launch_arguments ??
+                item?.update?.old?.launch_arguments ??
+                existing?.launch_arguments ??
+                '';
+              const hasLaunchArguments =
+                !toolLaunch &&
+                !choice.external_player &&
+                /\.exe$/i.test(choice.executable) &&
+                !!launchArguments.trim();
               const bundledLaunch =
                 !!choice.cleanup_mtool &&
                 !!candidate?.bundled_mtool?.some((bundle) => {
@@ -1120,6 +1130,12 @@ export function ImportPage({
                         </span>
                       )}
                       {toolLaunch && <span className="mode">公共 MTool 启动</span>}
+                      {hasLaunchArguments && (
+                        <span className="mode" title={`启动参数：${launchArguments}`}>
+                          <Icon name="play" size={12} />
+                          含启动参数
+                        </span>
+                      )}
                     </div>
                     <ImportCardIssues issues={issues} linked={!!choice.existing_id} />
                     {item?.error && (
@@ -1168,6 +1184,9 @@ export function ImportPage({
                               QSP 主游戏文件：{choice.external_player.game_file || '未选择'} ·
                               工作目录：游戏根目录
                             </p>
+                          )}
+                          {hasLaunchArguments && (
+                            <p className="path">启动参数：{launchArguments}</p>
                           )}
                           {choice.existing_id && !item.update && (
                             <p className="muted">

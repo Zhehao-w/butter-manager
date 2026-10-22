@@ -1009,6 +1009,74 @@ button.game-link:focus-visible {
   font-size: 12px;
   color: var(--field-label);
 }
+.detail-name-help {
+  margin: 0;
+  line-height: 1.7;
+}
+.launch-analysis {
+  min-width: 0;
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+}
+.launch-analysis-heading {
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin-bottom: 12px;
+}
+.launch-analysis-heading h4 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 14px;
+}
+.launch-analysis-heading h4 > .icon {
+  color: var(--accent);
+}
+.launch-analysis-engine {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.launch-analysis-heading button,
+.launch-analysis-engine button {
+  min-height: 32px;
+  padding: 5px 12px;
+  font-size: 12px;
+}
+.launch-analysis-files {
+  display: grid;
+  gap: 8px;
+}
+.launch-analysis-file {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  text-align: left;
+}
+.launch-analysis-file.is-selected {
+  border-color: #aacbfa;
+  background: #f5f9ff;
+}
+.launch-analysis-file > .icon {
+  flex: none;
+  color: var(--accent);
+}
+.launch-analysis-path {
+  flex: 1;
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.launch-analysis-note {
+  margin: 12px 0 0;
+}
+.launch-debug {
+  margin-top: 12px;
+}
 .advanced-launch {
   font-size: 12px;
   color: var(--text-secondary);

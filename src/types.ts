@@ -341,6 +341,7 @@ export interface ImportItem {
   } | null;
   completed_at_ms?: number | null;
   update?: {
+    old?: { launch_arguments?: string };
     old_version: string;
     saves: {
       configured: string;

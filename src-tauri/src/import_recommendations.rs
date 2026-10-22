@@ -717,6 +717,79 @@ mod tests {
     }
 
     #[test]
+    fn added_english_and_lookalike_kana_offer_import_confirmation() {
+        let old_title = "带我去地下城吧! 連れてって、ダンジョンへ！ v1.7.4";
+        let old = game("old", old_title, Path::new("Z:/missing/old"));
+        for title in [
+            "带我去地下城吧 Take Me To The Dungeon!! 連れてって、ダンジョンヘ v1.7.7",
+            "带我去地下城吧 Take Me To The Dungeon!! 連れてって、ダンジョンへ v1.7.7",
+            "带我去地下城吧 Take Me To The Dungeon!! 連れてって、ダンジョンヘ v1.7.7 DLC",
+        ] {
+            let mut candidate = scanner::pending_candidate(Path::new("Z:/missing/source")).unwrap();
+            candidate.suggested_title = title.into();
+            let results =
+                MatchIndex::new(std::slice::from_ref(&old)).matches(&candidate, &|| false);
+            assert_eq!(results.len(), 1, "{title}");
+            assert_eq!(results[0].id, "old");
+            assert!(!results[0].auto_associate);
+            if title.contains("DLC") {
+                assert!(results[0].reason.contains("DLC"));
+            }
+        }
+        let incoming = game(
+            "new",
+            "带我去地下城吧 Take Me To The Dungeon!! 連れてって、ダンジョンヘ v1.7.7",
+            Path::new("Z:/missing/new"),
+        );
+        assert!(MatchIndex::new(&[old, incoming])
+            .library_pairs(&|| false, &|_| {})
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn kana_import_fallback_preserves_other_title_conflicts() {
+        let old_title = "带我去地下城吧! 連れてって、ダンジョンへ！ v1.7.4";
+        for title in [
+            "带我去另一个世界 Take Me To The Dungeon!! 連れてって、ダンジョンヘ v1.7.7",
+            "带我去地下城吧 Take Me To The Dungeon!! 連れてって、ダンジョンほ v1.7.7",
+            "带我去地下城吧 Take Me To The Dungeon!! 連れてって、ダンジョンヘ 2 v1.7.7",
+            "带我去地下城吧 Take Me To The Dungeon!! 連れてって、ダンジョンヘ II v1.7.7",
+            "带我去地下城吧 Take Me To The Dungeon!! 連れてって、ダンジョンヘ 第二章 v1.7.7",
+            "带我去地下城吧 Take Me To The Dungeon!! 連れてって、ダンジョンヘ Season2 v1.7.7",
+            "带我去地下城吧 Take Me To The Dungeon!! 連れてって、ダンジョンヘ Demo v1.7.7",
+            "带我去地下城吧 Take Me To The Dungeon!! 連れてって、ダンジョンヘ Remastered v1.7.7",
+            "带我去地下城吧 Take Me To The Dungeon!! 連れてって、ダンジョンヘ 外传 v1.7.7",
+        ] {
+            let old = game("old", old_title, Path::new("Z:/missing/old"));
+            let mut candidate = scanner::pending_candidate(Path::new("Z:/missing/source")).unwrap();
+            candidate.suggested_title = title.into();
+            assert!(
+                MatchIndex::new(&[old])
+                    .matches(&candidate, &|| false)
+                    .is_empty(),
+                "{title}"
+            );
+        }
+        for old_title in [
+            "Take Me To The Dungeon!! 連れてって、ダンジョンへ v1.7.4",
+            "带我去地下城吧 Different Adventure 連れてって、ダンジョンへ v1.7.4",
+            "带我去地下城吧 ヘ v1.7.4",
+        ] {
+            let old = game("old", old_title, Path::new("Z:/missing/old"));
+            let mut candidate = scanner::pending_candidate(Path::new("Z:/missing/source")).unwrap();
+            candidate.suggested_title =
+                "带我去地下城吧 Take Me To The Dungeon!! 連れてって、ダンジョンヘ v1.7.7".into();
+            assert!(
+                MatchIndex::new(&[old])
+                    .matches(&candidate, &|| false)
+                    .is_empty(),
+                "{old_title}"
+            );
+        }
+    }
+
+    #[test]
     fn subtitle_revision_and_repeated_alias_imports_offer_manual_recommendations() {
         let mut missing = Vec::new();
         for (old_title, incoming_title, executable) in [

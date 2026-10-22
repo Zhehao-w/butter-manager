@@ -1,5 +1,13 @@
 # 验证记录
 
+## CI 恢复优化前配置（2026-10-22）
+
+按用户要求在 1.5.0 发布准备 PR #24 上撤回本轮 CI 优化，`.github/workflows/check.yml` 逐字恢复至 `76e3d92` 的父提交 `8e46bf6`。移除文档 scope 脚本、测试与成功验证标记；恢复 Windows 完整前端测试 / 格式检查、原有前端缓存匹配及工作流级重复取消。优化前已有的 Rust 完整 / 部分依赖缓存、全量原生回归、严格桌面 Clippy、EXE artifact 与 Tag / Release 保护保持。文档改动也恢复完整 CI 和 EXE 构建。
+
+同步移除 README、CHANGELOG、roadmap 与待发布 Release 说明中的本轮 CI 优化宣称，恢复 AGENTS、CONTRIBUTING 和云端开发说明对应规则；此前验证段落保留为历史记录。Bakin 功能、扫描补全、标签交互、schema 15、1.5.0 版本及此前发布准备检查结果保持。
+
+固定版本 actionlint、YAML 解析、工作流与基线逐字比较、Windows 必要检查 / 发布保护断言、发布脚本 **26 项**隔离回归、文档相对链接及差异检查通过。只修改工作流、移除本轮 CI scope 和调整文档，不重复执行未变化的应用用例。提交并推送到同一 PR 后即汇报，不等待当前或新 CI，不合并 PR、不推送 Tag 或创建 Release。
+
 ## 1.5.0 发布验证（2026-10-22）
 
 PR #23 已合并至 main `6ad8e01`。最终功能提交 `8f178e1` 的完整运行 [39865597498](https://github.com/Zhehao-w/butter-manager/actions/runs/39865597498) 成功：Linux 前端 / 核心、Windows 原生核心 **301 项**通过、原有 **1 项**原生回收站测试忽略，桌面所有目标严格 Clippy 与 EXE 构建通过。该轮 Windows 镜像由 `20261007.264.1` 更新至 `20261021.278.1`，Rust 缓存未命中；13 分 03 秒完成并保存新镜像完整缓存。用户已确认 Bakin 专用启动正常，其余实机验收保持。

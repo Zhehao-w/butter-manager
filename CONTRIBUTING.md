@@ -18,15 +18,7 @@ cargo test --locked --manifest-path src-tauri/Cargo.toml --no-default-features -
 cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 ```
 
-含代码 / 构建配置变化的 PR、Push main（兼容 master）、版本 Tag、手动构建和 Release 执行 Linux 前端 / 核心回归与 Windows 原生检查，保留所有目标 Clippy 和 Windows Release EXE。前端完整测试、Prettier 和 Rustfmt 在 Linux 执行一次；Windows 执行 TypeScript / Vite、完整 Rust 核心原生回归、桌面所有目标严格 Clippy 和 EXE 构建。每次 Windows 构建上传可下载 EXE artifact（保留 14 天）；推送与源码版本一致的 `vX.Y.Z` Tag 后，等待两端检查通过，校验构建 EXE 与 ZIP 的一致性及 ZIP SHA-256，自动创建草稿，仅上传 ZIP 与校验文件并复核后公开发布 Release。预发布 Tag 使用对应源码版本并标记 prerelease。已有 Release 或显式手动上传仍可补齐资产，不创建 Tag 或自动修改版本。只有发布 job 有 `contents: write`。下载方式、重跑及保护规则见云端说明。
-
-纯文档 PR / main 推送只执行轻量 CI scope，不生成新 EXE。已有代码的 PR 后续只改文档时，需命中与当前检出源码一致的 Linux + Windows 成功标记；尚无相同源码成功标记（检查失败 / 未结束或缓存缺失）时仍运行完整检查。Tag、Release、普通手动构建始终完整执行；需要当前文档提交对应 EXE 时手动运行工作流，保持 `publish_release=false`。文档白名单、缓存和旧 artifact 规则见 [云端说明](docs/cloud-development.md#文档更新与验证复用)。
-
-CI scope 在隔离临时 Git 仓库中自测，可本地运行：
-
-```bash
-python3 -B -m unittest discover -s scripts -p 'test_ci_scope.py' -v
-```
+PR、Push main（兼容 master）、版本 Tag、手动构建和 Release 均执行 Linux 前端 / 核心回归与 Windows 完整检查，保留所有目标 Clippy 和 Windows Release EXE。每次 Windows 构建都上传可下载 EXE artifact（保留 14 天）；推送与源码版本一致的 `vX.Y.Z` Tag 后，等待两端检查通过，校验构建 EXE 与 ZIP 的一致性及 ZIP SHA-256，自动创建草稿，仅上传 ZIP 与校验文件并复核后公开发布 Release。预发布 Tag 使用对应源码版本并标记 prerelease。已有 Release 或显式手动上传仍可补齐资产，不创建 Tag 或自动修改版本。只有发布 job 有 `contents: write`。下载方式、重跑及保护规则见云端说明。
 
 Linux CI 额外执行 `python3 -B -m unittest discover -s scripts -p 'test_publish_release.py' -v`，用隔离合成资产和模拟 GitHub 验证发布与失败边界，不使用真实凭据或执行远端写入。发布脚本使用 Ubuntu 24.04 自带的 Python 标准库与 GitHub CLI；Windows EXE 仍由 Windows job 构建。
 

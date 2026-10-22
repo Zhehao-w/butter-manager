@@ -2,11 +2,11 @@
 
 Windows Release 默认将应用资料放在 `butter-manager.exe` 旁的 `data/`。应放置在用户可写的文件夹；目录不可写时明确报错并退出，不回退到 AppData。
 
-> 1.4.0 发布准备使用 schema **14**，从 1.3.4 及更早版本升级时自动迁移；已发布的 1.3.4 及更早 EXE 无法打开升级后的库，请勿直接降级。已使用 schema 14 的开发构建无需再次迁移。详见 [启动参数说明](launch-arguments.md)。
+> 1.4.0 使用 schema **14**，从 1.3.4 及更早版本升级时自动迁移；已发布的 1.3.4 及更早 EXE 无法打开升级后的库，请勿直接降级。已使用 schema 14 的开发构建无需再次迁移。详见 [启动参数说明](launch-arguments.md)。
 
 ## 安装、升级与迁移
 
-1.4.0 计划交付的主资产为 `butter-manager-v1.4.0-windows-x64-portable.zip` 和 `butter-manager-v1.4.0-windows-x64-portable.zip.sha256`；独立 `butter-manager.exe` 通过 Actions artifact 下载，不作为本版本 Release 附件。正式下载以 [Releases](https://github.com/Zhehao-w/butter-manager/releases) 中已发布的资产为准。
+1.4.0 的主资产为 `butter-manager-v1.4.0-windows-x64-portable.zip` 和 `butter-manager-v1.4.0-windows-x64-portable.zip.sha256`；独立 `butter-manager.exe` 通过 Actions artifact 下载，不作为本版本 Release 附件。正式下载以 [Releases](https://github.com/Zhehao-w/butter-manager/releases) 中已发布的资产为准。
 
 首次安装：下载 ZIP，解压到可写的专用目录，运行 EXE。ZIP 内只有 `butter-manager/butter-manager.exe`；首次运行自动建立 `data/`，不携带别人的数据库、导入记录、WebView2 资料、缓存或游戏存档。
 

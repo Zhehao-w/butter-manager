@@ -177,12 +177,14 @@ export function TagEditor({
   value,
   onInput,
   onChange,
+  onManageTags,
 }: {
   tags: LibraryTag[];
   available: LibraryTag[];
   value: string;
   onInput: (value: string) => void;
   onChange: (tags: LibraryTag[]) => void;
+  onManageTags: () => void;
 }) {
   const add = () => {
     onChange(appendTag(tags, value, available));
@@ -224,25 +226,29 @@ export function TagEditor({
           添加
         </button>
       </div>
-      <span className="muted">每个标签最多 40 个字符，每个游戏最多 32 个；保存资料后生效。</span>
+      <div className="tag-editor-actions">
+        <span className="muted">每个标签最多 40 个字符，每个游戏最多 32 个；保存资料后生效。</span>
+        <button type="button" onClick={onManageTags}>
+          <Icon name="tag" size={14} />
+          管理标签
+        </button>
+      </div>
       {available.some((tag) => !tags.some((selected) => selected.id === tag.id)) && (
-        <details>
-          <summary>选择已有标签</summary>
-          <div className="tag-editor-options">
-            {available
-              .filter((tag) => !tags.some((selected) => selected.id === tag.id))
-              .map((tag) => (
-                <button
-                  type="button"
-                  key={tag.id}
-                  disabled={tags.length >= 32}
-                  onClick={() => onChange([...tags, tag])}
-                >
-                  {tag.name}
-                </button>
-              ))}
-          </div>
-        </details>
+        <div className="tag-editor-options" role="group" aria-label="选择标签">
+          <span className="tag-editor-label">选择标签</span>
+          {available
+            .filter((tag) => !tags.some((selected) => selected.id === tag.id))
+            .map((tag) => (
+              <button
+                type="button"
+                key={tag.id}
+                disabled={tags.length >= 32}
+                onClick={() => onChange([...tags, tag])}
+              >
+                {tag.name}
+              </button>
+            ))}
+        </div>
       )}
     </fieldset>
   );
@@ -298,15 +304,6 @@ export function TagManager({
           else onClose();
         }
       }}
-      footer={
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => (dirty ? setDiscard(true) : onClose())}
-        >
-          关闭
-        </button>
-      }
     >
       <p className="muted">重命名会同步所有关联游戏；删除只移除标签及关联标记。</p>
       {error && <p role="alert">{error}</p>}

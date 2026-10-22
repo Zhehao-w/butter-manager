@@ -1893,6 +1893,7 @@ export default function App() {
           key={game.id}
           game={game}
           libraryTags={libraryTags}
+          onManageTags={() => setTagManagerOpen(true)}
           settings={settings}
           pathCheck={pathChecks[game.id]}
           onRemoved={() => removeRecord(game.id)}
@@ -2735,6 +2736,7 @@ function DetailTitle({ title, version }: { title: string; version: string }) {
 function GameDetail({
   game,
   libraryTags,
+  onManageTags,
   settings,
   pathCheck,
   onRemoved,
@@ -2755,6 +2757,7 @@ function GameDetail({
 }: {
   game: Game;
   libraryTags: LibraryTag[];
+  onManageTags: () => void;
   settings: Settings;
   pathCheck?: LibraryPathCheck;
   onRemoved: () => Promise<void>;
@@ -2779,6 +2782,22 @@ function GameDetail({
     launch_arguments: game.launch_arguments ?? '',
   });
   const [tagInput, setTagInput] = useState('');
+  const previousTags = useRef(libraryTags);
+  useEffect(() => {
+    const previous = previousTags.current;
+    previousTags.current = libraryTags;
+    setDraft((current) => {
+      const tags = (current.tags ?? []).flatMap((tag) => {
+        const updated = libraryTags.find((value) => value.id === tag.id);
+        if (updated) return [updated];
+        return tag.id && previous.some((value) => value.id === tag.id) ? [] : [tag];
+      });
+      return tags.length === current.tags?.length &&
+        tags.every((tag, i) => tag.id === current.tags?.[i].id && tag.name === current.tags[i].name)
+        ? current
+        : { ...current, tags };
+    });
+  }, [libraryTags]);
   const formId = useId();
   const detailTabs = [
     ['basic', '基础信息', 'info'],
@@ -3338,6 +3357,7 @@ function GameDetail({
                 value={tagInput}
                 onInput={setTagInput}
                 onChange={(tags) => field('tags', tags)}
+                onManageTags={onManageTags}
               />
               <ImportMemories
                 gameId={game.id}

@@ -6147,17 +6147,31 @@ button.save-editor-entry:active:not(:disabled) {
   flex: 1;
   min-width: 0;
 }
-.tag-editor details {
-  margin-top: 10px;
+.tag-editor-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.tag-editor-actions button,
+.tag-editor-options button {
+  min-height: 32px;
+  padding: 5px 10px;
+  font-size: 13px;
 }
 .tag-editor-options {
   margin-top: 8px;
+}
+.tag-editor-label {
+  color: var(--field-label);
+  font-size: 12px;
+  margin-right: 2px;
 }
 .tag-editor-options button {
   max-width: 100%;
   overflow-wrap: anywhere;
   white-space: normal;
-  font-size: 12px;
 }
 .tag-manager-list {
   max-height: 300px;

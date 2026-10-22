@@ -691,15 +691,22 @@ impl Database {
                 changed_ids.push(id);
             }
         }
-        for id in bakin_ids {
-            // Refresh detected engine metadata without touching an existing per-game strategy.
-            if transaction.execute("UPDATE games SET engine='RPG Developer Bakin',engine_source='detected',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?1 AND engine!='RPG Developer Bakin' AND (engine_source!='manual' OR engine='Unknown')", [&id])? > 0 {
-                changed_ids.push(id);
+        for id in &bakin_ids {
+            // Keep explicitly selected other engines; old Import may have marked Unknown manual.
+            if transaction.execute("UPDATE games SET engine='RPG Developer Bakin',engine_source='detected',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?1 AND engine!='RPG Developer Bakin' AND (engine_source!='manual' OR engine='Unknown')", [id])? > 0 {
+                changed_ids.push(id.clone());
             }
         }
         for game in &eligible {
             transaction.execute("UPDATE games SET launch_type='MTOOL',mtool_target_exe=main_executable,mtool_loader=NULL,working_directory='.',launch_source='detected',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?1", [&game.id])?;
             changed_ids.push(game.id.clone());
+        }
+        for id in bakin_ids {
+            // Bakin uses its dedicated launcher, including games just switched to MTool above.
+            // Keep target, arguments, inactive loader and the user's launch provenance intact.
+            if transaction.execute("UPDATE games SET mtool_strategy='BAKIN',working_directory='.',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?1 AND engine='RPG Developer Bakin' AND launch_type='MTOOL' AND mtool_strategy='INJECT'", [&id])? > 0 && !changed_ids.contains(&id) {
+                changed_ids.push(id);
+            }
         }
         for game in save_candidates {
             // Use the saved configuration, including automatic defaults refreshed above.
@@ -2401,9 +2408,15 @@ mod tests {
     }
 
     #[test]
-    fn completed_bakin_scan_refreshes_existing_detected_engine_without_changing_launch_config() {
+    fn completed_bakin_scan_upgrades_mtool_strategy_and_preserves_other_saved_configuration() {
         use crate::domain::MToolStrategy;
-        for source in ["detected", "manual"] {
+        for (source, strategy, known_engine) in [
+            ("detected", MToolStrategy::Inject, false),
+            ("manual", MToolStrategy::Inject, false),
+            ("manual", MToolStrategy::Inject, true),
+            ("detected", MToolStrategy::Bakin, false),
+            ("manual", MToolStrategy::Bakin, false),
+        ] {
             let temp = tempfile::tempdir().unwrap();
             let root = temp.path().join("synthetic Bakin");
             std::fs::create_dir_all(root.join("data")).unwrap();
@@ -2415,11 +2428,16 @@ mod tests {
                 .remove(0);
             assert_eq!(db.game(&id).unwrap().engine, "Unknown");
             let mut edit = draft(&db.game(&id).unwrap());
+            if known_engine {
+                edit.engine = "RPG Developer Bakin".into();
+            }
             edit.launch_type = "MTOOL".into();
-            edit.mtool_strategy = Some(MToolStrategy::Bakin);
+            edit.mtool_strategy = Some(strategy);
+            edit.working_directory = "data".into();
             edit.launch_arguments = Some("-keep-direct-arguments".into());
             edit.mtool_loader = Some("loaders/keep-inactive.dll".into());
             db.edit_game(edit).unwrap();
+            db.record_launch(&id).unwrap();
             // Import historically marked even an unrecognized engine as manual.
             db.connection
                 .execute(
@@ -2451,21 +2469,89 @@ mod tests {
             assert_eq!(changed[0].engine, "RPG Developer Bakin");
             let mut expected = before;
             expected.engine = "RPG Developer Bakin".into();
-            expected.engine_source = "detected".into();
+            expected.engine_source = if known_engine { source } else { "detected" }.into();
+            expected.mtool_strategy = MToolStrategy::Bakin;
+            expected.working_directory = ".".into();
             assert_eq!(db.version_config(&id).unwrap(), expected);
+            assert_eq!(db.launch_history(&id).unwrap().len(), 1);
             assert!(db
                 .sync_mtool_defaults(std::slice::from_ref(&scan))
                 .unwrap()
                 .is_empty());
             let mut edit = draft(&db.game(&id).unwrap());
             edit.engine = "My Manual Engine".into();
+            edit.mtool_strategy = Some(MToolStrategy::Inject);
+            edit.working_directory = "data".into();
             db.edit_game(edit).unwrap();
+            let manual = db.version_config(&id).unwrap();
             assert!(db.sync_mtool_defaults(&[scan]).unwrap().is_empty());
-            assert_eq!(db.game(&id).unwrap().engine, "My Manual Engine");
+            assert_eq!(db.version_config(&id).unwrap(), manual);
             assert_eq!(
                 std::fs::read(root.join("みゆつれ.exe")).unwrap(),
                 b"synthetic"
             );
+        }
+    }
+
+    #[test]
+    fn bakin_scan_keeps_direct_launch_and_promotes_new_mtool_defaults_in_the_same_scan() {
+        use crate::domain::MToolStrategy;
+        for marker in [false, true] {
+            let temp = tempfile::tempdir().unwrap();
+            let root = temp.path().join("synthetic Bakin");
+            std::fs::create_dir_all(root.join("data")).unwrap();
+            std::fs::write(root.join("Game.exe"), b"synthetic").unwrap();
+            let mut db = Database::open(&temp.path().join("fixture.db")).unwrap();
+            let id = db
+                .register(&[analyze_directory(&root).unwrap()])
+                .unwrap()
+                .remove(0);
+            assert_eq!(db.game(&id).unwrap().launch_type, "DIRECT");
+            for file in ["bakinplayer.exe", "bakinengine.dll", "data.rbpack"] {
+                std::fs::write(root.join("data").join(file), b"synthetic").unwrap();
+            }
+            if marker {
+                std::fs::write(root.join("Start with tool.bat"), b"not executed or parsed")
+                    .unwrap();
+            }
+            let mut scan =
+                crate::scanner::analyze_quick_controlled(&root, &|| false, &|_| {}).unwrap();
+            scan.registered_id = Some(id.clone());
+            assert_eq!(scan.engine, "RPG Developer Bakin");
+            assert_eq!(scan.mtool_detected, marker);
+            let saved = db.sync_mtool_defaults(&[scan.clone()]).unwrap();
+            assert_eq!(saved.len(), 1);
+            assert_eq!(saved[0].engine, "RPG Developer Bakin");
+            assert_eq!(
+                saved[0].launch_type,
+                if marker { "MTOOL" } else { "DIRECT" }
+            );
+            assert_eq!(
+                saved[0].mtool_strategy,
+                if marker {
+                    MToolStrategy::Bakin
+                } else {
+                    MToolStrategy::Inject
+                }
+            );
+            assert!(db.sync_mtool_defaults(&[scan.clone()]).unwrap().is_empty());
+            drop(db);
+            let mut reopened = Database::open(&temp.path().join("fixture.db")).unwrap();
+            assert_eq!(
+                reopened.game(&id).unwrap().mtool_strategy,
+                saved[0].mtool_strategy
+            );
+            if marker {
+                // An explicit direct launch remains direct even with a package MTool marker.
+                let mut edit = draft(&reopened.game(&id).unwrap());
+                edit.launch_type = "DIRECT".into();
+                edit.mtool_strategy = Some(MToolStrategy::Inject);
+                reopened.edit_game(edit).unwrap();
+                let before = reopened.version_config(&id).unwrap();
+                assert!(reopened.sync_mtool_defaults(&[scan]).unwrap().is_empty());
+                assert_eq!(reopened.version_config(&id).unwrap(), before);
+            }
+            assert_eq!(std::fs::read(root.join("Game.exe")).unwrap(), b"synthetic");
         }
     }
 

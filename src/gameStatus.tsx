@@ -1,5 +1,5 @@
 import { engineLabel, supportedEngines } from './engines';
-import { useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { launchLabel } from './qsp';
 import { engineTone, Icon, Modal } from './ui';
 import type { IconName } from './ui';
@@ -267,6 +267,14 @@ export function LibraryFilters({
 }) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<GameFilters>(emptyFilters);
+  useEffect(() => {
+    setDraft((current) => {
+      const remaining = (current.tags ?? []).filter((id) => tags.some((tag) => tag.id === id));
+      return remaining.length === (current.tags?.length ?? 0)
+        ? current
+        : { ...current, tags: remaining };
+    });
+  }, [tags]);
   const count =
     value.statuses.length +
     value.engines.length +
@@ -399,15 +407,7 @@ export function LibraryFilters({
                   <>
                     {!options.length && <p className="muted">尚无标签，可在游戏详情中添加。</p>}
                     {onManageTags && (
-                      <button
-                        type="button"
-                        className="manage-tags-button"
-                        onClick={() => {
-                          onChange(draft);
-                          setOpen(false);
-                          onManageTags();
-                        }}
-                      >
+                      <button type="button" className="manage-tags-button" onClick={onManageTags}>
                         <Icon name="tag" size={14} />
                         管理标签
                       </button>

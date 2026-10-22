@@ -1,23 +1,7 @@
+import { engineLabel, supportedEngines } from './engines';
 import { useState } from 'react';
 import { Icon } from './ui';
 
-const engines = [
-  'Unity',
-  "Ren'Py",
-  'RPG Maker MV',
-  'RPG Maker MZ',
-  'RPG Maker (legacy)',
-  'Godot',
-  'WOLF RPG Editor',
-  'KiriKiri',
-  'NScripter',
-  'TyranoScript',
-  'Twine',
-  'NW.js',
-  'HTML',
-  'QSP',
-  'Unknown',
-];
 const customOption = '__custom_engine__';
 
 /** A normal select keeps every engine available after selection; custom names remain editable. */
@@ -32,8 +16,8 @@ export function EngineSelect({
   disabled?: boolean;
   label?: string;
 }) {
-  const [custom, setCustom] = useState(!engines.includes(value));
-  const isCustom = custom || !engines.includes(value);
+  const [custom, setCustom] = useState(!supportedEngines.includes(value));
+  const isCustom = custom || !supportedEngines.includes(value);
   return (
     <span className="engine-control">
       <span className="engine-select">
@@ -47,9 +31,9 @@ export function EngineSelect({
             if (next !== customOption) onChange(next);
           }}
         >
-          {engines.map((engine) => (
+          {supportedEngines.map((engine) => (
             <option key={engine} value={engine}>
-              {engine === 'Unknown' ? '未识别' : engine}
+              {engineLabel(engine)}
             </option>
           ))}
           <option value={customOption}>自定义引擎…</option>

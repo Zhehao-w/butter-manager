@@ -1,5 +1,5 @@
 //! A deliberately small recognizer, not a BAT interpreter. Unknown lines fail closed.
-use crate::domain::{BatAnalysis, MToolRecipe};
+use crate::domain::{BatAnalysis, MToolRecipe, MToolStrategy};
 use crate::paths::relative_path;
 
 pub fn generated_launcher_name(name: &str) -> bool {
@@ -84,8 +84,11 @@ fn under(path: &str, root: &str) -> std::result::Result<String, String> {
     Ok(relative.replace('\\', "/"))
 }
 
-fn recognize(content: &str) -> std::result::Result<MToolRecipe, String> {
-    let mut injection: Option<(String, String, String)> = None;
+fn recognize(
+    content: &str,
+    game_directory: Option<&std::path::Path>,
+) -> std::result::Result<MToolRecipe, String> {
+    let mut injection: Option<(String, String, String, MToolStrategy)> = None;
     let mut runtime: Option<(String, String)> = None;
     for (index, raw) in content.trim_start_matches('\u{feff}').lines().enumerate() {
         if raw.len() > 4096 {
@@ -133,6 +136,17 @@ fn recognize(content: &str) -> std::result::Result<MToolRecipe, String> {
                 clean_path(&parts[0])?,
                 clean_path(&parts[1])?,
                 clean_path(&parts[2])?,
+                MToolStrategy::Inject,
+            ));
+        } else if parts.len() == 2 && words[0].replace('/', "\\").ends_with("\\bakinlauncher.exe") {
+            if runtime.is_some() || injection.is_some() {
+                return Err("重复或顺序异常的 BakinLauncher 命令".into());
+            }
+            injection = Some((
+                clean_path(&parts[0])?,
+                clean_path(&parts[1])?,
+                String::new(),
+                MToolStrategy::Bakin,
             ));
         } else if parts.len() == 4 && words[0] == "start" && parts[1].is_empty() {
             if injection.is_none() || runtime.is_some() {
@@ -146,7 +160,8 @@ fn recognize(content: &str) -> std::result::Result<MToolRecipe, String> {
             ));
         }
     }
-    let (injector, target, loader) = injection.ok_or("未找到 inject.exe 命令")?;
+    let (injector, target, loader, strategy) =
+        injection.ok_or("未找到 inject.exe / BakinLauncher.exe 命令")?;
     let (runtime, root) = runtime.ok_or("未找到 MTool / nw runtime 命令")?;
     // Only absolute drive paths or a directory explicitly anchored to the game BAT are understood.
     let drive_root = root.as_bytes().first().is_some_and(u8::is_ascii_alphabetic)
@@ -159,24 +174,48 @@ fn recognize(content: &str) -> std::result::Result<MToolRecipe, String> {
         return Err("MTool root 包含相对跳转".into());
     }
     let injector_rel = under(&injector, &root)?;
-    if !injector_rel.eq_ignore_ascii_case("loaders/inject.exe") {
-        return Err("未知 injector 路径".into());
+    let expected = if strategy == MToolStrategy::Bakin {
+        "loaders/BakinLauncher.exe"
+    } else {
+        "loaders/inject.exe"
+    };
+    if !injector_rel.eq_ignore_ascii_case(expected) {
+        return Err("未知 MTool 启动器路径".into());
     }
-    let target_rel = under(&target, "%~dp0")?;
+    let target_rel = if target.to_ascii_lowercase().starts_with("%~dp0") {
+        under(&target, "%~dp0")?
+    } else if strategy == MToolStrategy::Bakin {
+        let directory = game_directory.ok_or("绝对游戏路径需要当前游戏目录才能验证")?;
+        let directory = dunce::canonicalize(directory).map_err(|e| e.to_string())?;
+        let root = crate::paths::path_text(&directory)
+            .map_err(|e| e.to_string())?
+            .replace('/', "\\");
+        let relative = under(&target, &root)?;
+        crate::paths::contained_file(&directory, &relative, "exe").map_err(|e| e.to_string())?;
+        relative
+    } else {
+        return Err("普通注入 target 必须为 %~dp0 路径".into());
+    };
     if !target_rel.to_lowercase().ends_with(".exe") {
         return Err("target 不是 EXE".into());
     }
-    let loader_rel = under(&loader, &root)?;
-    if !loader_rel.to_lowercase().starts_with("loaders/")
-        || !loader_rel.to_lowercase().ends_with(".dll")
-    {
-        return Err("loader 必须是 loaders 目录内的 DLL".into());
-    }
+    let loader_rel = if strategy == MToolStrategy::Inject {
+        let relative = under(&loader, &root)?;
+        if !relative.to_lowercase().starts_with("loaders/")
+            || !relative.to_lowercase().ends_with(".dll")
+        {
+            return Err("loader 必须是 loaders 目录内的 DLL".into());
+        }
+        relative
+    } else {
+        String::new()
+    };
     let runtime_rel = under(&runtime, &root)?;
     if !["mtool.exe", "nw.exe"].contains(&runtime_rel.to_lowercase().as_str()) {
         return Err("未知 MTool runtime".into());
     }
     Ok(MToolRecipe {
+        mtool_strategy: strategy,
         target_exe: target_rel,
         loader: loader_rel,
         injector: injector_rel,
@@ -186,13 +225,25 @@ fn recognize(content: &str) -> std::result::Result<MToolRecipe, String> {
 }
 
 pub fn parse_bat(path: &str, content: &str) -> BatAnalysis {
-    match recognize(content) {
+    parse_bat_with_directory(path, content, None)
+}
+
+pub(crate) fn parse_bat_in(path: &str, content: &str, directory: &std::path::Path) -> BatAnalysis {
+    parse_bat_with_directory(path, content, Some(directory))
+}
+
+fn parse_bat_with_directory(
+    path: &str,
+    content: &str,
+    directory: Option<&std::path::Path>,
+) -> BatAnalysis {
+    match recognize(content, directory) {
         Ok(recipe) => BatAnalysis {
             path: path.into(),
             status: "supported".into(),
             recipe: Some(recipe),
             messages: vec![
-                "仅分析；未执行 BAT。使用前请确认 target、loader 和共享 MTool 配置。".into(),
+                "仅分析；未执行 BAT。使用前请确认游戏启动器、启动策略和共享 MTool 配置。".into(),
             ],
         },
         Err(reason) => BatAnalysis {
@@ -226,6 +277,82 @@ mod tests {
     fn sample(target: &str, loader: &str, runtime: &str) -> String {
         format!("@chcp 65001\r\n@cd /d \"%~dp0\"\r\n\"E:\\Butter\\Tool\\loaders\\inject.exe\" \"%~dp0\\{target}\" \"E:\\Butter\\Tool\\loaders\\{loader}\"\r\nstart \"\" \"E:\\Butter\\Tool\\{runtime}\" \"E:\\Butter\\Tool\"")
     }
+    fn bakin_sample(target: &str) -> String {
+        format!(
+            r#"chcp 65001
+@cd /d "%~dp0"
+"E:\Shared Tool\loaders\BakinLauncher.exe" "{target}"
+start "" "E:\Shared Tool\MTool.exe" "E:\Shared Tool""#
+        )
+    }
+    #[test]
+    fn bakin_absolute_target_requires_current_directory_and_is_rebased_not_executed() {
+        let temp = tempfile::tempdir().unwrap();
+        let directory = dunce::canonicalize(temp.path()).unwrap();
+        let target = directory.join("みゆつれ spaces.exe");
+        std::fs::write(&target, b"fixture-not-executed").unwrap();
+        let text = bakin_sample(target.to_str().unwrap());
+        assert!(parse_bat("start.bat", &text).recipe.is_none());
+        let recipe = parse_bat_in("start.bat", &text, &directory).recipe.unwrap();
+        assert_eq!(recipe.mtool_strategy, MToolStrategy::Bakin);
+        assert_eq!(recipe.target_exe, "みゆつれ spaces.exe");
+        assert_eq!(recipe.injector, "loaders/BakinLauncher.exe");
+        assert!(recipe.loader.is_empty());
+        assert_eq!(recipe.observed_root, r"E:\Shared Tool");
+        for bad in [
+            directory.with_extension("other").join("Game.exe"),
+            directory.join("../Game.exe"),
+            directory.join("missing.exe"),
+        ] {
+            assert!(parse_bat_in(
+                "start.bat",
+                &bakin_sample(bad.to_str().unwrap()),
+                &directory
+            )
+            .recipe
+            .is_none());
+        }
+        #[cfg(unix)]
+        {
+            let outside = tempfile::tempdir().unwrap();
+            let outside_file = outside.path().join("outside.exe");
+            std::fs::write(&outside_file, b"synthetic").unwrap();
+            let link = directory.join("linked.exe");
+            std::os::unix::fs::symlink(&outside_file, &link).unwrap();
+            assert!(parse_bat_in(
+                "start.bat",
+                &bakin_sample(link.to_str().unwrap()),
+                &directory
+            )
+            .recipe
+            .is_none());
+        }
+        std::fs::remove_file(&target).unwrap();
+        assert!(parse_bat_in("start.bat", &text, &directory)
+            .recipe
+            .is_none());
+    }
+    #[test]
+    fn bakin_rejects_unknown_launcher_commands_and_mixed_recipes() {
+        let text = bakin_sample("%~dp0みゆつれ.exe");
+        assert_eq!(
+            parse_bat("test", &text).recipe.unwrap().mtool_strategy,
+            MToolStrategy::Bakin
+        );
+        for bad in [
+            text.replace("loaders\\BakinLauncher", "BakinLauncher"),
+            text.replace("%~dp0みゆつれ.exe", "%~dp0..\\みゆつれ.exe"),
+            format!("{text}\n{text}"),
+            format!("{text}\ncmd /c anything"),
+            text.replace("%~dp0みゆつれ.exe", "%~dp0みゆつれ.exe&calc"),
+            text.replace("%~dp0みゆつれ.exe", "%PATH%\\みゆつれ.exe"),
+            text.lines().rev().collect::<Vec<_>>().join("\n"),
+            format!("{}\n{text}", sample("Game.exe", "mzHook.dll", "MTool.exe")),
+        ] {
+            assert!(parse_bat("test", &bad).recipe.is_none(), "{bad}");
+        }
+    }
+
     #[test]
     fn parses_unicode_spaces_and_explicit_loader() {
         let result = parse_bat(

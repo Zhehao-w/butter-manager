@@ -1,3 +1,5 @@
+import { suggestedMtoolStrategy } from './scan';
+import { MToolStrategyField } from './MToolStrategyField';
 import { LaunchArgumentsField } from './LaunchArgumentsField';
 import { launchArgumentsError } from './launchArguments';
 import {
@@ -376,6 +378,7 @@ export function ImportPage({
               target_name: leaf(c.install_path),
               version: c.suggested_version,
               engine: c.engine,
+              mtool_strategy: suggestedMtoolStrategy(c),
               executable: suggestedPlayer(c) || '',
               external_player: qspConfig(c),
               mtool:
@@ -418,6 +421,7 @@ export function ImportPage({
                   next[source] = {
                     ...next[source],
                     existing_id: suggestions[0].id,
+                    mtool_strategy: undefined,
                     remember_association: true,
                   };
               return next;
@@ -607,6 +611,9 @@ export function ImportPage({
         ...(Object.hasOwn(change, 'existing_id') &&
         change.existing_id !== current[source].existing_id
           ? {
+              mtool_strategy: change.existing_id
+                ? undefined
+                : suggestedMtoolStrategy(candidates.find((c) => c.install_path === source)),
               working_directory: undefined,
               launch_arguments: undefined,
               mtool_loader: undefined,
@@ -965,6 +972,11 @@ export function ImportPage({
                 !existing.save_paths.length &&
                 choice.preserve_saves !== false;
               const toolLaunch = !!choice.mtool || !!choice.cleanup_mtool;
+              const strategy =
+                choice.mtool_strategy ??
+                item?.update?.old?.mtool_strategy ??
+                existing?.mtool_strategy ??
+                'INJECT';
               const launchArguments =
                 choice.launch_arguments ??
                 item?.update?.old?.launch_arguments ??
@@ -1129,7 +1141,11 @@ export function ImportPage({
                           {choice.cleanup_mtool ? '随包 MTool：回收清理' : '随包 MTool：保留'}
                         </span>
                       )}
-                      {toolLaunch && <span className="mode">公共 MTool 启动</span>}
+                      {toolLaunch && (
+                        <span className="mode">
+                          {strategy === 'BAKIN' ? '公共 MTool · Bakin' : '公共 MTool 启动'}
+                        </span>
+                      )}
                       {hasLaunchArguments && (
                         <span className="mode" title={`启动参数：${launchArguments}`}>
                           <Icon name="play" size={12} />
@@ -1394,6 +1410,20 @@ export function ImportPage({
                               </label>
                             </div>
                           )}
+                          {toolLaunch && !choice.external_player && (
+                            <div className="form-grid">
+                              <MToolStrategyField
+                                value={strategy}
+                                onChange={(value) =>
+                                  update(source, {
+                                    mtool_strategy: value,
+                                    ...(value === 'BAKIN' ? { working_directory: '.' } : {}),
+                                  })
+                                }
+                                disabled={disabled}
+                              />
+                            </div>
+                          )}
                           {!choice.mtool &&
                             !choice.external_player &&
                             /\.exe$/i.test(choice.executable) && (
@@ -1423,14 +1453,19 @@ export function ImportPage({
                                   <div className="import-working-directory-input">
                                     <input
                                       id={`import-working-directory-${encodeURIComponent(source)}`}
-                                      value={choice.working_directory ?? existing.working_directory}
+                                      readOnly={toolLaunch && strategy === 'BAKIN'}
+                                      value={
+                                        toolLaunch && strategy === 'BAKIN'
+                                          ? '.'
+                                          : (choice.working_directory ?? existing.working_directory)
+                                      }
                                       disabled={disabled}
                                       onChange={(e) =>
                                         update(source, { working_directory: e.target.value })
                                       }
                                     />
                                     <BrowseButton
-                                      disabled={disabled}
+                                      disabled={disabled || (toolLaunch && strategy === 'BAKIN')}
                                       onClick={() =>
                                         void action(async () => {
                                           const directory = await api.chooseWorkingDirectory(
@@ -1446,7 +1481,7 @@ export function ImportPage({
                                     </BrowseButton>
                                   </div>
                                 </div>
-                                {choice.mtool && (
+                                {choice.mtool && strategy === 'INJECT' && (
                                   <label>
                                     MTool loader（相对公共 MTool 目录）
                                     <input
@@ -1464,6 +1499,7 @@ export function ImportPage({
                                 disabled={disabled}
                                 onClick={() =>
                                   update(source, {
+                                    mtool_strategy: undefined,
                                     working_directory: undefined,
                                     launch_arguments: undefined,
                                     mtool_loader: undefined,

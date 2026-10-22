@@ -1,7 +1,7 @@
 # Development policy
 
 - 默认开发环境为 Linux 云端，Windows GitHub Actions 负责完整原生检查及 Release EXE；本机只使用和验收。先读 `docs/cloud-development.md`，在 Linux 使用 `bash scripts/Check-Cloud.sh`，不要调用 Windows 工具链脚本或假定存在 E 盘。
-- PR、main 和手动构建都必须保留可下载 EXE artifact；发布必须等待 Linux 和 Windows 检查通过。Linux 核心测试不替代 Windows 原生文件保护和实机验收。
+- 含代码或构建配置变化的 PR、main 和手动构建保留可下载 EXE artifact；仅文档变化由 CI scope 跳过耗时检查及新 EXE，沿用最近成功代码构建的 artifact。混合 PR 的后续文档提交只有命中相同源码的两端成功验证标记才可跳过；无标记仍完整检查。Tag、Release 和显式手动构建始终完整执行。发布必须等待 Linux 和 Windows 检查通过；Linux 核心测试不替代 Windows 原生文件保护和实机验收。
 - 不因完成开发自动 Commit、Push、创建 PR 或 Tag，等待用户明确安排。用户明确推送匹配源码版本的 `vX.Y.Z` Tag 后，由 CI 在 Linux / Windows 检查及资产校验通过后自动创建并发布 Release；开发会话不自行创建或发布 Release。不将真实数据库、游戏、存档或 `data/` 放入云端、缓存或构建资产。
 - 开发和覆盖升级不备份正式数据库。用户已要求删除历史数据库备份；不要重新创建数据库、WAL、SHM 的副本或可恢复的记录导出，除非用户之后明确要求。
 - 升级前后可用只读查询检查记录数量、schema、完整性，以及按旧列计算的不可恢复校验摘要。测试使用独立临时夹具。

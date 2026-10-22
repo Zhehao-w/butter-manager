@@ -25,6 +25,7 @@ export const makeGame = (overrides: Partial<Game> = {}): Game => ({
   external_player: null,
   mtool_target_exe: null,
   mtool_loader: null,
+  mtool_strategy: 'INJECT',
   created_at: '',
   updated_at: '',
   last_launched_at: null,

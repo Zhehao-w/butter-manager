@@ -1022,6 +1022,7 @@ pub(crate) mod tests {
 
     pub(crate) fn fixture_game(root: &Path) -> Game {
         Game {
+            mtool_strategy: Default::default(),
             id: "fixture".into(),
             canonical_title: "游戏".into(),
             display_title: "游戏".into(),

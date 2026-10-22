@@ -1,3 +1,4 @@
+import { supportedEngines, engineLabel } from './engines';
 import React from 'react';
 import { act, fireEvent, render, renderHook, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
@@ -12,6 +13,7 @@ import { useLibraryLayout, useSavedSort } from './preferences';
 import type { Game } from './types';
 
 export const statusGame: Game = {
+  mtool_strategy: 'INJECT',
   launch_arguments: '',
   id: 'g',
   canonical_title: 'Game',
@@ -174,12 +176,9 @@ describe('library status and preferences', () => {
     const engines = within(within(dialog).getByRole('group', { name: '游戏引擎' })).getAllByRole(
       'checkbox',
     );
-    expect(engines.map((input) => input.closest('label')?.textContent)).toEqual([
-      'KiriKiri',
-      'Unity',
-      'WOLF RPG Editor',
-      '未识别',
-    ]);
+    expect(new Set(engines.map((input) => input.closest('label')?.textContent))).toEqual(
+      new Set(supportedEngines.map(engineLabel)),
+    );
     fireEvent.click(within(dialog).getByRole('checkbox', { name: '正在玩' }));
     expect(result.current.value).toEqual(emptyFilters());
     fireEvent.click(within(dialog).getByRole('button', { name: '完成' }));
@@ -231,6 +230,67 @@ describe('library status and preferences', () => {
       ).toBe(false);
     },
   );
+  it('combines the styled favorite and Bakin filters with tags while preserving custom engine choices', () => {
+    const onChange = vi.fn();
+    const tags = Array.from({ length: 40 }, (_, i) => ({ id: `tag-${i}`, name: `标签 ${i}` }));
+    render(
+      <LibraryFilters
+        games={[statusGame, { ...statusGame, id: 'custom', engine: 'Custom Runtime' }]}
+        value={emptyFilters()}
+        onChange={onChange}
+        tags={tags}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: '筛选' }));
+    const dialog = screen.getByRole('dialog', { name: '筛选游戏' });
+    const body = within(dialog).getByRole('region', { name: '筛选内容' });
+    expect(within(body).getByRole('checkbox', { name: 'Custom Runtime' })).toBeTruthy();
+    const favorite = within(body).getByRole('checkbox', { name: '只看收藏' });
+    const bakin = within(body).getByRole('checkbox', { name: 'Bakin' });
+    expect(favorite.closest('label')?.classList.contains('filter-option')).toBe(true);
+    expect(bakin.closest('label')?.title).toBe('RPG Developer Bakin');
+    fireEvent.click(favorite);
+    expect(favorite.closest('label')?.classList.contains('selected')).toBe(true);
+    fireEvent.click(bakin);
+    fireEvent.click(within(body).getByRole('checkbox', { name: '标签 39' }));
+    const done = within(dialog).getByRole('button', { name: '完成' });
+    expect(body.contains(done)).toBe(false);
+    fireEvent.click(done);
+    const filters = onChange.mock.calls[0][0];
+    expect(filters).toEqual({
+      ...emptyFilters(),
+      favoritesOnly: true,
+      engines: ['RPG Developer Bakin'],
+      tags: ['tag-39'],
+    });
+    expect(
+      matchesFilters(
+        { ...statusGame, engine: 'RPG Developer Bakin', favorite: true, tags: [tags[39]] },
+        filters,
+      ),
+    ).toBe(true);
+    expect(
+      matchesFilters(
+        { ...statusGame, engine: 'RPG Developer Bakin', favorite: false, tags: [tags[39]] },
+        filters,
+      ),
+    ).toBe(false);
+  });
+  it('uses the Bakin label and appearance in quick filters', () => {
+    const onChange = vi.fn();
+    render(
+      <EngineQuickFilters
+        games={[{ ...statusGame, engine: 'RPG Developer Bakin' }]}
+        engines={[]}
+        other={false}
+        onChange={onChange}
+      />,
+    );
+    const button = screen.getByRole('button', { name: 'Bakin' });
+    expect(button.classList.contains('tone-bakin')).toBe(true);
+    fireEvent.click(button);
+    expect(onChange).toHaveBeenCalledWith(['RPG Developer Bakin'], false);
+  });
   it('restores each module sort independently and rejects unknown saved values', () => {
     const allowed = ['name-asc', 'name-desc'] as const;
     const hook = renderHook(() => useSavedSort('library', 'name-asc', allowed));

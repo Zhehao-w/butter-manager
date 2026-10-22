@@ -678,6 +678,7 @@ mod tests {
 
     fn game(id: &str, title: &str, root: &Path) -> Game {
         Game {
+            mtool_strategy: Default::default(),
             id: id.into(),
             canonical_title: title.into(),
             display_title: title.into(),

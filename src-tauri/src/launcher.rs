@@ -8,6 +8,9 @@ pub fn with_configuration(mut game: Game, config: LaunchConfiguration) -> Game {
     if let Some(arguments) = config.launch_arguments {
         game.launch_arguments = arguments;
     }
+    if let Some(strategy) = config.mtool_strategy {
+        game.mtool_strategy = strategy;
+    }
     game.main_executable = config.main_executable;
     game.working_directory = config.working_directory;
     game.launch_type = config.launch_type;
@@ -97,7 +100,13 @@ fn launch_observed(
         }
         "MTOOL" => {
             let (mut injector, mut runtime) = mtool_commands(game, settings)?;
-            launch_mtool(&game.id, &mut injector, &mut runtime, running)
+            launch_mtool(
+                &game.id,
+                &mut injector,
+                &mut runtime,
+                running,
+                game.mtool_strategy,
+            )
         }
         _ => Err(Error::Validation(
             "CUSTOM_BAT 暂不支持；下载 BAT 不会被执行".into(),
@@ -126,16 +135,22 @@ fn launch_mtool(
     injector: &mut Command,
     runtime: &mut Command,
     running: Option<&crate::runtime::RunningGames>,
+    strategy: crate::domain::MToolStrategy,
 ) -> Result<()> {
+    let label = if strategy == crate::domain::MToolStrategy::Bakin {
+        "BakinLauncher"
+    } else {
+        "injector"
+    };
     // Separate arguments; downloaded BATs are never executed. Observe before waiting: a failed
     // injector/runtime can still have launched a game, which must keep mutation guards active.
     let status = spawn_mtool(id, injector, running, 0x0800_0000)?.wait()?;
     if !status.success() {
-        return Err(Error::Validation(format!("injector 退出状态：{status}")));
+        return Err(Error::Validation(format!("{label} 退出状态：{status}")));
     }
     spawn_mtool(id, runtime, running, 0).map_err(|error| {
         Error::Validation(format!(
-            "injector 已启动，但 MTool runtime 启动失败：{error}"
+            "{label} 已启动，但 MTool runtime 启动失败：{error}"
         ))
     })?;
     Ok(())
@@ -143,10 +158,12 @@ fn launch_mtool(
 
 fn mtool_commands(game: &Game, settings: &Settings) -> Result<(Command, Command)> {
     let (injector, target, loader, runtime) = mtool_files(game, settings)?;
-    let working =
-        crate::paths::working_directory(Path::new(&game.install_path), &game.working_directory)?;
+    let working = mtool_working_directory(game)?;
     let mut inject_command = Command::new(injector);
-    inject_command.arg(target).arg(loader).current_dir(&working);
+    inject_command.arg(target).current_dir(&working);
+    if let Some(loader) = loader {
+        inject_command.arg(loader);
+    }
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -178,13 +195,31 @@ pub fn launch_with_runtime<T>(
     record().map_err(|e| Error::Validation(format!("启动请求已发送，但运行记录保存失败：{e}")))
 }
 
+pub(crate) fn bakin_launcher_file(settings: &Settings) -> Result<std::path::PathBuf> {
+    if settings.mtool_root.is_empty() {
+        return Err(Error::Validation(
+            "请先设置共享 MTool Root（BakinLauncher.exe）".into(),
+        ));
+    }
+    contained_file(
+        Path::new(&settings.mtool_root),
+        "loaders/BakinLauncher.exe",
+        "exe",
+    )
+    .map_err(|error| {
+        Error::Validation(format!(
+            "Bakin 专用启动器不可用，请检查公共 MTool 的 loaders/BakinLauncher.exe：{error}"
+        ))
+    })
+}
+
 fn mtool_files(
     game: &Game,
     settings: &Settings,
 ) -> Result<(
     std::path::PathBuf,
     std::path::PathBuf,
-    std::path::PathBuf,
+    Option<std::path::PathBuf>,
     std::path::PathBuf,
 )> {
     if settings.mtool_root.is_empty() {
@@ -197,13 +232,43 @@ fn mtool_files(
         .or(game.main_executable.as_deref())
         .ok_or_else(|| Error::Validation("未配置 MTool target".into()))?;
     let target_file = contained_file(Path::new(&game.install_path), target, "exe")?;
-    let loader = resolve_loader(&target_file, game.mtool_loader.as_deref())?;
+    let (launcher, loader) = if game.mtool_strategy == crate::domain::MToolStrategy::Bakin {
+        if crate::scanner::helper(
+            target_file
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(""),
+        ) {
+            return Err(Error::Validation(
+                "Bakin 需要游戏启动器，不能选择内部播放器或工具".into(),
+            ));
+        }
+        let launcher = bakin_launcher_file(settings)?;
+        (launcher, None)
+    } else {
+        let loader = resolve_loader(&target_file, game.mtool_loader.as_deref())?;
+        (
+            contained_file(root, &settings.mtool_injector, "exe")?,
+            Some(contained_file(root, &loader, "dll")?),
+        )
+    };
     Ok((
-        contained_file(root, &settings.mtool_injector, "exe")?,
+        launcher,
         target_file,
-        contained_file(root, &loader, "dll")?,
+        loader,
         contained_file(root, &settings.mtool_runtime, "exe")?,
     ))
+}
+
+fn mtool_working_directory(game: &Game) -> Result<std::path::PathBuf> {
+    crate::paths::working_directory(
+        Path::new(&game.install_path),
+        if game.mtool_strategy == crate::domain::MToolStrategy::Bakin {
+            "."
+        } else {
+            &game.working_directory
+        },
+    )
 }
 
 fn resolve_loader(target: &Path, configured: Option<&str>) -> Result<String> {
@@ -226,11 +291,20 @@ pub fn preview_mtool(game: &Game, settings: &Settings) -> Result<MToolLaunchPrev
         .or(game.main_executable.as_deref())
         .ok_or_else(|| Error::Validation("请选择游戏启动 EXE".into()))?;
     let file = contained_file(Path::new(&game.install_path), target, "exe")?;
-    let loader = resolve_loader(&file, game.mtool_loader.as_deref())?;
-    let work =
-        crate::paths::working_directory(Path::new(&game.install_path), &game.working_directory)?;
-    mtool_files(game, settings)?;
+    let (_, _, _, _) = mtool_files(game, settings)?;
+    let loader = if game.mtool_strategy == crate::domain::MToolStrategy::Bakin {
+        String::new()
+    } else {
+        resolve_loader(&file, game.mtool_loader.as_deref())?
+    };
+    let work = mtool_working_directory(game)?;
     Ok(MToolLaunchPreview {
+        mtool_strategy: game.mtool_strategy,
+        launcher: if game.mtool_strategy == crate::domain::MToolStrategy::Bakin {
+            "loaders/BakinLauncher.exe".into()
+        } else {
+            settings.mtool_injector.clone()
+        },
         shared_root: settings.mtool_root.clone(),
         target_exe: target.into(),
         architecture: crate::scanner::architecture(&file),
@@ -260,15 +334,18 @@ pub fn debug_bat(game: &Game, settings: &Settings) -> Result<String> {
         }
         Ok(format!("\"{value}\""))
     }
+    let launcher_line = match loader {
+        Some(loader) => format!(
+            "{} {} {}",
+            quoted(&injector)?,
+            quoted(&target)?,
+            quoted(&loader)?
+        ),
+        None => format!("{} {}", quoted(&injector)?, quoted(&target)?),
+    };
     Ok(format!(
-        "@chcp 65001\r\n@cd /d {}\r\n{} {} {}\r\nstart \"\" {} {}\r\n",
-        quoted(&crate::paths::working_directory(
-            Path::new(&game.install_path),
-            &game.working_directory
-        )?)?,
-        quoted(&injector)?,
-        quoted(&target)?,
-        quoted(&loader)?,
+        "@chcp 65001\r\n@cd /d {}\r\n{launcher_line}\r\nstart \"\" {} {}\r\n",
+        quoted(&mtool_working_directory(game)?)?,
         quoted(&runtime)?,
         quoted(Path::new(&settings.mtool_root))?
     ))
@@ -409,11 +486,16 @@ mod tests {
         for mode in [
             "runtime",
             "descendants",
+            "bakin_descendants",
+            "bakin_failure",
             "runtime_failure",
             "injector_failure",
         ] {
             let temp = tempfile::tempdir().unwrap();
-            let game = crate::maintenance::tests::fixture_game(temp.path());
+            let mut game = crate::maintenance::tests::fixture_game(temp.path());
+            if mode.starts_with("bakin_") {
+                game.mtool_strategy = crate::domain::MToolStrategy::Bakin;
+            }
             let game_signal = temp.path().join("game-running");
             let runtime_signal = temp.path().join("runtime-running");
             for signal in [&game_signal, &runtime_signal] {
@@ -433,7 +515,11 @@ mod tests {
             } else {
                 format!(
                     "start \"\" /b \"%ComSpec%\" /d /q /c game-loop.cmd\r\nexit /b {}",
-                    if mode == "injector_failure" { 7 } else { 0 }
+                    if mode == "injector_failure" || mode == "bakin_failure" {
+                        7
+                    } else {
+                        0
+                    }
                 )
             };
             std::fs::write(temp.path().join("injector.cmd"), script).unwrap();
@@ -455,14 +541,23 @@ mod tests {
                 .stdout(Stdio::null())
                 .stderr(Stdio::null());
             let running = crate::runtime::RunningGames::default();
-            let result = launch_mtool(&game.id, &mut injector, &mut runtime, Some(&running));
+            let result = launch_mtool(
+                &game.id,
+                &mut injector,
+                &mut runtime,
+                Some(&running),
+                game.mtool_strategy,
+            );
             assert_eq!(result.is_err(), mode.ends_with("failure"), "{mode}");
+            if mode == "bakin_failure" {
+                assert!(result.unwrap_err().to_string().contains("BakinLauncher"));
+            }
             assert!(running.ensure_tracked_idle(&game).is_err(), "{mode}");
             assert!(running.ensure_idle(&game).is_err(), "{mode}");
             let mut other = game.clone();
             other.id = "another-game".into();
             running.ensure_tracked_idle(&other).unwrap();
-            if mode == "descendants" {
+            if mode == "descendants" || mode == "bakin_descendants" {
                 std::fs::remove_file(&runtime_signal).unwrap();
                 // Removing the runtime signal does not release the injector's surviving child.
                 assert!(running.ensure_tracked_idle(&game).is_err());
@@ -516,6 +611,7 @@ mod tests {
             let draft = with_configuration(
                 saved.clone(),
                 LaunchConfiguration {
+                    mtool_strategy: None,
                     launch_type: mode.into(),
                     main_executable: Some(
                         if mode == "EXTERNAL_PLAYER" {
@@ -701,6 +797,102 @@ mod tests {
         assert!(game_dir.join("Tool/loaders/mzHook32.dll").exists());
     }
     #[test]
+    fn bakin_uses_only_shared_dedicated_launcher_and_current_target_without_injection() {
+        use crate::domain::MToolStrategy;
+        let temp = tempfile::tempdir().unwrap();
+        let root = dunce::canonicalize(temp.path()).unwrap();
+        let tool = root.join("shared tools");
+        let directory = root.join("ゲーム spaces");
+        std::fs::create_dir_all(tool.join("loaders")).unwrap();
+        std::fs::create_dir_all(directory.join("data")).unwrap();
+        for file in [
+            tool.join("loaders/BakinLauncher.exe"),
+            tool.join("MTool.exe"),
+            directory.join("みゆつれ.exe"),
+            directory.join("data/bakinplayer.exe"),
+        ] {
+            std::fs::write(file, b"synthetic-not-executed").unwrap();
+        }
+        let settings = Settings {
+            mtool_root: tool.display().to_string(),
+            mtool_injector: "missing-global-injector.exe".into(),
+            mtool_runtime: "MTool.exe".into(),
+            ..Settings::default()
+        };
+        let mut game = crate::maintenance::tests::fixture_game(&directory);
+        game.launch_type = "MTOOL".into();
+        game.main_executable = Some("みゆつれ.exe".into());
+        game.mtool_strategy = MToolStrategy::Bakin;
+        game.mtool_loader = Some("missing-ordinary-loader.dll".into());
+        game.launch_arguments = "-dx11".into(); // Direct EXE arguments never reach either MTool process.
+        game.working_directory = "data".into();
+        let saved = game.clone();
+        let mut configuration = crate::domain::LaunchConfiguration {
+            launch_type: game.launch_type.clone(),
+            main_executable: game.main_executable.clone(),
+            working_directory: game.working_directory.clone(),
+            external_player: None,
+            mtool_target_exe: None,
+            mtool_loader: game.mtool_loader.clone(),
+            launch_arguments: None,
+            mtool_strategy: None,
+        };
+        assert_eq!(
+            with_configuration(game.clone(), configuration.clone()).mtool_strategy,
+            MToolStrategy::Bakin
+        );
+        configuration.mtool_strategy = Some(MToolStrategy::Inject);
+        assert!(
+            mtool_commands(&with_configuration(game.clone(), configuration), &settings).is_err()
+        );
+        let (launch, runtime) = mtool_commands(&game, &settings).unwrap();
+        assert_eq!(
+            launch.get_program(),
+            tool.join("loaders").join("BakinLauncher.exe").as_os_str()
+        );
+        assert_eq!(
+            launch.get_args().collect::<Vec<_>>(),
+            vec![directory.join("みゆつれ.exe").as_os_str()]
+        );
+        assert_eq!(launch.get_current_dir(), Some(directory.as_path()));
+        assert_eq!(runtime.get_program(), tool.join("MTool.exe").as_os_str());
+        assert_eq!(
+            runtime.get_args().collect::<Vec<_>>(),
+            vec![tool.as_os_str()]
+        );
+        assert_eq!(runtime.get_current_dir(), Some(directory.as_path()));
+        let preview = preview_mtool(&game, &settings).unwrap();
+        assert_eq!(preview.mtool_strategy, MToolStrategy::Bakin);
+        assert_eq!(preview.launcher, "loaders/BakinLauncher.exe");
+        assert!(preview.loader.is_empty());
+        let debug = debug_bat(&game, &settings).unwrap();
+        assert!(debug.contains("BakinLauncher.exe"));
+        assert!(debug.contains("みゆつれ.exe"));
+        assert!(!debug.contains("injector"));
+        assert!(!debug.contains("mzHook"));
+        assert!(!debug.contains("missing-ordinary-loader"));
+        assert!(!debug.contains("-dx11"));
+        assert_eq!(
+            serde_json::to_value(game.clone()).unwrap(),
+            serde_json::to_value(saved).unwrap()
+        );
+        game.main_executable = Some("data/bakinplayer.exe".into());
+        assert!(mtool_commands(&game, &settings)
+            .unwrap_err()
+            .to_string()
+            .contains("内部播放器"));
+        game.main_executable = Some("../outside.exe".into());
+        assert!(mtool_commands(&game, &settings).is_err());
+        game.main_executable = Some("みゆつれ.exe".into());
+        std::fs::remove_file(tool.join("loaders/BakinLauncher.exe")).unwrap();
+        assert!(mtool_commands(&game, &settings)
+            .unwrap_err()
+            .to_string()
+            .contains("BakinLauncher.exe"));
+        assert!(debug_bat(&game, &settings).is_err());
+    }
+
+    #[test]
     fn failed_launch_does_not_record_a_run() {
         let root = tempfile::tempdir().unwrap();
         let mut db = crate::db::Database::open(&root.path().join("library.db")).unwrap();
@@ -711,6 +903,7 @@ mod tests {
         let game = with_configuration(
             db.game(&id).unwrap(),
             LaunchConfiguration {
+                mtool_strategy: None,
                 launch_type: "DIRECT".into(),
                 main_executable: Some("missing.exe".into()),
                 working_directory: ".".into(),

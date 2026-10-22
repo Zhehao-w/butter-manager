@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
-import { directoryTime, scanResults } from './scan';
+import { directoryTime, scanResults, suggestedMtoolStrategy } from './scan';
 import type { ScanCandidate } from './types';
 
 const candidate = (folder: string, modified: number | null, registered = false): ScanCandidate => ({
@@ -66,4 +66,23 @@ describe('scan result search and sorting', () => {
       expect(scanResults([game], needle, 'name-asc', choices)).toEqual([game]);
     expect(scanResults([game], '不存在', 'name-asc', choices)).toEqual([]);
   });
+});
+
+it('uses matching Bakin BAT strategy without replacing the analyzed target and rejects conflicting evidence', () => {
+  const c = candidate('Game', 0);
+  const recipe = {
+    mtool_strategy: 'BAKIN' as const,
+    target_exe: 'bin/Game.exe',
+    loader: '',
+    injector: 'loaders/BakinLauncher.exe',
+    runtime: 'MTool.exe',
+    observed_root: 'F:/Old',
+  };
+  c.bats = [{ path: 'StartWithTool.bat', status: 'supported', recipe, messages: [] }];
+  expect(suggestedMtoolStrategy(c, 'BIN\\Game.exe')).toBe('BAKIN');
+  expect(suggestedMtoolStrategy(c, 'Other.exe')).toBe('INJECT');
+  c.bats.push({ ...c.bats[0], recipe: { ...recipe, mtool_strategy: 'INJECT' } });
+  expect(suggestedMtoolStrategy(c, 'bin/Game.exe')).toBe('INJECT');
+  c.engine = 'RPG Developer Bakin';
+  expect(suggestedMtoolStrategy(c, 'Game.exe')).toBe('BAKIN');
 });

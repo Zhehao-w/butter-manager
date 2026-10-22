@@ -288,10 +288,117 @@ describe('library organization', () => {
     await waitFor(() =>
       expect(within(manager).queryByRole('button', { name: '删除标签 剧情向' })).toBeNull(),
     );
-    fireEvent.click(within(manager).getByRole('button', { name: '关闭' }));
+    expect(within(manager).getAllByRole('button', { name: /关闭/ })).toHaveLength(1);
+    fireEvent.click(within(manager).getByRole('button', { name: '关闭弹窗' }));
+    const filters = screen.getByRole('dialog', { name: '筛选游戏' });
+    expect(within(filters).queryByRole('checkbox', { name: '剧情向' })).toBeNull();
+    fireEvent.click(within(filters).getByRole('button', { name: '完成' }));
     expect(await screen.findByRole('button', { name: 'Other' })).toBeTruthy();
     expect(api.deleteFiles).not.toHaveBeenCalled();
     expect(api.removeGame).not.toHaveBeenCalled();
+  });
+
+  it.each(['关闭弹窗', 'Escape'])(
+    'returns from tag management with %s without applying or losing the filter draft',
+    async (action) => {
+      vi.mocked(api.games).mockResolvedValue([
+        { ...game, favorite: true },
+        makeGame({ id: 'other', display_title: 'Other' }),
+      ]);
+      render(<App />);
+      await screen.findByRole('button', { name: game.display_title });
+      fireEvent.click(screen.getByRole('button', { name: '筛选' }));
+      const filters = screen.getByRole('dialog', { name: '筛选游戏' });
+      const body = within(filters).getByRole('region', { name: '筛选内容' });
+      body.scrollTop = 240;
+      fireEvent.click(within(filters).getByLabelText('只看收藏'));
+      fireEvent.click(within(filters).getByRole('button', { name: '管理标签' }));
+      const manager = screen.getByRole('dialog', { name: '管理标签' });
+      if (action === 'Escape')
+        fireEvent(manager, new Event('cancel', { bubbles: true, cancelable: true }));
+      else fireEvent.click(within(manager).getByRole('button', { name: action }));
+      expect(screen.queryByRole('dialog', { name: '管理标签' })).toBeNull();
+      expect(screen.getByRole('dialog', { name: '筛选游戏' })).toBe(filters);
+      expect(body.scrollTop).toBe(240);
+      expect((within(filters).getByLabelText('只看收藏') as HTMLInputElement).checked).toBe(true);
+      expect(screen.getByRole('button', { name: 'Other' })).toBeTruthy();
+      expect(screen.getByRole('button', { name: '筛选' }).getAttribute('aria-pressed')).toBe(
+        'false',
+      );
+      fireEvent.click(within(filters).getByRole('button', { name: '完成' }));
+      expect(screen.queryByRole('button', { name: 'Other' })).toBeNull();
+      expect(screen.getByRole('button', { name: '筛选 (1)' }).getAttribute('aria-pressed')).toBe(
+        'true',
+      );
+    },
+  );
+
+  it('selects existing tags directly and preserves detail edits through tag renames and deletion', async () => {
+    let tags = [
+      { id: 'a', name: '汉化' },
+      { id: 'b', name: '剧情向' },
+    ];
+    let saved = { ...game, tags: tags.slice(0, 1) };
+    vi.mocked(api.games).mockImplementation(async () => [saved]);
+    vi.mocked(api.libraryTags).mockImplementation(async () => tags);
+    vi.mocked(api.renameTag).mockImplementation(async (id, name) => {
+      tags = tags.map((tag) => (tag.id === id ? { ...tag, name } : tag));
+      saved = {
+        ...saved,
+        tags: saved.tags.map((tag) => tags.find((value) => value.id === tag.id)!),
+      };
+    });
+    vi.mocked(api.deleteTag).mockImplementation(async (id) => {
+      tags = tags.filter((tag) => tag.id !== id);
+      saved = { ...saved, tags: saved.tags.filter((tag) => tag.id !== id) };
+    });
+    vi.mocked(api.saveGame).mockImplementation(async (edit) => ({ ...saved, ...edit }));
+    const detail = await openDetail();
+    const choices = within(detail).getByRole('group', { name: '选择标签' });
+    const option = within(choices).getByRole('button', { name: '剧情向' });
+    expect(option.closest('details')).toBeNull();
+    fireEvent.click(option);
+    fireEvent.change(within(detail).getByLabelText('新标签'), { target: { value: '待整理' } });
+    fireEvent.click(within(detail).getByRole('button', { name: '添加' }));
+    fireEvent.change(within(detail).getByLabelText('显示名称'), {
+      target: { value: '未保存的名称' },
+    });
+    fireEvent.click(within(detail).getByRole('button', { name: '管理标签' }));
+    const manager = screen.getByRole('dialog', { name: '管理标签' });
+    fireEvent.click(within(manager).getByRole('button', { name: '重命名标签 汉化' }));
+    fireEvent.change(within(manager).getByLabelText('标签名称'), { target: { value: '中文' } });
+    fireEvent.click(within(manager).getByRole('button', { name: '保存名称' }));
+    await within(manager).findByRole('button', { name: '删除标签 中文' });
+    await within(detail).findByRole('button', { name: '移除标签 中文' });
+    const remove = within(manager).getByRole('button', { name: '删除标签 剧情向' });
+    await waitFor(() => expect((remove as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(remove);
+    fireEvent.click(within(manager).getByRole('button', { name: '确认删除标签' }));
+    await waitFor(() =>
+      expect(within(detail).queryByRole('button', { name: '移除标签 剧情向' })).toBeNull(),
+    );
+    await waitFor(() =>
+      expect(
+        (within(manager).getByRole('button', { name: '重命名标签 中文' }) as HTMLButtonElement)
+          .disabled,
+      ).toBe(false),
+    );
+    fireEvent.click(within(manager).getByRole('button', { name: '关闭弹窗' }));
+    expect(screen.getByRole('dialog', { name: game.display_title })).toBe(detail);
+    expect((within(detail).getByLabelText('显示名称') as HTMLInputElement).value).toBe(
+      '未保存的名称',
+    );
+    expect(within(detail).getByRole('button', { name: '移除标签 待整理' })).toBeTruthy();
+    expect(api.saveGame).not.toHaveBeenCalled();
+    fireEvent.click(within(detail).getByRole('button', { name: '保存资料' }));
+    await waitFor(() => expect(api.saveGame).toHaveBeenCalledOnce());
+    expect(vi.mocked(api.saveGame).mock.calls[0][0]).toMatchObject({
+      display_title: '未保存的名称',
+      tags: [
+        { id: 'a', name: '中文' },
+        { id: '', name: '待整理' },
+      ],
+    });
   });
 
   it.each(['list', 'grid'] as const)(
@@ -2497,6 +2604,7 @@ describe('iteration interactions', () => {
       expect(api.play).toHaveBeenCalledWith(game.id, {
         launch_arguments: '',
         launch_type: mode,
+        mtool_strategy: 'INJECT',
         main_executable: mode === 'EXTERNAL_PLAYER' ? '新版/player.exe' : '新版/new.exe',
         working_directory: '新版',
         external_player:
@@ -3025,7 +3133,13 @@ describe('iteration interactions', () => {
         .value,
     ).toBe('');
     await waitFor(() =>
-      expect(api.previewMtoolLaunch).toHaveBeenCalledWith(game.id, game.main_executable, null, '.'),
+      expect(api.previewMtoolLaunch).toHaveBeenCalledWith(
+        game.id,
+        game.main_executable,
+        null,
+        '.',
+        'INJECT',
+      ),
     );
     await within(detail).findByText('32 位 · mzHook32.dll', { selector: '[role="status"]' });
     fireEvent.click(within(detail).getByRole('button', { name: '保存资料' }));
@@ -3042,6 +3156,77 @@ describe('iteration interactions', () => {
     );
     expect(api.play).not.toHaveBeenCalled();
   });
+
+  it.each(['save', 'temporary'])(
+    'uses the per-game Bakin strategy for %s and hides injection controls',
+    async (mode) => {
+      vi.mocked(api.previewMtoolLaunch).mockResolvedValue({
+        shared_root: 'D:/Shared',
+        target_exe: game.main_executable!,
+        architecture: 'Unknown',
+        loader: '',
+        launcher: 'loaders/BakinLauncher.exe',
+        mtool_strategy: 'BAKIN',
+        runtime: 'MTool.exe',
+        working_directory: game.install_path,
+      });
+      vi.mocked(api.saveGame).mockResolvedValue({
+        ...game,
+        launch_type: 'MTOOL',
+        mtool_strategy: 'BAKIN',
+      });
+      const detail = await openDetail();
+      showDetailTab('启动配置');
+      fireEvent.change(within(detail).getByRole('combobox', { name: '启动方式' }), {
+        target: { value: 'MTOOL' },
+      });
+      fireEvent.change(within(detail).getByRole('combobox', { name: 'MTool 启动策略' }), {
+        target: { value: 'BAKIN' },
+      });
+      expect(within(detail).queryByRole('combobox', { name: 'MTool loader 选择' })).toBeNull();
+      expect(within(detail).queryByRole('textbox', { name: '启动参数' })).toBeNull();
+      await waitFor(() =>
+        expect(api.previewMtoolLaunch).toHaveBeenLastCalledWith(
+          game.id,
+          game.main_executable,
+          null,
+          '.',
+          'BAKIN',
+        ),
+      );
+      await within(detail).findByText('BakinLauncher.exe · 游戏根目录');
+      fireEvent.click(within(detail).getByText('高级启动选项'));
+      expect(
+        (within(detail).getByRole('textbox', { name: /工作目录/ }) as HTMLInputElement).disabled,
+      ).toBe(true);
+      if (mode === 'save') {
+        fireEvent.click(within(detail).getByRole('button', { name: '保存资料' }));
+        await waitFor(() =>
+          expect(api.saveGame).toHaveBeenCalledWith(
+            expect.objectContaining({
+              mtool_strategy: 'BAKIN',
+              launch_type: 'MTOOL',
+              working_directory: '.',
+            }),
+          ),
+        );
+        expect(api.play).not.toHaveBeenCalled();
+      } else {
+        fireEvent.click(within(detail).getByRole('button', { name: '启动' }));
+        await waitFor(() =>
+          expect(api.play).toHaveBeenCalledWith(
+            game.id,
+            expect.objectContaining({
+              mtool_strategy: 'BAKIN',
+              launch_type: 'MTOOL',
+              working_directory: '.',
+            }),
+          ),
+        );
+        expect(api.saveGame).not.toHaveBeenCalled();
+      }
+    },
+  );
 
   it('opens a separate confirmation popup for unsaved detail edits and Escape retains the draft', async () => {
     const detail = await openDetail();

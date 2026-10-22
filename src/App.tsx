@@ -1893,6 +1893,7 @@ export default function App() {
           key={game.id}
           game={game}
           libraryTags={libraryTags}
+          onManageTags={() => setTagManagerOpen(true)}
           settings={settings}
           pathCheck={pathChecks[game.id]}
           onRemoved={() => removeRecord(game.id)}
@@ -1932,7 +1933,8 @@ export default function App() {
               saved.launch_type !== game.launch_type ||
               JSON.stringify(saved.external_player ?? null) !==
                 JSON.stringify(game.external_player ?? null) ||
-              saved.mtool_target_exe !== game.mtool_target_exe
+              saved.mtool_target_exe !== game.mtool_target_exe ||
+              saved.mtool_strategy !== game.mtool_strategy
             ) {
               setPathChecks((current) => {
                 const next = { ...current };
@@ -2734,6 +2736,7 @@ function DetailTitle({ title, version }: { title: string; version: string }) {
 function GameDetail({
   game,
   libraryTags,
+  onManageTags,
   settings,
   pathCheck,
   onRemoved,
@@ -2754,6 +2757,7 @@ function GameDetail({
 }: {
   game: Game;
   libraryTags: LibraryTag[];
+  onManageTags: () => void;
   settings: Settings;
   pathCheck?: LibraryPathCheck;
   onRemoved: () => Promise<void>;
@@ -2774,9 +2778,26 @@ function GameDetail({
 }) {
   const [draft, setDraft] = useState<GameEdit>({
     ...game,
+    mtool_strategy: game.mtool_strategy ?? 'INJECT',
     launch_arguments: game.launch_arguments ?? '',
   });
   const [tagInput, setTagInput] = useState('');
+  const previousTags = useRef(libraryTags);
+  useEffect(() => {
+    const previous = previousTags.current;
+    previousTags.current = libraryTags;
+    setDraft((current) => {
+      const tags = (current.tags ?? []).flatMap((tag) => {
+        const updated = libraryTags.find((value) => value.id === tag.id);
+        if (updated) return [updated];
+        return tag.id && previous.some((value) => value.id === tag.id) ? [] : [tag];
+      });
+      return tags.length === current.tags?.length &&
+        tags.every((tag, i) => tag.id === current.tags?.[i].id && tag.name === current.tags[i].name)
+        ? current
+        : { ...current, tags };
+    });
+  }, [libraryTags]);
   const formId = useId();
   const detailTabs = [
     ['basic', '基础信息', 'info'],
@@ -2860,6 +2881,16 @@ function GameDetail({
     };
   }, [game.id, game.last_launched_at]);
   const [debugText, setDebugText] = useState('');
+  useEffect(() => {
+    setDebugText('');
+  }, [
+    draft.mtool_strategy,
+    draft.main_executable,
+    draft.mtool_target_exe,
+    draft.mtool_loader,
+    draft.working_directory,
+    settings,
+  ]);
   const [requestBusy, setBusy] = useState(false);
   const [maintenanceBusy, setMaintenanceBusy] = useState(false);
   const [folderError, setFolderError] = useState<string | null>(null);
@@ -2873,6 +2904,7 @@ function GameDetail({
     save_paths: lines(saves),
   };
   const configuration = {
+    mtool_strategy: draft.mtool_strategy ?? game.mtool_strategy ?? 'INJECT',
     launch_arguments: draft.launch_arguments,
     main_executable: draft.main_executable,
     working_directory: draft.working_directory,
@@ -2905,12 +2937,21 @@ function GameDetail({
       external_player: null,
       mtool_target_exe: mtool ? exe : null,
       mtool_loader: null,
+      mtool_strategy:
+        analysis.engine === 'RPG Developer Bakin'
+          ? 'BAKIN'
+          : (draft.mtool_strategy ?? game.mtool_strategy ?? 'INJECT'),
     };
   }
   function useAnalysisConfiguration() {
     const next = analysisConfiguration();
     if (!next) return;
-    setDraft((current) => ({ ...current, ...next, launch_arguments: current.launch_arguments }));
+    setDraft((current) => ({
+      ...current,
+      ...next,
+      mtool_strategy: next.mtool_strategy ?? current.mtool_strategy,
+      launch_arguments: current.launch_arguments,
+    }));
     setMessage('已填入推荐配置，请检查后保存资料。');
   }
   function chooseAnalyzedExecutable(executable: string) {
@@ -2972,6 +3013,7 @@ function GameDetail({
         'launch_type',
         'mtool_target_exe',
         'mtool_loader',
+        'mtool_strategy',
       ] as const
     ).some((key) => draft[key] !== game[key]) ||
     JSON.stringify(draft.external_player ?? null) !==
@@ -3315,6 +3357,7 @@ function GameDetail({
                 value={tagInput}
                 onInput={setTagInput}
                 onChange={(tags) => field('tags', tags)}
+                onManageTags={onManageTags}
               />
               <ImportMemories
                 gameId={game.id}
@@ -3444,6 +3487,14 @@ function GameDetail({
                   <MToolConfiguration
                     id={game.id}
                     executable={draft.mtool_target_exe || draft.main_executable}
+                    strategy={draft.mtool_strategy ?? 'INJECT'}
+                    onStrategy={(strategy) =>
+                      setDraft((current) => ({
+                        ...current,
+                        mtool_strategy: strategy,
+                        ...(strategy === 'BAKIN' ? { working_directory: '.' } : {}),
+                      }))
+                    }
                     loader={draft.mtool_loader}
                     workingDirectory={draft.working_directory}
                     settings={settings}
@@ -3523,7 +3574,12 @@ function GameDetail({
                     启动工作目录（相对游戏目录，. 表示根目录）
                     <input
                       required
-                      value={draft.working_directory}
+                      value={
+                        draft.launch_type === 'MTOOL' && draft.mtool_strategy === 'BAKIN'
+                          ? '.'
+                          : draft.working_directory
+                      }
+                      disabled={draft.launch_type === 'MTOOL' && draft.mtool_strategy === 'BAKIN'}
                       onChange={(event) => field('working_directory', event.target.value)}
                     />
                   </label>
@@ -3726,8 +3782,14 @@ function BatResults({ candidate }: { candidate: ScanCandidate }) {
               <dl>
                 <dt>Target</dt>
                 <dd>{bat.recipe.target_exe}</dd>
-                <dt>Loader</dt>
-                <dd>{bat.recipe.loader}</dd>
+                <dt>启动策略</dt>
+                <dd>{bat.recipe.mtool_strategy === 'BAKIN' ? 'Bakin 专用启动' : '普通注入'}</dd>
+                {bat.recipe.mtool_strategy !== 'BAKIN' && (
+                  <>
+                    <dt>Loader</dt>
+                    <dd>{bat.recipe.loader}</dd>
+                  </>
+                )}
                 <dt>原 MTool Root</dt>
                 <dd>{bat.recipe.observed_root}</dd>
                 <dt>Runtime</dt>

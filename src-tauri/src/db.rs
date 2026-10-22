@@ -15,6 +15,7 @@ pub struct Database {
 
 pub(crate) fn config_from_game(game: &Game) -> crate::importer::VersionConfig {
     crate::importer::VersionConfig {
+        mtool_strategy: game.mtool_strategy,
         launch_arguments: game.launch_arguments.clone(),
         version: game.current_version.clone(),
         version_source: game.version_source.clone(),
@@ -85,6 +86,10 @@ impl Database {
             params![id,config.version,config.version_source,config.engine,config.engine_source,config.launch_source,config.executable,config.working_directory,config.launch_type,
                 config.external_player.as_ref().map(serde_json::to_string).transpose().map_err(|e| Error::Validation(e.to_string()))?,config.mtool_target,config.mtool_loader])?;
         crate::launch_arguments::parse(&config.launch_arguments)?;
+        tx.execute(
+            "UPDATE games SET mtool_strategy=?2 WHERE id=?1",
+            params![id, config.mtool_strategy.as_str()],
+        )?;
         tx.execute(
             "UPDATE games SET launch_arguments=?2 WHERE id=?1",
             params![id, config.launch_arguments],
@@ -232,7 +237,7 @@ impl Database {
         connection.busy_timeout(std::time::Duration::from_secs(5))?;
         connection.execute_batch("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;")?;
         let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-        if version > 14 {
+        if version > 15 {
             return Err(Error::Validation("数据库版本较新，当前程序无法打开".into()));
         }
         if version == 0 {
@@ -321,6 +326,11 @@ impl Database {
         if version < 14 {
             let transaction = connection.unchecked_transaction()?;
             transaction.execute_batch(include_str!("../migrations/014_launch_arguments.sql"))?;
+            transaction.commit()?;
+        }
+        if version < 15 {
+            let transaction = connection.unchecked_transaction()?;
+            transaction.execute_batch(include_str!("../migrations/015_mtool_strategy.sql"))?;
             transaction.commit()?;
         }
         Ok(Self { connection })
@@ -458,6 +468,11 @@ impl Database {
         let entries = candidates
             .iter()
             .map(|c| RegistrationEntry {
+                mtool_strategy: crate::domain::MToolStrategy::from_evidence(
+                    c,
+                    c.executables.first().map(|exe| exe.relative_path.as_str()),
+                )
+                .unwrap_or_default(),
                 launch_arguments: String::new(),
                 candidate: c.clone(),
                 executable: if let Some(qsp) = &c.qsp {
@@ -550,6 +565,10 @@ impl Database {
             };
             transaction.prepare_cached("INSERT INTO games(id,canonical_title,display_title,install_path,install_path_key,main_executable,engine,current_version,version_source,working_directory,launch_type,mtool_target_exe,launch_source,engine_source) VALUES(?1,?2,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?12)")?.execute(params![id,candidate.suggested_title,candidate.install_path,key,entry.executable,candidate.engine,entry.version,entry.version_source,work,mode,if mtool { entry.executable.as_deref() } else { None },source])?;
             transaction.execute(
+                "UPDATE games SET mtool_strategy=?2 WHERE id=?1",
+                params![id, entry.mtool_strategy.as_str()],
+            )?;
+            transaction.execute(
                 "UPDATE games SET launch_arguments=?2 WHERE id=?1",
                 params![id, entry.launch_arguments],
             )?;
@@ -593,6 +612,7 @@ impl Database {
     pub fn sync_mtool_defaults(&mut self, candidates: &[ScanCandidate]) -> Result<Vec<Game>> {
         let mut eligible = vec![];
         let mut qsp_ids = vec![];
+        let mut bakin_ids = vec![];
         let mut save_candidates = vec![];
         for candidate in candidates.iter().filter(|c| c.status == "ready") {
             let Some(id) = &candidate.registered_id else {
@@ -622,6 +642,18 @@ impl Database {
                     .any(|file| contained_file(Path::new(&game.install_path), file, "qsp").is_ok())
             {
                 qsp_ids.push(id.clone());
+            }
+        }
+        for candidate in candidates
+            .iter()
+            .filter(|c| c.status == "ready" && c.engine == "RPG Developer Bakin")
+        {
+            let Some(id) = &candidate.registered_id else {
+                continue;
+            };
+            let game = self.game(id)?;
+            if game.install_path == candidate.install_path {
+                bakin_ids.push(id.clone());
             }
         }
         for candidate in candidates
@@ -659,9 +691,22 @@ impl Database {
                 changed_ids.push(id);
             }
         }
+        for id in &bakin_ids {
+            // Keep explicitly selected other engines; old Import may have marked Unknown manual.
+            if transaction.execute("UPDATE games SET engine='RPG Developer Bakin',engine_source='detected',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?1 AND engine!='RPG Developer Bakin' AND (engine_source!='manual' OR engine='Unknown')", [id])? > 0 {
+                changed_ids.push(id.clone());
+            }
+        }
         for game in &eligible {
             transaction.execute("UPDATE games SET launch_type='MTOOL',mtool_target_exe=main_executable,mtool_loader=NULL,working_directory='.',launch_source='detected',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?1", [&game.id])?;
             changed_ids.push(game.id.clone());
+        }
+        for id in bakin_ids {
+            // Bakin uses its dedicated launcher, including games just switched to MTool above.
+            // Keep target, arguments, inactive loader and the user's launch provenance intact.
+            if transaction.execute("UPDATE games SET mtool_strategy='BAKIN',working_directory='.',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?1 AND engine='RPG Developer Bakin' AND launch_type='MTOOL' AND mtool_strategy='INJECT'", [&id])? > 0 && !changed_ids.contains(&id) {
+                changed_ids.push(id);
+            }
         }
         for game in save_candidates {
             // Use the saved configuration, including automatic defaults refreshed above.
@@ -895,11 +940,19 @@ impl Database {
         let suffix = ids
             .map(|ids| format!(" WHERE id IN ({})", vec!["?"; ids.len()].join(",")))
             .unwrap_or_default();
-        let query = format!("SELECT id,canonical_title,display_title,install_path,current_version,version_source,main_executable,engine,launch_type,mtool_target_exe,mtool_loader,created_at,updated_at,working_directory,last_launched_at,external_player,play_status,favorite,launch_arguments FROM games{suffix} ORDER BY display_title COLLATE NOCASE,id");
+        let query = format!("SELECT id,canonical_title,display_title,install_path,current_version,version_source,main_executable,engine,launch_type,mtool_target_exe,mtool_loader,created_at,updated_at,working_directory,last_launched_at,external_player,play_status,favorite,launch_arguments,mtool_strategy FROM games{suffix} ORDER BY display_title COLLATE NOCASE,id");
         let mut statement = self.connection.prepare(&query)?;
         let mut games = statement
             .query_map(rusqlite::params_from_iter(ids.unwrap_or_default()), |row| {
                 Ok(Game {
+                    mtool_strategy: crate::domain::MToolStrategy::parse(&row.get::<_, String>(19)?)
+                        .map_err(|e| {
+                            rusqlite::Error::FromSqlConversionFailure(
+                                19,
+                                rusqlite::types::Type::Text,
+                                Box::new(e),
+                            )
+                        })?,
                     id: row.get(0)?,
                     canonical_title: row.get(1)?,
                     display_title: row.get(2)?,
@@ -1017,6 +1070,7 @@ impl Database {
         transaction.execute_batch(include_str!("../migrations/012_import_memories.sql"))?;
         transaction.execute_batch(include_str!("../migrations/013_library_organization.sql"))?;
         transaction.execute_batch(include_str!("../migrations/014_launch_arguments.sql"))?;
+        transaction.execute_batch(include_str!("../migrations/015_mtool_strategy.sql"))?;
         transaction.commit()?;
         // Logical reset has committed. A compaction failure must not leave stale records in the UI.
         let warning = self.compact_reset_file().err().map(|error| {
@@ -1067,7 +1121,12 @@ impl Database {
             .clone()
             .unwrap_or_else(|| existing.launch_arguments.clone());
         crate::launch_arguments::parse(&launch_arguments)?;
-        let launch_changed = launch_arguments != existing.launch_arguments
+        let mtool_strategy = edit.mtool_strategy.unwrap_or(existing.mtool_strategy);
+        if edit.launch_type == "MTOOL" && mtool_strategy == crate::domain::MToolStrategy::Bakin {
+            edit.working_directory = ".".into();
+        }
+        let launch_changed = mtool_strategy != existing.mtool_strategy
+            || launch_arguments != existing.launch_arguments
             || edit.launch_type != existing.launch_type
             || edit.main_executable != existing.main_executable
             || edit.external_player != existing.external_player
@@ -1101,7 +1160,11 @@ impl Database {
                     .as_deref()
                     .ok_or_else(|| Error::Validation("请配置 MTool target EXE".into()))?;
                 contained_file(Path::new(&existing.install_path), target, "exe")?;
-                if let Some(loader) = edit.mtool_loader.as_deref() {
+                if let Some(loader) = edit
+                    .mtool_loader
+                    .as_deref()
+                    .filter(|_| mtool_strategy == crate::domain::MToolStrategy::Inject)
+                {
                     let path = relative_path(loader)?;
                     if !path
                         .extension()
@@ -1134,6 +1197,10 @@ impl Database {
         transaction.execute("UPDATE games SET canonical_title=?2,display_title=?3,current_version=?4,version_source=?5,main_executable=?6,launch_type=?7,mtool_target_exe=?8,mtool_loader=?9,working_directory=?10,engine=?11,engine_source=?12,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?1",
             params![edit.id, edit.canonical_title.trim(), edit.display_title.trim(), edit.current_version.trim(), version_source, edit.main_executable, edit.launch_type, edit.mtool_target_exe, edit.mtool_loader, edit.working_directory, engine, engine_source])?;
         transaction.execute(
+            "UPDATE games SET mtool_strategy=?2 WHERE id=?1",
+            params![edit.id, mtool_strategy.as_str()],
+        )?;
+        transaction.execute(
             "UPDATE games SET launch_arguments=?2 WHERE id=?1",
             params![edit.id, launch_arguments],
         )?;
@@ -1148,7 +1215,8 @@ impl Database {
                     .map_err(|e| Error::Validation(e.to_string()))?
             ],
         )?;
-        if launch_arguments != existing.launch_arguments
+        if mtool_strategy != existing.mtool_strategy
+            || launch_arguments != existing.launch_arguments
             || edit.external_player != existing.external_player
             || edit.launch_type != existing.launch_type
             || edit.main_executable != existing.main_executable
@@ -1212,6 +1280,69 @@ mod tests {
     }
 
     #[test]
+    fn schema_14_mtool_migration_keeps_old_strategy_and_persists_per_game_edits() {
+        use crate::domain::MToolStrategy;
+        let temp = tempfile::tempdir().unwrap();
+        let directory = temp.path().join("game");
+        std::fs::create_dir(&directory).unwrap();
+        std::fs::write(directory.join("Game.exe"), b"synthetic").unwrap();
+        let path = temp.path().join("isolated.db");
+        let mut db = Database::open(&path).unwrap();
+        let id = db
+            .register(&[analyze_directory(&directory).unwrap()])
+            .unwrap()
+            .remove(0);
+        db.record_launch(&id).unwrap();
+        let before = serde_json::to_value(db.game(&id).unwrap()).unwrap();
+        let history = db.launch_history(&id).unwrap();
+        db.connection
+            .execute_batch("ALTER TABLE games DROP COLUMN mtool_strategy; PRAGMA user_version=14;")
+            .unwrap();
+        drop(db);
+        let mut db = Database::open(&path).unwrap();
+        assert_eq!(serde_json::to_value(db.game(&id).unwrap()).unwrap(), before);
+        assert_eq!(db.launch_history(&id).unwrap(), history);
+        let settings = db.settings().unwrap();
+        let mut edit = draft(&db.game(&id).unwrap());
+        edit.launch_type = "MTOOL".into();
+        edit.mtool_target_exe = Some("Game.exe".into());
+        edit.mtool_strategy = Some(MToolStrategy::Bakin);
+        edit.working_directory = "missing-ignored-in-bakin".into();
+        db.edit_game(edit).unwrap();
+        drop(db);
+        let mut db = Database::open(&path).unwrap();
+        let saved = db.game(&id).unwrap();
+        assert_eq!(saved.mtool_strategy, MToolStrategy::Bakin);
+        assert_eq!(saved.working_directory, ".");
+        let mut legacy_edit = serde_json::to_value(draft(&saved)).unwrap();
+        legacy_edit
+            .as_object_mut()
+            .unwrap()
+            .remove("mtool_strategy");
+        db.edit_game(serde_json::from_value(legacy_edit).unwrap())
+            .unwrap();
+        assert_eq!(db.game(&id).unwrap().mtool_strategy, MToolStrategy::Bakin);
+        assert_eq!(
+            db.settings().unwrap().mtool_injector,
+            settings.mtool_injector
+        );
+        let mut legacy_game = before;
+        legacy_game
+            .as_object_mut()
+            .unwrap()
+            .remove("mtool_strategy");
+        assert_eq!(
+            serde_json::from_value::<Game>(legacy_game)
+                .unwrap()
+                .mtool_strategy,
+            MToolStrategy::Inject
+        );
+        let mut invalid = serde_json::to_value(draft(&saved)).unwrap();
+        invalid["mtool_strategy"] = serde_json::json!("SHELL");
+        assert!(serde_json::from_value::<GameEdit>(invalid).is_err());
+    }
+
+    #[test]
     fn schema_13_arguments_migration_persists_clears_and_preserves_old_edit_callers() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("fixture");
@@ -1227,7 +1358,7 @@ mod tests {
         let before = serde_json::to_value(db.game(&id).unwrap()).unwrap();
         let history = db.launch_history(&id).unwrap();
         db.connection
-            .execute_batch("ALTER TABLE games DROP COLUMN launch_arguments;PRAGMA user_version=13;")
+            .execute_batch("ALTER TABLE games DROP COLUMN mtool_strategy;ALTER TABLE games DROP COLUMN launch_arguments;PRAGMA user_version=13;")
             .unwrap();
         drop(db);
         let mut db = Database::open(&path).unwrap();
@@ -1237,7 +1368,7 @@ mod tests {
             db.connection
                 .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
                 .unwrap(),
-            14
+            15
         );
         let mut edit = draft(&db.game(&id).unwrap());
         edit.launch_arguments = Some(r#"-dx11 --profile "my saves""#.into());
@@ -1270,7 +1401,7 @@ mod tests {
             db.connection
                 .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
                 .unwrap(),
-            14
+            15
         );
         assert!(db.games().unwrap().is_empty());
     }
@@ -1289,7 +1420,7 @@ mod tests {
             .unwrap();
         let before = serde_json::to_string(&db.games().unwrap()).unwrap();
         db.connection
-            .execute_batch("ALTER TABLE games DROP COLUMN launch_arguments;DROP TABLE game_tags;DROP TABLE library_tags;ALTER TABLE games DROP COLUMN favorite;DROP TABLE import_memories;PRAGMA user_version=11;")
+            .execute_batch("ALTER TABLE games DROP COLUMN mtool_strategy;ALTER TABLE games DROP COLUMN launch_arguments;DROP TABLE game_tags;DROP TABLE library_tags;ALTER TABLE games DROP COLUMN favorite;DROP TABLE import_memories;PRAGMA user_version=11;")
             .unwrap();
         drop(db);
         let db = Database::open(&path).unwrap();
@@ -1299,7 +1430,7 @@ mod tests {
             db.connection
                 .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
                 .unwrap(),
-            14
+            15
         );
         assert!(!db
             .connection
@@ -1440,7 +1571,7 @@ mod tests {
         }
         let before = serde_json::to_string(&db.games().unwrap()).unwrap();
         db.connection
-            .execute_batch("ALTER TABLE games DROP COLUMN launch_arguments;DROP TABLE game_tags;DROP TABLE library_tags;ALTER TABLE games DROP COLUMN favorite;DROP TABLE import_memories;DROP TABLE duplicate_reviews;")
+            .execute_batch("ALTER TABLE games DROP COLUMN mtool_strategy;ALTER TABLE games DROP COLUMN launch_arguments;DROP TABLE game_tags;DROP TABLE library_tags;ALTER TABLE games DROP COLUMN favorite;DROP TABLE import_memories;DROP TABLE duplicate_reviews;")
             .unwrap();
         db.connection
             .execute_batch(include_str!("../migrations/010_duplicate_ignores.sql"))
@@ -1485,7 +1616,7 @@ mod tests {
         let before = serde_json::to_string(&db.games().unwrap()).unwrap();
         db.connection
             .execute_batch(
-                "ALTER TABLE games DROP COLUMN launch_arguments;DROP TABLE game_tags;DROP TABLE library_tags;ALTER TABLE games DROP COLUMN favorite;DROP TABLE import_memories;DROP TABLE duplicate_reviews;PRAGMA user_version=9;",
+                "ALTER TABLE games DROP COLUMN mtool_strategy;ALTER TABLE games DROP COLUMN launch_arguments;DROP TABLE game_tags;DROP TABLE library_tags;ALTER TABLE games DROP COLUMN favorite;DROP TABLE import_memories;DROP TABLE duplicate_reviews;PRAGMA user_version=9;",
             )
             .unwrap();
         drop(db);
@@ -1516,7 +1647,7 @@ mod tests {
             db.connection
                 .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
                 .unwrap(),
-            14
+            15
         );
         assert!(!db
             .connection
@@ -1542,7 +1673,7 @@ mod tests {
         let history = db.launch_history(&id).unwrap();
         db.connection
             .execute_batch(
-                "ALTER TABLE games DROP COLUMN launch_arguments;DROP TABLE game_tags;DROP TABLE library_tags;ALTER TABLE games DROP COLUMN favorite;DROP TABLE import_memories;DROP TABLE duplicate_reviews;DROP TABLE version_history;PRAGMA user_version=8;",
+                "ALTER TABLE games DROP COLUMN mtool_strategy;ALTER TABLE games DROP COLUMN launch_arguments;DROP TABLE game_tags;DROP TABLE library_tags;ALTER TABLE games DROP COLUMN favorite;DROP TABLE import_memories;DROP TABLE duplicate_reviews;DROP TABLE version_history;PRAGMA user_version=8;",
             )
             .unwrap();
         drop(db);
@@ -1557,7 +1688,7 @@ mod tests {
             db.connection
                 .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
                 .unwrap(),
-            14
+            15
         );
         assert!(!db
             .connection
@@ -1601,6 +1732,7 @@ mod tests {
         std::fs::write(target.join("Game.exe"), b"fixture").unwrap();
         let candidate = analyze_directory(&target).unwrap();
         let entry = RegistrationEntry {
+            mtool_strategy: Default::default(),
             launch_arguments: String::new(),
             candidate,
             executable: Some("Game.exe".into()),
@@ -2012,7 +2144,7 @@ mod tests {
             db.connection
                 .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
                 .unwrap(),
-            14
+            15
         );
     }
     #[test]
@@ -2183,6 +2315,7 @@ mod tests {
             std::fs::create_dir_all(path.join("包装")).unwrap();
             std::fs::write(path.join("包装/任意.exe"), b"fixture").unwrap();
             entries.push(RegistrationEntry {
+                mtool_strategy: Default::default(),
                 launch_arguments: String::new(),
                 candidate: analyze_directory(&path).unwrap(),
                 executable: Some("包装/任意.exe".into()),
@@ -2217,6 +2350,7 @@ mod tests {
     }
     fn draft(game: &Game) -> GameEdit {
         GameEdit {
+            mtool_strategy: None,
             launch_arguments: Some(game.launch_arguments.clone()),
             id: game.id.clone(),
             canonical_title: game.canonical_title.clone(),
@@ -2271,6 +2405,154 @@ mod tests {
             .aliases
             .is_empty());
         assert_eq!(std::fs::read(root.join("Game.exe")).unwrap(), b"fixture");
+    }
+
+    #[test]
+    fn completed_bakin_scan_upgrades_mtool_strategy_and_preserves_other_saved_configuration() {
+        use crate::domain::MToolStrategy;
+        for (source, strategy, known_engine) in [
+            ("detected", MToolStrategy::Inject, false),
+            ("manual", MToolStrategy::Inject, false),
+            ("manual", MToolStrategy::Inject, true),
+            ("detected", MToolStrategy::Bakin, false),
+            ("manual", MToolStrategy::Bakin, false),
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            let root = temp.path().join("synthetic Bakin");
+            std::fs::create_dir_all(root.join("data")).unwrap();
+            std::fs::write(root.join("みゆつれ.exe"), b"synthetic").unwrap();
+            let mut db = Database::open(&temp.path().join("fixture.db")).unwrap();
+            let id = db
+                .register(&[analyze_directory(&root).unwrap()])
+                .unwrap()
+                .remove(0);
+            assert_eq!(db.game(&id).unwrap().engine, "Unknown");
+            let mut edit = draft(&db.game(&id).unwrap());
+            if known_engine {
+                edit.engine = "RPG Developer Bakin".into();
+            }
+            edit.launch_type = "MTOOL".into();
+            edit.mtool_strategy = Some(strategy);
+            edit.working_directory = "data".into();
+            edit.launch_arguments = Some("-keep-direct-arguments".into());
+            edit.mtool_loader = Some("loaders/keep-inactive.dll".into());
+            db.edit_game(edit).unwrap();
+            db.record_launch(&id).unwrap();
+            // Import historically marked even an unrecognized engine as manual.
+            db.connection
+                .execute(
+                    "UPDATE games SET engine_source=?2 WHERE id=?1",
+                    params![id, source],
+                )
+                .unwrap();
+            let before = db.version_config(&id).unwrap();
+            for file in ["bakinplayer.exe", "bakinengine.dll", "data.rbpack"] {
+                std::fs::write(root.join("data").join(file), b"synthetic").unwrap();
+            }
+            let mut scan =
+                crate::scanner::analyze_quick_controlled(&root, &|| false, &|_| {}).unwrap();
+            scan.registered_id = Some(id.clone());
+            assert_eq!(scan.engine, "RPG Developer Bakin");
+            let mut wrong_path = scan.clone();
+            wrong_path.install_path = temp.path().join("unrelated").display().to_string();
+            let mut incomplete = scan.clone();
+            incomplete.status = "incomplete".into();
+            let mut conflict = scan.clone();
+            conflict.engine = "Unknown".into();
+            assert!(db
+                .sync_mtool_defaults(&[wrong_path, incomplete, conflict])
+                .unwrap()
+                .is_empty());
+            assert_eq!(db.version_config(&id).unwrap(), before);
+            let changed = db.sync_mtool_defaults(std::slice::from_ref(&scan)).unwrap();
+            assert_eq!(changed.len(), 1);
+            assert_eq!(changed[0].engine, "RPG Developer Bakin");
+            let mut expected = before;
+            expected.engine = "RPG Developer Bakin".into();
+            expected.engine_source = if known_engine { source } else { "detected" }.into();
+            expected.mtool_strategy = MToolStrategy::Bakin;
+            expected.working_directory = ".".into();
+            assert_eq!(db.version_config(&id).unwrap(), expected);
+            assert_eq!(db.launch_history(&id).unwrap().len(), 1);
+            assert!(db
+                .sync_mtool_defaults(std::slice::from_ref(&scan))
+                .unwrap()
+                .is_empty());
+            let mut edit = draft(&db.game(&id).unwrap());
+            edit.engine = "My Manual Engine".into();
+            edit.mtool_strategy = Some(MToolStrategy::Inject);
+            edit.working_directory = "data".into();
+            db.edit_game(edit).unwrap();
+            let manual = db.version_config(&id).unwrap();
+            assert!(db.sync_mtool_defaults(&[scan]).unwrap().is_empty());
+            assert_eq!(db.version_config(&id).unwrap(), manual);
+            assert_eq!(
+                std::fs::read(root.join("みゆつれ.exe")).unwrap(),
+                b"synthetic"
+            );
+        }
+    }
+
+    #[test]
+    fn bakin_scan_keeps_direct_launch_and_promotes_new_mtool_defaults_in_the_same_scan() {
+        use crate::domain::MToolStrategy;
+        for marker in [false, true] {
+            let temp = tempfile::tempdir().unwrap();
+            let root = temp.path().join("synthetic Bakin");
+            std::fs::create_dir_all(root.join("data")).unwrap();
+            std::fs::write(root.join("Game.exe"), b"synthetic").unwrap();
+            let mut db = Database::open(&temp.path().join("fixture.db")).unwrap();
+            let id = db
+                .register(&[analyze_directory(&root).unwrap()])
+                .unwrap()
+                .remove(0);
+            assert_eq!(db.game(&id).unwrap().launch_type, "DIRECT");
+            for file in ["bakinplayer.exe", "bakinengine.dll", "data.rbpack"] {
+                std::fs::write(root.join("data").join(file), b"synthetic").unwrap();
+            }
+            if marker {
+                std::fs::write(root.join("Start with tool.bat"), b"not executed or parsed")
+                    .unwrap();
+            }
+            let mut scan =
+                crate::scanner::analyze_quick_controlled(&root, &|| false, &|_| {}).unwrap();
+            scan.registered_id = Some(id.clone());
+            assert_eq!(scan.engine, "RPG Developer Bakin");
+            assert_eq!(scan.mtool_detected, marker);
+            let saved = db.sync_mtool_defaults(&[scan.clone()]).unwrap();
+            assert_eq!(saved.len(), 1);
+            assert_eq!(saved[0].engine, "RPG Developer Bakin");
+            assert_eq!(
+                saved[0].launch_type,
+                if marker { "MTOOL" } else { "DIRECT" }
+            );
+            assert_eq!(
+                saved[0].mtool_strategy,
+                if marker {
+                    MToolStrategy::Bakin
+                } else {
+                    MToolStrategy::Inject
+                }
+            );
+            assert!(db.sync_mtool_defaults(&[scan.clone()]).unwrap().is_empty());
+            drop(db);
+            let mut reopened = Database::open(&temp.path().join("fixture.db")).unwrap();
+            assert_eq!(
+                reopened.game(&id).unwrap().mtool_strategy,
+                saved[0].mtool_strategy
+            );
+            if marker {
+                // An explicit direct launch remains direct even with a package MTool marker.
+                let mut edit = draft(&reopened.game(&id).unwrap());
+                edit.launch_type = "DIRECT".into();
+                edit.mtool_strategy = Some(MToolStrategy::Inject);
+                reopened.edit_game(edit).unwrap();
+                let before = reopened.version_config(&id).unwrap();
+                assert!(reopened.sync_mtool_defaults(&[scan]).unwrap().is_empty());
+                assert_eq!(reopened.version_config(&id).unwrap(), before);
+            }
+            assert_eq!(std::fs::read(root.join("Game.exe")).unwrap(), b"synthetic");
+        }
     }
 
     #[test]

@@ -20,12 +20,12 @@ bash scripts/Check-Cloud.sh
 
 ## CI 与下载
 
-现有 `check.yml` 内 Linux 和 Windows 两个 job 并行执行，PR、main（兼容 master）、版本 Tag、手动构建和正式 Release 均保留检查：
+`check.yml` 先用轻量 CI scope 判断变化范围，需完整检查时 Linux 和 Windows 并行执行。代码 / 构建配置的 PR、main（兼容 master）、版本 Tag、手动构建及正式 Release 保留以下检查；纯文档按下节规则跳过：
 
 | job     | 检查与交付                                                                                         |
 | ------- | -------------------------------------------------------------------------------------------------- |
 | Linux   | 使用上述入口验证前端与可移植 Rust 核心，不构建桌面程序                                             |
-| Windows | 完整前端 / Rust 核心测试、格式、TypeScript / Vite、所有桌面目标 Clippy，并构建 Windows Release EXE |
+| Windows | TypeScript / Vite、完整 Rust 核心原生测试、所有桌面目标严格 Clippy，并构建 Windows Release EXE |
 | Publish | Tag 推送自动发布；也支持已有 Release / 显式手动上传。等待两端成功后校验、上传并复核资产            |
 
 所有 Windows 构建都上传 `butter-manager-windows-<完整提交 SHA>` artifact；PR 名称为 `butter-manager-windows-pr-<编号>`，保存 14 天。确认整个运行成功后下载与目标提交对应的 artifact，解压取得单 EXE。过期后可以对目标提交手动重跑构建，普通手动运行保持 `publish_release=false`，不会创建 Tag 或 Release。
@@ -40,13 +40,33 @@ gh run download <run-id> --name butter-manager-windows-<完整提交SHA> --dir .
 
 正式发布另保留版本化 Portable ZIP 与 SHA-256，规则见 [Portable 说明](portable.md)。下载 GitHub artifact 得到的外层 ZIP 是 Actions 包装，不是应用需要的运行时依赖。
 
-CI 仅缓存前端下载、Cargo registry / git 和编译 target；不缓存用户资料或 `node_modules`。前端按系统、架构与锁定工具配置隔离。Rust 另按固定工具链和 runner 镜像版本隔离，Windows Release 仍使用独立 `portable-release` target，保留完整测试、默认桌面所有目标严格 Clippy 和 Release EXE 构建。
+CI 缓存前端下载、Cargo registry / git、编译 target，以及只含源码摘要的成功验证标记；不缓存用户资料、正式 `data/` 或 `node_modules`。前端优先按系统、架构及锁定工具 / 依赖配置匹配，锁文件或版本配置变化时回退同系统 / 架构的下载缓存，继续按冻结锁文件安装并校验依赖，不复用安装后的目录。Rust 仍按系统、架构、固定工具链和 runner 镜像版本隔离；Windows Release 使用独立 `portable-release` target，保留完整原生测试、默认桌面所有目标严格 Clippy 和新 EXE 构建。
 
 Rust 完整缓存按 Cargo manifest / lock 的依赖集合保存，**不再每个提交保存一份约 800 MB 的相同依赖副本**。优先恢复相同依赖的完整缓存，其次恢复同依赖的失败部分缓存，再回退到同系统 / 架构 / 镜像 / 工具链的其他完整依赖缓存；Cargo 继续按锁文件、源码、特性和构建模式校验并补编译，缓存命中不跳过任何检查。过渡期也可恢复旧格式的相同依赖缓存。镜像或 Rust 工具链改变时保持隔离，可能需要冷构建。
 
 还原与保存拆为两个步骤：整轮 job 成功后才写入完整缓存；检查失败时，可单独保存已完成的依赖编译供修复重跑使用，不覆盖完整缓存。不为取消的运行保存缓存。每个依赖集合的完整 / 部分键分别不可变，已有键不重复上传；失败部分缓存也不会阻止后续成功结果升级为完整缓存。
 
 实际耗时应区分冷构建与缓存命中。优化前本 PR 的 Windows 成功运行 `38962634723` 共约 **12 分 52 秒**：后端测试 2 分 45 秒、默认桌面 Clippy 2 分 23 秒、Release EXE 5 分 18 秒；该轮 Rust 缓存未命中。优化结果以本 PR 后续相同配置的实际 CI 记录为准，不承诺固定提速倍数。
+
+## 文档更新与验证复用
+
+| 变化 / 事件 | 行为 |
+| --- | --- |
+| 纯文档 PR、main / master 的纯文档推送 | 仅轻量 scope job；Linux / Windows 耗时检查与 EXE 上传跳过 |
+| 混合 PR 的后续文档提交，当前源码已有两端成功标记 | 复用验证结果，跳过耗时检查与新 EXE |
+| 尚无相同源码的成功标记（检查未完成 / 失败，或缓存不可用） | 混合 PR 继续完整检查，避免将未验证代码标为通过 |
+| 代码、测试、依赖、构建脚本、工作流或其他配置变化 | 完整检查并构建 EXE |
+| 版本 Tag、Release、显式手动构建 | 始终完整检查并构建，不使用文档跳过规则 |
+
+文档白名单包括根目录 README / CONTRIBUTING / CHANGELOG / AGENTS / ROADMAP 的 `.md` 文件，`docs/` 下的 Markdown、文本及常用图片 / PDF，资源目录的 `README.md` 及 GitHub 的 Markdown PR / Issue 模板。未知文件类型按代码处理；文档和代码混合改动运行完整检查。比较包含重命名前后的路径；新分支、历史缺失或比较失败时保守运行完整检查。
+
+成功标记按**实际检出的完整源码树**计算：除文档白名单外，全部已跟踪文件的路径、Git blob 和文件模式均纳入摘要，包含工作流、工具链、依赖和测试，不仅比较 PR head 的源码。只有 Linux 和 Windows 全部成功、检出提交一致，才写入该摘要的标记；检查失败、取消或未完成不写。标记仅用于跳过混合 PR 后续文档提交，同源码的代码提交、Tag 和手动操作仍运行检查。缓存被清理时自动退回完整检查；脚本的隔离 Git 回归覆盖比较与复用边界。
+
+取消重复运行放在 Linux / Windows job 层：仅文档而跳过的新运行不会取消仍在执行的代码检查；需要完整检查的新运行仍取消同分支 / PR 的旧重复 job。发布 job 单独串行且不自动取消，保持 Tag / Release 保护。
+
+前端 DOM 测试和格式检查集中在 Linux 执行一次；Windows 保留前端生产构建、完整 Rust 原生测试、所有桌面目标严格 Clippy 和 EXE。未按用例名称跳过 Import、Journal、更新 / 回退、存档、回收站或路径身份保护；原生测试原有忽略策略保持。最近基线运行 [39830749695](https://github.com/Zhehao-w/butter-manager/actions/runs/39830749695) 的 Windows 前端测试为 69 秒、格式为 7 秒、EXE 构建为 117 秒；本次消除前两项跨平台重复，实际总耗时另含 gate / 缓存开销，以后续运行记录为准。
+
+**跳过文档构建不会生成本次提交的新 artifact，也不把旧 EXE 改标为新提交。** 使用最近成功代码构建的 artifact，程序内提交号仍对应那次构建；artifact 保留 14 天，过期或需要当前 SHA 的 EXE 时，手动运行工作流且保持 `publish_release=false`。scope job 的 Summary 会注明跳过原因与产物规则。普通手动操作不会创建 Tag 或 Release。
 
 ## Tag 自动发布
 

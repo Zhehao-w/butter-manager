@@ -121,6 +121,16 @@ fn ini_value<'a>(ini: &'a str, section: &str, key: &str) -> Option<&'a str> {
 
 pub(crate) fn quick(base: &Path, names: &HashSet<String>) -> Evidence {
     let mut result = Evidence::default();
+    if bakin_layout(base) {
+        let launchers: Vec<_> = names
+            .iter()
+            .filter(|name| name.ends_with(".exe") && !crate::scanner::helper(name))
+            .collect();
+        if launchers.len() == 1 {
+            result.engines.insert("RPG Developer Bakin");
+            result.main = Some(launchers[0].clone());
+        }
+    }
     for (paths, engine) in [
         (["js/rmmz_core.js", "www/js/rmmz_core.js"], "RPG Maker MZ"),
         (["js/rpg_core.js", "www/js/rpg_core.js"], "RPG Maker MV"),
@@ -363,6 +373,12 @@ fn metadata_evidence(
     evidence: &mut Evidence,
 ) {
     let lower = metadata.to_ascii_lowercase();
+    if lower.contains("rpg developer bakin")
+        && lower.contains("bakin game launcher")
+        && bakin_layout(base)
+    {
+        evidence.engines.insert("RPG Developer Bakin");
+    }
     if (lower.contains("kirikiri") || lower.contains("吉里吉里"))
         && names.iter().any(|n| n.ends_with(".xp3") && file(base, n))
     {
@@ -380,6 +396,30 @@ fn metadata_evidence(
     {
         evidence.engines.insert("WOLF RPG Editor");
     }
+}
+
+pub(crate) fn bakin_layout(base: &Path) -> bool {
+    [
+        "data/bakinplayer.exe",
+        "data/bakinengine.dll",
+        "data/data.rbpack",
+    ]
+    .iter()
+    .all(|path| file(base, path))
+}
+
+pub(crate) fn bakin_launcher(base: &Path, filename: &str, sole_launcher: bool) -> bool {
+    if !bakin_layout(base)
+        || crate::scanner::helper(filename)
+        || !filename.to_ascii_lowercase().ends_with(".exe")
+    {
+        return false;
+    }
+    sole_launcher
+        || local(base, filename).is_some_and(|path| {
+            let metadata = version_strings(&path).to_ascii_lowercase();
+            metadata.contains("rpg developer bakin") && metadata.contains("bakin game launcher")
+        })
 }
 
 // Seek to the bounded Godot trailer/header; never load an entire EXE or execute it.

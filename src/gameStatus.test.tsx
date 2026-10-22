@@ -12,6 +12,7 @@ import { useLibraryLayout, useSavedSort } from './preferences';
 import type { Game } from './types';
 
 export const statusGame: Game = {
+  mtool_strategy: 'INJECT',
   launch_arguments: '',
   id: 'g',
   canonical_title: 'Game',

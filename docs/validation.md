@@ -1,5 +1,15 @@
 # 验证记录
 
+## MTool Bakin 专用启动（2026-10-22，未发布）
+
+基于最新 main `9c9a030`，独立分支 `codex/mtool-bakin-launcher`。新增 Bakin 组合资源 / Windows 产品元数据识别，排除内部播放器；按游戏保存普通注入 / BakinLauncher 策略。详情、Import、临时启动、静态 BAT 证据及调试预览使用相同策略；更新继承 / 显式覆盖、中断恢复和回退保留或还原策略。实际启动只使用公共专用启动器与当前游戏路径，成功后启动 runtime，不额外传 DLL、不执行下载 BAT，不改变全局 injector 或随包 MTool 清理白名单。
+
+完整 `bash scripts/Check-Cloud.sh` 通过：锁定依赖、Prettier / Rustfmt、前端 **276 项**、TypeScript / Vite、Linux Rust 核心 **278 项**及独立 Node **8 组合成 Unity 核验**。Linux 核心所有目标 Clippy（`-D clippy::all`）、文档相对链接与差异检查通过；原有三处 Linux 条件编译警告保留。新增隔离回归覆盖完整 / 弱资源、根启动器与内部播放器、绝对 BAT 路径归属及链接逃逸、分析目标优先、缺失专用启动器、无 DLL 的命令参数 / 工作目录、schema 14 迁移、旧数据 / Journal、策略更新恢复与回退。Windows 进程树专项补充 Bakin 成功及失败后的后代进程保护，须由 Windows CI 执行，不计入本节 Linux 通过数量。
+
+应用版本仍为 **1.4.0**，开发数据库升级至 **schema 15**。旧数据库与旧 Journal 默认普通注入，未显式修改的更新继承已有策略；已发布的 1.4.0 及更早 EXE 无法打开升级库，勿直接降级。只使用隔离临时夹具，未访问、复制、备份或导出正式游戏、存档、数据库、WAL、SHM 或 `data/`；未使用 GUI 自动化。
+
+创建 Draft PR 后由既有 GitHub Actions 执行完整 Windows 原生测试、桌面严格 Clippy 和 EXE 构建，本次不手工构建 EXE、不创建 Tag 或 Release。真实 Bakin 启动、读档、文件操作保护及 UI 排版按 [专项验收步骤](mtool-bakin.md)由用户实机确认；Linux 检查不替代这些验收。
+
 ## 1.4.0 发布准备（2026-10-21）
 
 PR #21 已合并到 main `88d25cb`。最终功能提交 `0b697c9` 的 Linux / Windows 完整 CI、桌面所有目标严格 Clippy 与 EXE 构建已通过（39694450216）。本次统一 package、Tauri、Cargo manifest / lock 和两处应用内版本断言为 **1.4.0**，更新 README、变更记录、路线图、Portable 与启动参数等专项说明；历史验证记录保持。

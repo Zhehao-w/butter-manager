@@ -8,6 +8,7 @@ const engines = [
   'RPG Maker MZ',
   'RPG Maker (legacy)',
   'Godot',
+  'RPG Developer Bakin',
   'WOLF RPG Editor',
   'KiriKiri',
   'NScripter',

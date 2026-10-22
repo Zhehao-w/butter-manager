@@ -722,8 +722,12 @@ async fn preview_mtool_launch(
     executable: Option<String>,
     loader: Option<String>,
     working_directory: String,
+    mtool_strategy: Option<crate::domain::MToolStrategy>,
 ) -> CommandResult<MToolLaunchPreview> {
     let (mut game, settings) = with_db(&state, |db| Ok((db.game(&id)?, db.settings()?)))?;
+    if let Some(strategy) = mtool_strategy {
+        game.mtool_strategy = strategy;
+    }
     game.main_executable = executable.clone();
     game.mtool_target_exe = executable;
     game.mtool_loader = loader;

@@ -2,6 +2,10 @@
 
 ## 未发布
 
+- 增加 RPG Developer Bakin 根目录启动器识别，以及按游戏保存的 MTool 普通注入 / Bakin 专用启动策略，覆盖详情、Import、临时启动、更新恢复和版本回退。
+- Bakin 通过公共 `BakinLauncher.exe` 启动后再打开 MTool runtime，不额外注入 DLL；BAT 仅作白名单静态证据，保留进程树和文件操作保护。
+- 开发数据库升级至 **schema 15**，旧游戏与旧 Journal 默认保持普通注入；应用版本暂为 1.4.0。已发布的 1.4.0 及更早 EXE 无法打开迁移后的库，勿直接降级。详见 [Bakin 说明](docs/mtool-bakin.md)。
+
 ## 1.4.0
 
 - 新增可保存的直接 EXE 启动参数，支持多参数与双引号；Import 更新、Journal 恢复及版本回退保留或还原参数。

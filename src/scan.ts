@@ -1,4 +1,4 @@
-import type { ScanCandidate, ExternalPlayer } from './types';
+import type { ScanCandidate, ExternalPlayer, MToolStrategy } from './types';
 import { qspConfig, suggestedPlayer } from './qsp';
 
 export type ScanSort =
@@ -83,4 +83,22 @@ const directoryDateFormat = new Intl.DateTimeFormat('zh-CN', {
 });
 export function directoryTime(ms: number | null): string {
   return ms == null ? '-' : directoryDateFormat.format(ms);
+}
+
+// Static BAT evidence supplies strategy only for the target already chosen by analysis.
+export function suggestedMtoolStrategy(
+  candidate: ScanCandidate | undefined,
+  executable = candidate ? suggestedPlayer(candidate) : null,
+): MToolStrategy {
+  if (!candidate) return 'INJECT';
+  if (candidate.engine === 'RPG Developer Bakin') return 'BAKIN';
+  const normalize = (value: string) => value.replaceAll('\\', '/').toLocaleLowerCase();
+  const strategies = new Set(
+    candidate.bats.flatMap(({ recipe }) =>
+      recipe && executable && normalize(recipe.target_exe) === normalize(executable)
+        ? [recipe.mtool_strategy ?? 'INJECT']
+        : [],
+    ),
+  );
+  return strategies.size === 1 ? [...strategies][0] : 'INJECT';
 }

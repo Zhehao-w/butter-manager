@@ -12,6 +12,49 @@ pub enum Error {
 }
 pub type Result<T> = std::result::Result<T, Error>;
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum MToolStrategy {
+    #[default]
+    Inject,
+    Bakin,
+}
+impl MToolStrategy {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Inject => "INJECT",
+            Self::Bakin => "BAKIN",
+        }
+    }
+    pub fn parse(value: &str) -> Result<Self> {
+        match value {
+            "INJECT" => Ok(Self::Inject),
+            "BAKIN" => Ok(Self::Bakin),
+            _ => Err(Error::Validation("无效的 MTool 启动策略".into())),
+        }
+    }
+    /// BAT strategy evidence may supplement analysis, but never changes its selected target.
+    pub fn from_evidence(candidate: &ScanCandidate, executable: Option<&str>) -> Option<Self> {
+        if candidate.engine == "RPG Developer Bakin" {
+            return Some(Self::Bakin);
+        }
+        let normalize = |value: &str| value.replace('\\', "/").to_lowercase();
+        let target = normalize(executable?);
+        let strategies: std::collections::HashSet<_> = candidate
+            .bats
+            .iter()
+            .filter_map(|bat| bat.recipe.as_ref())
+            .filter(|recipe| normalize(&recipe.target_exe) == target)
+            .map(|recipe| recipe.mtool_strategy)
+            .collect();
+        if strategies.len() == 1 {
+            strategies.into_iter().next()
+        } else {
+            None
+        }
+    }
+}
+
 /// The executable stays in main_executable; all paths remain relative to the game root.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ExternalPlayer {
@@ -93,6 +136,8 @@ pub struct LibraryTag {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Game {
+    #[serde(default)]
+    pub mtool_strategy: MToolStrategy,
     pub id: String,
     pub canonical_title: String,
     pub display_title: String,
@@ -123,6 +168,8 @@ pub struct Game {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LaunchConfiguration {
+    #[serde(default)]
+    pub mtool_strategy: Option<MToolStrategy>,
     pub main_executable: Option<String>,
     pub working_directory: String,
     #[serde(default)]
@@ -135,6 +182,8 @@ pub struct LaunchConfiguration {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GameEdit {
+    #[serde(default)]
+    pub mtool_strategy: Option<MToolStrategy>,
     pub id: String,
     pub canonical_title: String,
     pub display_title: String,
@@ -189,6 +238,8 @@ pub struct ToolCheck {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MToolLaunchPreview {
+    pub mtool_strategy: MToolStrategy,
+    pub launcher: String,
     pub shared_root: String,
     pub target_exe: String,
     pub architecture: String,
@@ -208,6 +259,8 @@ pub struct ExeCandidate {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MToolRecipe {
+    #[serde(default)]
+    pub mtool_strategy: MToolStrategy,
     pub target_exe: String,
     pub loader: String,
     pub injector: String,
@@ -268,6 +321,7 @@ pub struct RegistrationSelection {
 
 #[derive(Debug, Clone)]
 pub struct RegistrationEntry {
+    pub mtool_strategy: MToolStrategy,
     pub candidate: ScanCandidate,
     pub executable: Option<String>,
     pub external_player: Option<ExternalPlayer>,

@@ -211,6 +211,7 @@ impl Fixture {
             .remove(0);
         let game = db.game(&id).unwrap();
         db.edit_game(GameEdit {
+            mtool_strategy: None,
             id: id.clone(),
             canonical_title: "魔法少女".into(),
             display_title: "我的游戏".into(),
@@ -257,6 +258,7 @@ impl Fixture {
     ) -> String {
         let candidate = scanner::analyze_directory(&self.source).unwrap();
         let mut selection = Selection {
+            mtool_strategy: None,
             source: paths::path_text(&self.source).unwrap(),
             title: "incoming name".into(),
             target_name: "魔法少女".into(),
@@ -384,6 +386,7 @@ fn manual_launch_fixture(mtool: bool) -> Fixture {
     db.save_settings(settings).unwrap();
     let game = db.game(&f.id).unwrap();
     db.edit_game(GameEdit {
+        mtool_strategy: None,
         id: game.id,
         canonical_title: game.canonical_title,
         display_title: game.display_title,
@@ -1313,6 +1316,7 @@ fn source_containing_an_external_save_is_blocked_but_ordinary_payload_changes_ar
     let settings = f.db.lock().unwrap().settings().unwrap();
     let job = f.tasks.begin("plan", settings.game_root.clone()).unwrap();
     let selection = Selection {
+        mtool_strategy: None,
         source: paths::path_text(&f.source).unwrap(),
         title: "game".into(),
         target_name: "game".into(),
@@ -1938,7 +1942,7 @@ fn update_arguments_override_clear_recover_and_restore_on_rollback() {
 }
 
 #[test]
-fn pre_arguments_journal_resumes_and_rolls_back_with_empty_defaults() {
+fn pre_arguments_and_strategy_journal_resumes_and_rolls_back_with_old_defaults() {
     let mut f = Fixture::new();
     let before = f.db.lock().unwrap().version_config(&f.id).unwrap();
     let id = f.plan(true, true);
@@ -1952,9 +1956,21 @@ fn pre_arguments_journal_resumes_and_rolls_back_with_empty_defaults() {
         .as_object_mut()
         .unwrap()
         .remove("launch_arguments");
+    record["items"][0]["selection"]
+        .as_object_mut()
+        .unwrap()
+        .remove("mtool_strategy");
+    record["items"][0]["update"]["old"]
+        .as_object_mut()
+        .unwrap()
+        .remove("mtool_strategy");
     fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
     f.store = ImportStore::open(f.store.directory.clone()).unwrap();
     f.apply(&id).unwrap();
+    assert_eq!(
+        f.db.lock().unwrap().game(&f.id).unwrap().mtool_strategy,
+        crate::domain::MToolStrategy::Inject
+    );
     assert!(f
         .db
         .lock()
@@ -1965,4 +1981,89 @@ fn pre_arguments_journal_resumes_and_rolls_back_with_empty_defaults() {
         .is_empty());
     f.rollback(&id).unwrap();
     assert_eq!(f.db.lock().unwrap().version_config(&f.id).unwrap(), before);
+}
+
+#[test]
+fn mtool_strategy_inherits_overrides_and_recovers_then_rolls_back_per_game() {
+    use crate::domain::MToolStrategy;
+    for (old, selected) in [
+        (MToolStrategy::Bakin, None),
+        (MToolStrategy::Inject, Some(MToolStrategy::Bakin)),
+        (MToolStrategy::Bakin, Some(MToolStrategy::Inject)),
+    ] {
+        for checkpoint in ["update_ready", "update_commit", "update_cleanup"] {
+            let mut f = manual_launch_fixture(true);
+            let shared = PathBuf::from(f.db.lock().unwrap().settings().unwrap().mtool_root);
+            fs::write(
+                shared.join("loaders/BakinLauncher.exe"),
+                b"synthetic-not-executed",
+            )
+            .unwrap();
+            rusqlite::Connection::open(f.store.directory.parent().unwrap().join("fixture.db"))
+                .unwrap()
+                .execute(
+                    "UPDATE games SET mtool_strategy=?2,working_directory='.' WHERE id=?1",
+                    rusqlite::params![f.id, old.as_str()],
+                )
+                .unwrap();
+            let before = f.db.lock().unwrap().version_config(&f.id).unwrap();
+            let injector = f.db.lock().unwrap().settings().unwrap().mtool_injector;
+            let id = f.plan_with(true, true, |selection| {
+                selection.executable = "replacement/Game.exe".into();
+                selection.mtool = true;
+                selection.mtool_strategy = selected;
+            });
+            assert!(f.store.get(&id).unwrap().items[0].blockers.is_empty());
+            let job = f
+                .tasks
+                .begin("import_apply", paths::path_text(&f.root).unwrap())
+                .unwrap();
+            let mut plan = f.store.get(&id).unwrap();
+            FAIL_CHECKPOINT.with(|failure| *failure.borrow_mut() = Some(checkpoint.into()));
+            assert!(f.store.update_one(&mut plan, 0, &job, &f.db).is_err());
+            job.finish(Err("synthetic interruption".into()));
+            f.store = ImportStore::open(f.store.directory.clone()).unwrap();
+            f.apply(&id).unwrap();
+            assert_eq!(
+                f.db.lock().unwrap().game(&f.id).unwrap().mtool_strategy,
+                selected.unwrap_or(old)
+            );
+            assert_eq!(
+                f.db.lock().unwrap().settings().unwrap().mtool_injector,
+                injector
+            );
+            f.rollback(&id).unwrap();
+            assert_eq!(f.db.lock().unwrap().version_config(&f.id).unwrap(), before);
+        }
+    }
+}
+
+#[test]
+fn missing_bakin_launcher_blocks_update_before_moving_and_allows_withdrawal() {
+    use crate::domain::MToolStrategy;
+    let f = manual_launch_fixture(true);
+    let shared = PathBuf::from(f.db.lock().unwrap().settings().unwrap().mtool_root);
+    let launcher = shared.join("loaders/BakinLauncher.exe");
+    fs::write(&launcher, b"synthetic").unwrap();
+    let id = f.plan_with(true, true, |selection| {
+        selection.executable = "replacement/Game.exe".into();
+        selection.mtool = true;
+        selection.mtool_strategy = Some(MToolStrategy::Bakin);
+    });
+    let before = f.db.lock().unwrap().version_config(&f.id).unwrap();
+    fs::remove_file(launcher).unwrap();
+    assert!(f
+        .apply(&id)
+        .unwrap_err()
+        .to_string()
+        .contains("BakinLauncher.exe"));
+    assert!(f.old().join("original/Game.exe").exists());
+    assert!(f.source.join("replacement/Game.exe").exists());
+    assert_eq!(f.db.lock().unwrap().version_config(&f.id).unwrap(), before);
+    let job = f
+        .tasks
+        .begin("import_withdraw", paths::path_text(&f.root).unwrap())
+        .unwrap();
+    f.store.withdraw(&id, &job, &f.db).unwrap();
+    job.finish(Ok(vec![]));
 }

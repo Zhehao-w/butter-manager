@@ -406,3 +406,64 @@ fn junctions_in_config_or_package_paths_are_never_followed() {
     assert_eq!(evidence.engine(), "Unknown");
     fs::remove_dir(root.join("resources")).unwrap();
 }
+
+#[test]
+fn bakin_requires_complete_safe_layout_and_ranks_root_launcher_over_internal_player() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    write(root, "みゆつれ.exe", b"synthetic");
+    write(root, "data/bakinplayer.exe", b"synthetic");
+    write(root, "data/bakinengine.dll", b"synthetic");
+    assert_eq!(scanner::analyze_directory(root).unwrap().engine, "Unknown");
+    write(root, "data/data.rbpack", b"synthetic");
+    for candidate in [
+        scanner::analyze_directory(root).unwrap(),
+        scanner::analyze_quick_controlled(root, &|| false, &|_| {}).unwrap(),
+    ] {
+        assert_eq!(candidate.engine, "RPG Developer Bakin");
+        assert_eq!(candidate.executables[0].relative_path, "みゆつれ.exe");
+        assert!(!candidate.executables.iter().any(|exe| exe
+            .relative_path
+            .to_ascii_lowercase()
+            .contains("bakinplayer")));
+    }
+    let mut evidence = Evidence::default();
+    metadata_evidence(
+        root,
+        &names(root),
+        "RPG Developer Bakin\nBAKIN Game Launcher",
+        &mut evidence,
+    );
+    assert_eq!(evidence.engine(), "RPG Developer Bakin");
+    write(root, "Other.exe", b"synthetic");
+    assert_eq!(quick(root, &names(root)).engine(), "Unknown");
+    let mut weak = Evidence::default();
+    metadata_evidence(root, &names(root), "RPG Developer Bakin", &mut weak);
+    assert_eq!(weak.engine(), "Unknown");
+    fs::remove_file(root.join("data/data.rbpack")).unwrap();
+    let mut missing = Evidence::default();
+    metadata_evidence(
+        root,
+        &names(root),
+        "RPG Developer Bakin\nBAKIN Game Launcher",
+        &mut missing,
+    );
+    assert_eq!(missing.engine(), "Unknown");
+}
+
+#[cfg(unix)]
+#[test]
+fn bakin_resources_cannot_follow_links() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("game");
+    let outside = temp.path().join("outside");
+    fs::create_dir_all(&root).unwrap();
+    fs::create_dir_all(&outside).unwrap();
+    write(&root, "Game.exe", b"synthetic");
+    for name in ["bakinplayer.exe", "bakinengine.dll", "data.rbpack"] {
+        write(&outside, name, b"synthetic");
+    }
+    std::os::unix::fs::symlink(&outside, root.join("data")).unwrap();
+    assert!(!bakin_layout(&root));
+    assert_eq!(scanner::analyze_directory(&root).unwrap().engine, "Unknown");
+}

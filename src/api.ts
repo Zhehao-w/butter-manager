@@ -2,6 +2,7 @@ import { Channel, invoke } from '@tauri-apps/api/core';
 import type { SaveCatalog, SaveDocument, SaveChange } from './saveEditorTypes';
 import type {
   Game,
+  MToolStrategy,
   LibraryTag,
   PlayStatus,
   RenpyAppdataPreview,
@@ -122,12 +123,14 @@ export const api = {
     executable: string | null,
     loader: string | null,
     workingDirectory: string,
+    mtoolStrategy?: MToolStrategy,
   ) =>
     invoke<MToolLaunchPreview>('preview_mtool_launch', {
       id,
       executable,
       loader,
       workingDirectory,
+      mtoolStrategy,
     }),
   startLibraryCheck: () => invoke<string>('start_library_check'),
   startDuplicateCheck: () => invoke<string>('start_duplicate_check'),

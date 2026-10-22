@@ -600,6 +600,7 @@ pub(super) fn check_shared_launch(
     settings: &Settings,
 ) -> Result<()> {
     let game = Game {
+        mtool_strategy: config.mtool_strategy,
         id: String::new(),
         canonical_title: String::new(),
         display_title: String::new(),
@@ -962,6 +963,7 @@ mod tests {
                     settings,
                     vec![candidate],
                     vec![Selection {
+                        mtool_strategy: None,
                         source: paths::path_text(&self.source).unwrap(),
                         title: "Game v2".into(),
                         target_name: "Game v2".into(),

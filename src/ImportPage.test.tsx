@@ -103,6 +103,67 @@ beforeEach(() => {
   vi.mocked(api.cancel).mockResolvedValue();
 });
 describe('batch import flow', () => {
+  it('imports a detected Bakin game with a persisted strategy and a compact launch indicator', async () => {
+    vi.mocked(api.job).mockResolvedValue({
+      ...page,
+      changes: [{ ...candidate, engine: 'RPG Developer Bakin', mtool_detected: true }],
+    });
+    renderNewImport({ settings: { ...settings, mtool_root: 'D:/Shared Tool' } });
+    await expandSettings('启动配置');
+    expect(
+      (screen.getByRole('combobox', { name: 'MTool 启动策略' }) as HTMLSelectElement).value,
+    ).toBe('BAKIN');
+    expect(screen.getByText('公共 MTool · Bakin')).toBeTruthy();
+    expect(screen.queryByRole('textbox', { name: '启动参数' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '生成导入与更新计划（1）' }));
+    await waitFor(() => expect(api.importPlan).toHaveBeenCalledOnce());
+    expect(vi.mocked(api.importPlan).mock.calls[0][1][0]).toEqual(
+      expect.objectContaining({ mtool_strategy: 'BAKIN', mtool: true }),
+    );
+  });
+  it('inherits an installed Bakin strategy and resets an explicit update override', async () => {
+    const installed = makeGame({
+      id: 'bakin-old',
+      mtool_strategy: 'BAKIN',
+      save_paths: ['<GAME>/Save'],
+    });
+    vi.mocked(api.importMatches).mockResolvedValue({
+      [candidate.install_path]: [
+        {
+          id: installed.id,
+          title: installed.display_title,
+          version: 'v1',
+          path: installed.install_path,
+          reason: '名称一致',
+        },
+      ],
+    });
+    renderNewImport({
+      games: [installed],
+      settings: { ...settings, mtool_root: 'D:/Shared Tool' },
+    });
+    await expandSettings('启动配置');
+    fireEvent.click(screen.getByRole('checkbox', { name: '公共 MTool' }));
+    const select = screen.getByRole('combobox', { name: 'MTool 启动策略' }) as HTMLSelectElement;
+    expect(select.value).toBe('BAKIN');
+    fireEvent.click(screen.getByText('更新启动配置'));
+    expect(
+      (screen.getByLabelText('工作目录（相对新版游戏目录）') as HTMLInputElement).readOnly,
+    ).toBe(true);
+    expect(
+      (screen.getByRole('button', { name: '浏览文件夹…' }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+    fireEvent.change(select, { target: { value: 'INJECT' } });
+    expect(
+      screen.getByRole('textbox', { name: 'MTool loader（相对公共 MTool 目录）' }),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '恢复继承旧配置' }));
+    expect(select.value).toBe('BAKIN');
+    fireEvent.click(screen.getByRole('button', { name: '生成导入与更新计划（1）' }));
+    await waitFor(() => expect(api.importPlan).toHaveBeenCalledOnce());
+    expect(vi.mocked(api.importPlan).mock.calls[0][1][0].mtool_strategy).toBeUndefined();
+  });
+
   it('shows the argument indicator from a pending update snapshot after the library config changes', async () => {
     const old = makeGame({ id: 'snapshot-game', launch_arguments: '' });
     vi.mocked(api.importPlans).mockResolvedValue([

@@ -199,7 +199,7 @@ mod tests {
         db.edit_game(draft).unwrap()
     }
     fn downgrade_to_12(db: &Database) {
-        db.connection.execute_batch("ALTER TABLE games DROP COLUMN launch_arguments;DROP TABLE game_tags;DROP TABLE library_tags;ALTER TABLE games DROP COLUMN favorite;PRAGMA user_version=12;").unwrap();
+        db.connection.execute_batch("ALTER TABLE games DROP COLUMN mtool_strategy;ALTER TABLE games DROP COLUMN launch_arguments;DROP TABLE game_tags;DROP TABLE library_tags;ALTER TABLE games DROP COLUMN favorite;PRAGMA user_version=12;").unwrap();
     }
     fn schema(path: &Path) -> i64 {
         rusqlite::Connection::open(path)
@@ -254,7 +254,7 @@ mod tests {
             .unwrap();
         drop(connection);
         let db = Database::open(&path).unwrap();
-        assert_eq!(schema(&path), 14);
+        assert_eq!(schema(&path), 15);
         assert_eq!(serde_json::to_value(db.games().unwrap()).unwrap(), before);
         assert_eq!(db.launch_history("a").unwrap(), history);
         assert_eq!(
@@ -324,7 +324,7 @@ mod tests {
         db.clear_library().unwrap();
         assert!(db.library_tags().unwrap().is_empty());
         assert!(db.games().unwrap().is_empty());
-        assert_eq!(schema(&path), 14);
+        assert_eq!(schema(&path), 15);
         assert!(!db
             .connection
             .prepare("PRAGMA foreign_key_check")

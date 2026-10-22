@@ -39,6 +39,11 @@ pub fn prepare(
                 "manual".into()
             };
         return Ok(RegistrationEntry {
+            mtool_strategy: crate::domain::MToolStrategy::from_evidence(
+                &candidate,
+                selection.executable.as_deref(),
+            )
+            .unwrap_or_default(),
             launch_arguments: String::new(),
             candidate,
             executable: selection.executable,
@@ -106,6 +111,11 @@ pub fn prepare(
             "manual".into()
         };
     Ok(RegistrationEntry {
+        mtool_strategy: crate::domain::MToolStrategy::from_evidence(
+            &candidate,
+            selection.executable.as_deref(),
+        )
+        .unwrap_or_default(),
         launch_arguments: String::new(),
         candidate,
         executable: selection.executable,

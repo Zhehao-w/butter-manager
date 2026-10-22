@@ -1,3 +1,4 @@
+export type MToolStrategy = 'INJECT' | 'BAKIN';
 export type PlayStatus = 'UNPLAYED' | 'PLAYING' | 'COMPLETED';
 export interface DeletePlan {
   token: string;
@@ -77,6 +78,7 @@ export interface LibraryTag {
 }
 
 export interface Game {
+  mtool_strategy: MToolStrategy;
   launch_arguments: string;
   id: string;
   canonical_title: string;
@@ -128,7 +130,7 @@ export type LaunchConfiguration = Pick<
   | 'external_player'
   | 'mtool_target_exe'
   | 'mtool_loader'
-> & { launch_arguments?: string | null };
+> & { launch_arguments?: string | null; mtool_strategy?: MToolStrategy | null };
 
 export type GameEdit = Pick<
   Game,
@@ -147,9 +149,10 @@ export type GameEdit = Pick<
   | 'mtool_loader'
   | 'aliases'
   | 'save_paths'
-> & { tags?: LibraryTag[] };
+> & { tags?: LibraryTag[]; mtool_strategy?: MToolStrategy };
 
 export interface MToolRecipe {
+  mtool_strategy?: MToolStrategy;
   target_exe: string;
   loader: string;
   injector: string;
@@ -217,6 +220,8 @@ export interface ScanCandidate {
 }
 
 export interface MToolLaunchPreview {
+  mtool_strategy?: MToolStrategy;
+  launcher?: string;
   shared_root: string;
   target_exe: string;
   architecture: string;
@@ -278,6 +283,7 @@ export interface RegistrationSelection {
 }
 
 export interface ImportSelection {
+  mtool_strategy?: MToolStrategy;
   // Omitted/null inherits; an empty string clears.
   launch_arguments?: string | null;
   cleanup_mtool?: boolean;
@@ -341,7 +347,7 @@ export interface ImportItem {
   } | null;
   completed_at_ms?: number | null;
   update?: {
-    old?: { launch_arguments?: string };
+    old?: { launch_arguments?: string; mtool_strategy?: MToolStrategy };
     old_version: string;
     saves: {
       configured: string;

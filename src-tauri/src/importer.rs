@@ -153,6 +153,9 @@ pub fn analyze(job: &Arc<Job>, sources: &[String], workers: usize) -> Result<()>
 
 #[derive(Clone, Deserialize, Serialize)]
 pub struct Selection {
+    /// Missing in older journals/callers: inherit an update's saved strategy.
+    #[serde(default)]
+    pub mtool_strategy: Option<crate::domain::MToolStrategy>,
     pub source: String,
     pub title: String,
     pub target_name: String,
@@ -892,8 +895,15 @@ impl ImportStore {
             });
             job.completed_one(&paths::path_text(&source)?);
             let item = plan.items.last_mut().unwrap();
+            let config = updater::configuration(item)?;
+            if config.launch_type == "MTOOL"
+                && config.mtool_strategy == crate::domain::MToolStrategy::Bakin
+            {
+                if let Err(error) = crate::launcher::bakin_launcher_file(&settings) {
+                    item.blockers.push(error.to_string());
+                }
+            }
             if let Some(cleanup) = &item.mtool_cleanup {
-                let config = updater::configuration(item)?;
                 if let Err(error) = mtool_cleanup::check_dependencies(
                     cleanup,
                     &config,
@@ -1098,6 +1108,12 @@ impl ImportStore {
         let container = stage_path(plan, index);
         let payload = container.join("payload");
         validate_paths(plan, &item, &self.directory)?;
+        let config = updater::configuration(&item)?;
+        if config.launch_type == "MTOOL"
+            && config.mtool_strategy == crate::domain::MToolStrategy::Bakin
+        {
+            crate::launcher::bakin_launcher_file(&plan.settings)?;
+        }
         check_item_idle(&[source.clone(), target.clone(), payload.clone()], job)?;
         job.progress(&item.selection.source, &source);
         if item.state == "pending" {
@@ -1247,6 +1263,7 @@ impl ImportStore {
             candidate.engine = item.selection.engine.clone();
             candidate.mtool_detected = item.selection.mtool;
             let entry = RegistrationEntry {
+                mtool_strategy: item.selection.mtool_strategy.unwrap_or_default(),
                 candidate,
                 executable: if item.selection.executable.is_empty() {
                     None
@@ -1257,7 +1274,11 @@ impl ImportStore {
                 launch_arguments: item.selection.launch_arguments.clone().unwrap_or_default(),
                 version: item.selection.version.clone(),
                 version_source: "manual".into(),
-                working_directory: if item.selection.external_player.is_some() {
+                working_directory: if item.selection.external_player.is_some()
+                    || (item.selection.mtool
+                        && item.selection.mtool_strategy
+                            == Some(crate::domain::MToolStrategy::Bakin))
+                {
                     ".".into()
                 } else {
                     paths::executable_directory(Some(&item.selection.executable))?
@@ -1902,6 +1923,46 @@ mod tests {
     }
 
     #[test]
+    fn new_bakin_import_persists_strategy_and_old_journal_keeps_injection() {
+        use crate::domain::MToolStrategy;
+        for strategy in [Some(MToolStrategy::Bakin), None] {
+            let mut f = Fixture::new();
+            let source = f.game("synthetic Bakin");
+            fs::write(source.join("Game.exe"), b"synthetic").unwrap();
+            let shared = f._temp.path().join("shared");
+            fs::create_dir_all(shared.join("loaders")).unwrap();
+            fs::write(shared.join("loaders/BakinLauncher.exe"), b"synthetic").unwrap();
+            let mut settings = f.db.lock().unwrap().settings().unwrap();
+            settings.mtool_root = paths::path_text(&shared).unwrap();
+            f.db.lock().unwrap().save_settings(settings).unwrap();
+            let id = f.plan(std::slice::from_ref(&source));
+            let mut plan = f.store.get(&id).unwrap();
+            plan.items[0].selection.engine = "RPG Developer Bakin".into();
+            plan.items[0].selection.executable = "Game.exe".into();
+            plan.items[0].selection.mtool = true;
+            plan.items[0].selection.mtool_strategy = strategy;
+            f.store.save(&plan).unwrap();
+            if strategy.is_none() {
+                let path = f.store.directory.join(format!("{id}.json"));
+                let mut old: serde_json::Value =
+                    serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+                old["items"][0]["selection"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("mtool_strategy");
+                fs::write(path, serde_json::to_vec(&old).unwrap()).unwrap();
+            }
+            f.store = ImportStore::open(f.store.directory.clone()).unwrap();
+            let game_id = f.apply(&id).unwrap().remove(0);
+            let game = f.db.lock().unwrap().game(&game_id).unwrap();
+            assert_eq!(game.mtool_strategy, strategy.unwrap_or_default());
+            assert_eq!(game.working_directory, ".");
+            assert_eq!(game.main_executable.as_deref(), Some("Game.exe"));
+            assert_eq!(game.launch_type, "MTOOL");
+        }
+    }
+
+    #[test]
     fn shared_qsp_engine_only_strengthens_an_existing_name_match() {
         let temp = tempfile::tempdir().unwrap();
         let mut candidate = scanner::pending_candidate(temp.path()).unwrap();
@@ -1926,6 +1987,7 @@ mod tests {
         let settings = f.db.lock().unwrap().settings().unwrap();
         let candidate = scanner::analyze_directory(&source).unwrap();
         let mut selection = Selection {
+            mtool_strategy: None,
             source: candidate.install_path.clone(),
             title: candidate.suggested_title.clone(),
             target_name: "QSP game".into(),
@@ -2014,6 +2076,7 @@ mod tests {
         let selections = candidates
             .iter()
             .map(|c| Selection {
+                mtool_strategy: None,
                 source: c.install_path.clone(),
                 title: c.suggested_title.clone(),
                 target_name: leaf_name(&c.install_path),
@@ -2135,6 +2198,7 @@ mod tests {
             let selections = candidates
                 .iter()
                 .map(|c| Selection {
+                    mtool_strategy: None,
                     source: c.install_path.clone(),
                     title: c.suggested_title.clone(),
                     target_name: leaf_name(&c.install_path),
@@ -2574,6 +2638,7 @@ mod tests {
         let mut candidate = item.candidate.clone();
         candidate.install_path = item.target.clone();
         let entry = RegistrationEntry {
+            mtool_strategy: Default::default(),
             launch_arguments: String::new(),
             candidate,
             executable: Some(item.selection.executable.clone()),
@@ -2875,6 +2940,7 @@ mod tests {
         let mut candidate = p.items[0].candidate.clone();
         candidate.install_path = p.items[0].target.clone();
         let entry = RegistrationEntry {
+            mtool_strategy: Default::default(),
             launch_arguments: String::new(),
             candidate,
             executable: Some("包装/游戏.html".into()),

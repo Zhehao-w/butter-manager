@@ -2497,6 +2497,7 @@ describe('iteration interactions', () => {
       expect(api.play).toHaveBeenCalledWith(game.id, {
         launch_arguments: '',
         launch_type: mode,
+        mtool_strategy: 'INJECT',
         main_executable: mode === 'EXTERNAL_PLAYER' ? '新版/player.exe' : '新版/new.exe',
         working_directory: '新版',
         external_player:
@@ -3025,7 +3026,13 @@ describe('iteration interactions', () => {
         .value,
     ).toBe('');
     await waitFor(() =>
-      expect(api.previewMtoolLaunch).toHaveBeenCalledWith(game.id, game.main_executable, null, '.'),
+      expect(api.previewMtoolLaunch).toHaveBeenCalledWith(
+        game.id,
+        game.main_executable,
+        null,
+        '.',
+        'INJECT',
+      ),
     );
     await within(detail).findByText('32 位 · mzHook32.dll', { selector: '[role="status"]' });
     fireEvent.click(within(detail).getByRole('button', { name: '保存资料' }));
@@ -3042,6 +3049,77 @@ describe('iteration interactions', () => {
     );
     expect(api.play).not.toHaveBeenCalled();
   });
+
+  it.each(['save', 'temporary'])(
+    'uses the per-game Bakin strategy for %s and hides injection controls',
+    async (mode) => {
+      vi.mocked(api.previewMtoolLaunch).mockResolvedValue({
+        shared_root: 'D:/Shared',
+        target_exe: game.main_executable!,
+        architecture: 'Unknown',
+        loader: '',
+        launcher: 'loaders/BakinLauncher.exe',
+        mtool_strategy: 'BAKIN',
+        runtime: 'MTool.exe',
+        working_directory: game.install_path,
+      });
+      vi.mocked(api.saveGame).mockResolvedValue({
+        ...game,
+        launch_type: 'MTOOL',
+        mtool_strategy: 'BAKIN',
+      });
+      const detail = await openDetail();
+      showDetailTab('启动配置');
+      fireEvent.change(within(detail).getByRole('combobox', { name: '启动方式' }), {
+        target: { value: 'MTOOL' },
+      });
+      fireEvent.change(within(detail).getByRole('combobox', { name: 'MTool 启动策略' }), {
+        target: { value: 'BAKIN' },
+      });
+      expect(within(detail).queryByRole('combobox', { name: 'MTool loader 选择' })).toBeNull();
+      expect(within(detail).queryByRole('textbox', { name: '启动参数' })).toBeNull();
+      await waitFor(() =>
+        expect(api.previewMtoolLaunch).toHaveBeenLastCalledWith(
+          game.id,
+          game.main_executable,
+          null,
+          '.',
+          'BAKIN',
+        ),
+      );
+      await within(detail).findByText('BakinLauncher.exe · 游戏根目录');
+      fireEvent.click(within(detail).getByText('高级启动选项'));
+      expect(
+        (within(detail).getByRole('textbox', { name: /工作目录/ }) as HTMLInputElement).disabled,
+      ).toBe(true);
+      if (mode === 'save') {
+        fireEvent.click(within(detail).getByRole('button', { name: '保存资料' }));
+        await waitFor(() =>
+          expect(api.saveGame).toHaveBeenCalledWith(
+            expect.objectContaining({
+              mtool_strategy: 'BAKIN',
+              launch_type: 'MTOOL',
+              working_directory: '.',
+            }),
+          ),
+        );
+        expect(api.play).not.toHaveBeenCalled();
+      } else {
+        fireEvent.click(within(detail).getByRole('button', { name: '启动' }));
+        await waitFor(() =>
+          expect(api.play).toHaveBeenCalledWith(
+            game.id,
+            expect.objectContaining({
+              mtool_strategy: 'BAKIN',
+              launch_type: 'MTOOL',
+              working_directory: '.',
+            }),
+          ),
+        );
+        expect(api.saveGame).not.toHaveBeenCalled();
+      }
+    },
+  );
 
   it('opens a separate confirmation popup for unsaved detail edits and Escape retains the draft', async () => {
     const detail = await openDetail();

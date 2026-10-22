@@ -25,6 +25,8 @@ pub struct IdentityChange {
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct VersionConfig {
+    #[serde(default)]
+    pub mtool_strategy: crate::domain::MToolStrategy,
     pub version: String,
     pub version_source: String,
     pub engine: String,
@@ -558,6 +560,7 @@ fn delete_sized_source(source: &Path, copy: &Path, entry: &Entry) -> Result<()> 
 }
 fn dummy_game() -> Game {
     Game {
+        mtool_strategy: Default::default(),
         launch_arguments: String::new(),
         id: String::new(),
         canonical_title: String::new(),
@@ -763,6 +766,10 @@ fn selection_configuration(
 ) -> Result<VersionConfig> {
     crate::launch_arguments::parse(selection.launch_arguments.as_deref().unwrap_or_default())?;
     Ok(VersionConfig {
+        mtool_strategy: selection
+            .mtool_strategy
+            .or(previous.map(|old| old.mtool_strategy))
+            .unwrap_or_default(),
         launch_arguments: selection.launch_arguments.clone().unwrap_or_else(|| {
             previous.map_or_else(String::new, |old| old.launch_arguments.clone())
         }),
@@ -806,6 +813,11 @@ pub(super) fn configuration(item: &Item) -> Result<VersionConfig> {
         .as_ref()
         .filter(|update| update.inherit_launch_config);
     let mut config = selection_configuration(&item.selection, previous.map(|update| &update.old))?;
+    if item.selection.mtool_strategy.is_none() {
+        if let Some(update) = &item.update {
+            config.mtool_strategy = update.old.mtool_strategy;
+        }
+    }
     // Parameter inheritance is independent of legacy working-directory/loader semantics.
     if item.selection.launch_arguments.is_none() {
         if let Some(update) = &item.update {
@@ -818,6 +830,10 @@ pub(super) fn configuration(item: &Item) -> Result<VersionConfig> {
             Some(value) => (!value.is_empty()).then(|| value.clone()),
             None => update.old.mtool_loader.clone(),
         };
+    }
+    if config.launch_type == "MTOOL" && config.mtool_strategy == crate::domain::MToolStrategy::Bakin
+    {
+        config.working_directory = ".".into();
     }
     Ok(config)
 }
@@ -832,7 +848,13 @@ fn validate_update_launch(
             "新版启动文件或工作目录不适用，请在更新启动配置中重新配置：{error}"
         ))
     })?;
-    if config.launch_type == "MTOOL" {
+    if config.launch_type == "MTOOL" && config.mtool_strategy == crate::domain::MToolStrategy::Bakin
+    {
+        crate::launcher::bakin_launcher_file(settings)?;
+    }
+    if config.launch_type == "MTOOL"
+        && config.mtool_strategy == crate::domain::MToolStrategy::Inject
+    {
         if let Some(loader) = &config.mtool_loader {
             let loader_file = paths::contained_file(Path::new(&settings.mtool_root), loader, "dll")
                 .map_err(|error| {

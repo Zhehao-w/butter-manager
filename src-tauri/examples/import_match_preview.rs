@@ -19,6 +19,7 @@ fn main() -> Result<()> {
     db.execute_batch("PRAGMA query_only=ON")?;
     let mut games = db.prepare("SELECT id,canonical_title,display_title,install_path,working_directory,current_version,main_executable,engine,mtool_target_exe FROM games")?
         .query_map([], |row| Ok(Game {
+            mtool_strategy: Default::default(),
             id: row.get(0)?, canonical_title: row.get(1)?, display_title: row.get(2)?,
             install_path: row.get(3)?, working_directory: row.get(4)?, current_version: row.get(5)?,
             main_executable: row.get(6)?, engine: row.get(7)?, mtool_target_exe: row.get(8)?,

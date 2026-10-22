@@ -1,5 +1,4 @@
 use crate::domain::{BatAnalysis, Error, ExeCandidate, Result, ScanCandidate, ScanReport};
-use crate::mtool::parse_bat;
 use crate::paths::{executable_directory, path_text};
 use std::fs;
 use std::io::{Read, Seek, SeekFrom};
@@ -30,6 +29,8 @@ pub(crate) fn helper(name: &str) -> bool {
         .to_string_lossy();
     // Exact tool stems only: a game title containing "config" is still selectable.
     [
+        "bakinplayer",
+        "bakinlauncher",
         "keyconfig",
         "key_config",
         "config",
@@ -173,7 +174,9 @@ pub(crate) fn analyze_bat(path: &Path, relative: String) -> BatAnalysis {
             .map_err(|_| "BAT 非 UTF-8 / UTF-16 LE；编码不确定，需人工检查".into())
     })();
     match result {
-        Ok(content) => parse_bat(&relative, &content),
+        Ok(content) => {
+            crate::mtool::parse_bat_in(&relative, &content, path.parent().unwrap_or(Path::new(".")))
+        }
         Err(reason) => BatAnalysis {
             path: relative,
             status: "unsupported".into(),
@@ -341,6 +344,9 @@ pub fn analyze_game_controlled(
         };
         let mut working = candidate.working_directory.clone();
         let mut loader = None;
+        let mut strategy =
+            crate::domain::MToolStrategy::from_evidence(&candidate, executable.as_deref())
+                .unwrap_or(game.mtool_strategy);
         let mut fallback = false;
         if executable.is_none() {
             let usable: Vec<_> = candidate
@@ -362,6 +368,7 @@ pub fn analyze_game_controlled(
                     (
                         recipe.target_exe.replace('\\', "/").to_lowercase(),
                         recipe.loader.to_lowercase(),
+                        recipe.mtool_strategy,
                     )
                 })
                 .collect();
@@ -369,7 +376,10 @@ pub fn analyze_game_controlled(
                 let (bat, recipe, file) = &usable[0];
                 executable = Some(recipe.target_exe.clone());
                 working = executable_directory(Some(&bat.path))?;
-                if architecture(file) == "Unknown" {
+                strategy = recipe.mtool_strategy;
+                if strategy == crate::domain::MToolStrategy::Inject
+                    && architecture(file) == "Unknown"
+                {
                     loader = Some(recipe.loader.clone());
                 }
                 fallback = true;
@@ -382,6 +392,7 @@ pub fn analyze_game_controlled(
                 || candidate.bats.iter().any(|bat| bat.recipe.is_some())
                 || game.launch_type == "MTOOL";
             candidate.recommended_launch = Some(crate::domain::LaunchConfiguration {
+                mtool_strategy: Some(strategy),
                 main_executable: Some(exe.clone()),
                 working_directory: working,
                 launch_type: if mtool { "MTOOL" } else { "DIRECT" }.into(),
@@ -674,6 +685,32 @@ fn analyze_inner(
             candidate.executables.push(html);
         }
     }
+    // Bakin's packaged player is a resource, never a root launcher recommendation.
+    for executable in &mut candidate.executables {
+        let file = root.join(crate::paths::relative_path(&executable.relative_path)?);
+        let directory = file.parent().unwrap_or(&root);
+        if let Some(names) = signals.get(directory) {
+            let sole = names
+                .iter()
+                .filter(|name| name.ends_with(".exe") && !helper(name))
+                .count()
+                == 1;
+            if inspect_files
+                && !stopped()
+                && crate::engine_detection::bakin_launcher(
+                    directory,
+                    file.file_name().and_then(|n| n.to_str()).unwrap_or(""),
+                    sole,
+                )
+            {
+                executable.score += 100;
+                let detected = executable_evidence
+                    .entry(executable.relative_path.clone())
+                    .or_insert_with(|| evidence.get(directory).cloned().unwrap_or_default());
+                detected.engines.insert("RPG Developer Bakin");
+            }
+        }
+    }
     for executable in &mut candidate.executables {
         if stopped() {
             break;
@@ -910,6 +947,77 @@ pub fn scan_root(path: &Path) -> Result<ScanReport> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn bakin_analysis_prefers_root_target_and_only_falls_back_to_verified_bat_when_ambiguous() {
+        use crate::domain::MToolStrategy;
+        let temp = tempfile::tempdir().unwrap();
+        let root = dunce::canonicalize(temp.path()).unwrap();
+        fs::create_dir(root.join("data")).unwrap();
+        for file in [
+            "みゆつれ.exe",
+            "data/bakinplayer.exe",
+            "data/bakinengine.dll",
+            "data/data.rbpack",
+        ] {
+            fs::write(root.join(file), b"synthetic").unwrap();
+        }
+        let mut game = crate::maintenance::tests::fixture_game(&root);
+        game.launch_type = "MTOOL".into();
+        game.main_executable = Some("data/bakinplayer.exe".into());
+        let launch = analyze_game_controlled(&game, &|| false, &|_| {})
+            .unwrap()
+            .recommended_launch
+            .unwrap();
+        assert_eq!(launch.main_executable.as_deref(), Some("みゆつれ.exe"));
+        assert_eq!(launch.mtool_strategy, Some(MToolStrategy::Bakin));
+        assert_eq!(launch.working_directory, ".");
+        assert!(launch.mtool_loader.is_none());
+        fs::write(root.join("Other.exe"), b"synthetic").unwrap();
+        fs::remove_file(root.join("data/data.rbpack")).unwrap();
+        let bat = format!(
+            r#"chcp 65001
+@cd /d "%~dp0"
+"F:\Old Tool\loaders\BakinLauncher.exe" "{}"
+start "" "F:\Old Tool\MTool.exe" "F:\Old Tool""#,
+            root.join("みゆつれ.exe").display()
+        );
+        fs::write(root.join("StartWithTool.bat"), bat).unwrap();
+        game.main_executable = None;
+        let fallback = analyze_game_controlled(&game, &|| false, &|_| {}).unwrap();
+        assert!(fallback
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("回退到 BAT")));
+        let launch = fallback.recommended_launch.unwrap();
+        assert_eq!(launch.main_executable.as_deref(), Some("みゆつれ.exe"));
+        assert_eq!(launch.mtool_strategy, Some(MToolStrategy::Bakin));
+        // A unique analyzed target still uses matching BAT strategy evidence without a target fallback.
+        fs::remove_file(root.join("Other.exe")).unwrap();
+        let unambiguous = analyze_game_controlled(&game, &|| false, &|_| {}).unwrap();
+        assert_eq!(
+            unambiguous.recommended_launch.unwrap().mtool_strategy,
+            Some(MToolStrategy::Bakin)
+        );
+        assert!(!unambiguous
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("回退到 BAT")));
+        fs::write(root.join("Other.exe"), b"synthetic").unwrap();
+        game.main_executable = Some("Other.exe".into());
+        let preferred = analyze_game_controlled(&game, &|| false, &|_| {}).unwrap();
+        assert_eq!(
+            preferred
+                .recommended_launch
+                .unwrap()
+                .main_executable
+                .as_deref(),
+            Some("Other.exe")
+        );
+        assert!(!preferred
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("回退到 BAT")));
+    }
     #[test]
     fn game_analysis_detects_saves_with_the_saved_engine_and_working_directory() {
         let temp = tempfile::tempdir().unwrap();

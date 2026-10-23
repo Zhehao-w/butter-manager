@@ -16,6 +16,126 @@ fn translation_name(name: &str) -> bool {
         .any(|word| name.contains(word))
 }
 
+fn negative_actions(lower: &str) -> bool {
+    // Keep polarity local to the tool and its action; "not included" and warnings
+    // about directly launching the game are valid external-MTool instructions.
+    lower
+        .split(['\n', '\r', '。', '.', '!', '?', '！', '？', ';', '；'])
+        .any(|sentence| {
+            let compact: String = sentence.chars().filter(|c| !c.is_whitespace()).collect();
+            compact.match_indices("mtool").any(|(index, _)| {
+                let before = &compact[..index];
+                let forbidden_use = [
+                    "",
+                    "公共",
+                    "共享",
+                    "已有",
+                    "已有的",
+                    "现有",
+                    "現有",
+                    "the",
+                    "shared",
+                    "theshared",
+                    "existing",
+                    "theexisting",
+                ]
+                .iter()
+                .filter_map(|modifier| before.strip_suffix(modifier))
+                .any(|before| {
+                    [
+                        "勿用",
+                        "勿使用",
+                        "勿直接使用",
+                        "不要用",
+                        "不要使用",
+                        "不要直接使用",
+                        "禁止用",
+                        "禁止使用",
+                        "不得使用",
+                        "不能用",
+                        "不能使用",
+                        "无法用",
+                        "无法使用",
+                        "無法使用",
+                        "不建议用",
+                        "不建议使用",
+                        "不建議使用",
+                        "无需",
+                        "不需要",
+                        "不用",
+                        "donotuse",
+                        "don'tuse",
+                        "don’tuse",
+                        "cannotuse",
+                        "can'tuse",
+                        "can’tuse",
+                        "mustnotuse",
+                        "shouldnotuse",
+                        "shouldn'tuse",
+                        "shouldn’tuse",
+                        "avoidusing",
+                        "donotrun",
+                        "don'trun",
+                        "don’trun",
+                        "donotrecommendusing",
+                    ]
+                    .iter()
+                    .any(|negative| before.ends_with(negative))
+                });
+                let after =
+                    compact[index + "mtool".len()..].trim_start_matches([':', '：', '-', '—']);
+                let after = ["目前", "当前", "暂时", "暫時", "currently"]
+                    .iter()
+                    .find_map(|qualifier| after.strip_prefix(qualifier))
+                    .unwrap_or(after);
+                let unavailable = [
+                    "不兼容",
+                    "不支持",
+                    "不可用",
+                    "isnotcompatible",
+                    "isnotsupported",
+                ]
+                .iter()
+                .any(|negative| after.starts_with(negative));
+                let forbidden_action = [
+                    "不能",
+                    "无法",
+                    "無法",
+                    "不可",
+                    "不应",
+                    "不應",
+                    "cannot",
+                    "can't",
+                    "can’t",
+                    "doesnot",
+                    "doesn't",
+                    "doesn’t",
+                    "willnot",
+                    "won't",
+                    "won’t",
+                    "isunableto",
+                    "isnotableto",
+                    "shouldnot",
+                    "shouldn't",
+                    "shouldn’t",
+                ]
+                .iter()
+                .filter_map(|negative| after.strip_prefix(negative))
+                .any(|action| {
+                    let action: String = action.chars().take(64).collect();
+                    [
+                        "打开", "打開", "加载", "載入", "挂载", "掛載", "导入", "匯入", "启动",
+                        "啟動", "运行", "執行", "使用", "注入", "open", "load", "mount", "import",
+                        "launch", "run", "execute", "use", "work", "inject", "support",
+                    ]
+                    .iter()
+                    .any(|verb| action.contains(verb))
+                });
+                forbidden_use || unavailable || forbidden_action
+            })
+        })
+}
+
 fn explicit_instructions(text: &str) -> bool {
     let lower = text.to_lowercase();
     // The official link is optional. A lookalike URL must not masquerade as that evidence.
@@ -30,6 +150,7 @@ fn explicit_instructions(text: &str) -> bool {
         });
     let compact: String = lower.chars().filter(|c| !c.is_whitespace()).collect();
     if misleading_link
+        || negative_actions(&lower)
         || [
             "无需mtool",
             "不用mtool",
@@ -296,6 +417,46 @@ mod tests {
         assert!(!detect(root, "Game.exe", &|| true));
         assert!(!detect(root, "../Game.exe", &|| false));
         assert_eq!(fs::read(root.join("Game.exe")).unwrap(), b"synthetic");
+    }
+
+    #[test]
+    fn external_translation_rejects_negative_actions_without_blocking_external_tool_instructions() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        fixture(root);
+        for text in [
+            "请勿使用 MTool 打开游戏并加载翻译",
+            "不要用公共 MTool 打开游戏和翻译文件",
+            "禁止使用已有的 MTool 打开游戏及翻译文件",
+            "不建议使用 MTool 打开游戏并加载翻译",
+            "請勿使用 MTool 打開遊戲並載入翻譯",
+            "MTool 无法正确打开游戏或加载翻译文件",
+            "MTool：目前不能打开游戏或加载翻译",
+            "MTool 不支持此游戏，不能加载翻译",
+            "MTool cannot open the game or load the translation",
+            "MTool can't open the game or load its translation",
+            "MTool can’t load the translation for this game",
+            "MTool currently does not load the translation for this game",
+            "MTool is unable to open the game and load its translation",
+            "Do not use the shared MTool to open the game and load the translation",
+            "Don't use MTool to open the game and load the translation",
+            "You should not use MTool to open this game and load its translation",
+            "Avoid using MTool to open the game and load its translation",
+        ] {
+            fs::write(root.join(NOTE), text).unwrap();
+            assert!(!detect(root, "Game.exe", &|| false), "{text}");
+        }
+        for text in [
+            TEXT,
+            "不要直接打开游戏，请使用 MTool 打开游戏并加载翻译文件。",
+            "请勿删除翻译文件，用已有 MTool 打开游戏并加载翻译。",
+            "Use your existing MTool to open the game and load the translation; MTool is not included.",
+            "Do not open the game directly; use MTool to open the game and load the translation.",
+            "Do not delete the translation files. Use MTool to open the game and load the translation.",
+        ] {
+            fs::write(root.join(NOTE), text).unwrap();
+            assert!(detect(root, "Game.exe", &|| false), "{text}");
+        }
     }
 
     #[test]

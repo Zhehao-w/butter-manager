@@ -4377,7 +4377,8 @@ tbody tr:not(:last-child) td {
 .detail-records > .game-maintenance {
   padding: 16px 20px;
 }
-.detail-card .card-title {
+.detail-card .card-title,
+.detail-records > .game-maintenance .card-title {
   margin-bottom: 12px;
 }
 .detail-card .form-grid {

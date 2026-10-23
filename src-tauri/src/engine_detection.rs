@@ -95,6 +95,9 @@ fn text(bytes: &[u8]) -> Option<String> {
         )
     }
 }
+pub(crate) fn bounded_text(base: &Path, relative: &str, limit: usize) -> Option<String> {
+    text(&bytes(base, relative, limit, false)?)
+}
 fn ini_value<'a>(ini: &'a str, section: &str, key: &str) -> Option<&'a str> {
     let mut inside = false;
     let mut value = None;

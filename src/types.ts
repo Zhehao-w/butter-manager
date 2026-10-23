@@ -196,6 +196,7 @@ export interface ScanCandidate {
   save_paths?: string[];
   qsp?: QspDetection | null;
   mtool_detected?: boolean;
+  external_mtool_translation?: boolean;
   install_path: string;
   directory_modified_ms: number | null;
   suggested_title: string;

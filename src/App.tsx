@@ -3688,7 +3688,7 @@ function GameDetail({
           </div>
         </fieldset>
       </form>
-      <div {...panelProps('records')}>
+      <div className="detail-records" {...panelProps('records')}>
         <GameMaintenance
           game={game}
           locked={dirty || launching || analysisLocked}

@@ -382,7 +382,8 @@ export function ImportPage({
               executable: suggestedPlayer(c) || '',
               external_player: qspConfig(c),
               mtool:
-                !!c.bundled_mtool?.some((bundle) => bundle.safe) || (!c.qsp && !!c.mtool_detected),
+                !!c.bundled_mtool?.some((bundle) => bundle.safe) ||
+                (!c.qsp && (!!c.mtool_detected || !!c.external_mtool_translation)),
               ...(c.bundled_mtool?.some((bundle) => bundle.safe)
                 ? { cleanup_mtool: true, external_player: null }
                 : {}),
@@ -1144,6 +1145,11 @@ export function ImportPage({
                       {toolLaunch && (
                         <span className="mode">
                           {strategy === 'BAKIN' ? '公共 MTool · Bakin' : '公共 MTool 启动'}
+                        </span>
+                      )}
+                      {candidate?.external_mtool_translation && (
+                        <span className="mode" title="已识别翻译说明、MTool 官方链接和配套翻译文件">
+                          外置翻译包 · 推荐公共 MTool
                         </span>
                       )}
                       {hasLaunchArguments && (

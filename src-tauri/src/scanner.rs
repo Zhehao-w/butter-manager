@@ -208,6 +208,7 @@ pub fn pending_candidate(path: &Path) -> Result<ScanCandidate> {
         bundled_tool: false,
         bundled_mtool: vec![],
         mtool_detected: false,
+        external_mtool_translation: false,
         warnings: vec![],
         registered_id: None,
         suggested_version: "Unknown".into(),
@@ -900,6 +901,16 @@ fn analyze_inner(
             executable,
         );
     }
+    if candidate.status == "ready"
+        && !stopped()
+        && candidate.qsp.is_none()
+        && ["RPG Maker MV", "RPG Maker MZ"].contains(&candidate.engine.as_str())
+    {
+        if let Some(executable) = preferred_executable.or(executable) {
+            candidate.external_mtool_translation =
+                crate::mtool_translation::detect(&root, executable, &stopped);
+        }
+    }
     candidate.elapsed_ms = started.elapsed().as_millis() as u64;
     if started.elapsed() >= budget && candidate.status == "ready" {
         candidate.status = "incomplete".into();
@@ -910,6 +921,7 @@ fn analyze_inner(
     if stop() {
         candidate.status = "skipped".into();
     }
+    candidate.external_mtool_translation &= candidate.status == "ready";
     Ok(candidate)
 }
 
@@ -1265,9 +1277,62 @@ start "" "F:\Old Tool\MTool.exe" "F:\Old Tool""#,
         assert_eq!(candidate.executables[0].modified_ms, 10_000);
         let mut old = serde_json::to_value(&candidate).unwrap();
         old.as_object_mut().unwrap().remove("directory_modified_ms");
+        old.as_object_mut()
+            .unwrap()
+            .remove("external_mtool_translation");
         let decoded: ScanCandidate = serde_json::from_value(old).unwrap();
         assert!(decoded.directory_modified_ms.is_none());
+        assert!(!decoded.external_mtool_translation);
         assert_eq!(decoded.install_path, candidate.install_path);
+    }
+    #[test]
+    fn external_translation_recommends_mtool_only_for_mv_mz_without_marking_tools_or_loaders() {
+        for (marker, expected) in [
+            ("js/rpg_core.js", "RPG Maker MV"),
+            ("js/rmmz_core.js", "RPG Maker MZ"),
+            ("Data/BasicData/Game.dat", "WOLF RPG Editor"),
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            let root = temp.path();
+            fs::create_dir_all(root.join(marker).parent().unwrap()).unwrap();
+            fs::write(root.join(marker), b"synthetic").unwrap();
+            if expected == "WOLF RPG Editor" {
+                fs::write(root.join("Data/BasicData/CDatabase.dat"), b"synthetic").unwrap();
+            }
+            let mut pe = vec![0u8; 128];
+            pe[..2].copy_from_slice(b"MZ");
+            pe[60..64].copy_from_slice(&64u32.to_le_bytes());
+            pe[64..68].copy_from_slice(b"PE\0\0");
+            pe[68..70].copy_from_slice(&0x8664u16.to_le_bytes());
+            fs::write(root.join("Game.exe"), &pe).unwrap();
+            fs::write(
+                root.join("MTool挂载翻译(翻译说明).txt"),
+                "不附带工具，使用已有 MTool 打开游戏及翻译文件。https://mtool.app/?lang=chs",
+            )
+            .unwrap();
+            fs::write(root.join("翻译文件.json"), b"not parsed or mounted").unwrap();
+            for candidate in [
+                analyze_quick_controlled(root, &|| false, &|_| {}).unwrap(),
+                analyze_directory(root).unwrap(),
+            ] {
+                assert_eq!(candidate.engine, expected);
+                assert_eq!(
+                    candidate.external_mtool_translation,
+                    expected != "WOLF RPG Editor"
+                );
+                assert!(!candidate.mtool_detected);
+                assert!(candidate.bundled_mtool.is_empty());
+                assert!(!candidate.bundled_tool);
+                assert!(candidate.bats.is_empty());
+            }
+            let full = analyze_directory(root).unwrap();
+            assert_eq!(full.executables[0].architecture, "x64");
+            assert_eq!(fs::read(root.join("Game.exe")).unwrap(), pe);
+            assert_eq!(
+                fs::read(root.join("翻译文件.json")).unwrap(),
+                b"not parsed or mounted"
+            );
+        }
     }
     #[test]
     fn engine_signatures_follow_executable_context_and_reject_weak_or_conflicting_markers() {

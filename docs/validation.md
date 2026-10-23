@@ -1,5 +1,15 @@
 # 验证记录
 
+## 外置 MTool 翻译包与记录页对齐（2026-10-23，未发布）
+
+基于最新 main `a8886e0`，分支 `codex/external-mtool-translation`。MV / MZ 扫描在完整引擎证据下，结合 EXE 同目录明确的外置 MTool 翻译说明、准确官方 HTTPS 链接及配套非空字典给出独立推荐信号；Import 首次分析默认勾选公共 MTool并显示简短原因，允许取消，已有选择及更新的启动配置继承规则保持。最多枚举 256 项、检查 4 份各不超过 64 KiB 的说明，复用 UTF-8 / UTF-16 读取、路径 / 链接保护及取消预算，不读取或解析字典。
+
+推荐不写入随包工具标记，不生成翻译材料的清理目标，不自动挂载或运行包内脚本，不扩展 WOLF，也不自动改变已有游戏启动方式。继续使用普通注入及实际 EXE 位数自动选 loader，保留已有手动设置。记录与管理首卡去掉多余顶部间距，并与其他详情卡共用内边距规则。
+
+完整 `bash scripts/Check-Cloud.sh` 通过：锁定依赖、Prettier / Rustfmt、前端 **284 项**、TypeScript / Vite、Linux Rust 核心 **283 项**及独立 Node **8 组合成 Unity 核验**。Linux 核心所有目标 Clippy（`-D clippy::all`）通过，保留原有三处平台条件编译警告；最终样式 Prettier、文档相对链接与差异检查通过。新增前端 **3 项**、Linux Rust **3 项**定向回归通过，覆盖默认勾选 / 手动取消、弱说明、官方域名伪装、缺失字典、超限说明、UTF-16、超大字典不解析、链接路径、MV / MZ 与 WOLF 隔离，并扩展旧扫描快照缺字段兼容；既有全量回归继续覆盖 x86 / x64 loader、Import / Journal、恢复 / 回退、文件与目录身份保护。未新增忽略项。
+
+应用保持 1.5.0、schema 15，功能未发布。仅使用隔离临时目录和合成文件，不访问、复制、备份或导出正式游戏、存档、数据库、WAL、SHM 或 `data/`，未使用 GUI 自动化。完成后创建 Draft PR，由现有 Windows Actions 执行原生检查及 EXE 构建；不手工构建 EXE、不等待 CI、不合并、不创建 Tag 或 Release。手动验收见 [专项说明](mtool-external-translation.md#手动验收)。
+
 ## CI 恢复优化前配置（2026-10-22）
 
 按用户要求在 1.5.0 发布准备 PR #24 上撤回本轮 CI 优化，`.github/workflows/check.yml` 逐字恢复至 `76e3d92` 的父提交 `8e46bf6`。移除文档 scope 脚本、测试与成功验证标记；恢复 Windows 完整前端测试 / 格式检查、原有前端缓存匹配及工作流级重复取消。优化前已有的 Rust 完整 / 部分依赖缓存、全量原生回归、严格桌面 Clippy、EXE artifact 与 Tag / Release 保护保持。文档改动也恢复完整 CI 和 EXE 构建。

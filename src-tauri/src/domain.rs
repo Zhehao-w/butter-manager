@@ -296,6 +296,8 @@ pub struct ScanCandidate {
     pub bundled_mtool: Vec<crate::importer::MtoolBundle>,
     #[serde(default)]
     pub mtool_detected: bool,
+    #[serde(default)]
+    pub external_mtool_translation: bool,
     pub warnings: Vec<String>,
     pub registered_id: Option<String>,
     pub suggested_version: String,

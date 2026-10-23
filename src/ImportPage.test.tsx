@@ -103,6 +103,36 @@ beforeEach(() => {
   vi.mocked(api.cancel).mockResolvedValue();
 });
 describe('batch import flow', () => {
+  it.each([
+    { detected: true, useMtool: true },
+    { detected: true, useMtool: false },
+    { detected: false, useMtool: false },
+  ])(
+    'recommends external translation MTool without cleanup and respects opt-out: %j',
+    async ({ detected, useMtool }) => {
+      vi.mocked(api.job).mockResolvedValue({
+        ...page,
+        changes: [{ ...candidate, engine: 'RPG Maker MZ', external_mtool_translation: detected }],
+      });
+      renderNewImport({ settings: { ...settings, mtool_root: 'D:/Shared Tool' } });
+      await expandSettings('启动配置');
+      const checkbox = screen.getByRole('checkbox', { name: '公共 MTool' }) as HTMLInputElement;
+      expect(checkbox.checked).toBe(detected);
+      expect(!!screen.queryByText('外置翻译包 · 推荐公共 MTool')).toBe(detected);
+      expect(screen.queryByRole('checkbox', { name: '导入成功后清理随包 MTool' })).toBeNull();
+      if (detected && !useMtool) fireEvent.click(checkbox);
+      await expandSettings('基本信息');
+      await expandSettings('启动配置');
+      expect(checkbox.checked).toBe(useMtool);
+      fireEvent.click(screen.getByRole('button', { name: '生成导入与更新计划（1）' }));
+      await waitFor(() => expect(api.importPlan).toHaveBeenCalledOnce());
+      const selection = vi.mocked(api.importPlan).mock.calls[0][1][0];
+      expect(selection.mtool).toBe(useMtool);
+      expect(!!selection.cleanup_mtool).toBe(false);
+      expect(selection.mtool_strategy).toBe('INJECT');
+      expect(selection.mtool_loader).toBeUndefined();
+    },
+  );
   it('imports a detected Bakin game with a persisted strategy and a compact launch indicator', async () => {
     vi.mocked(api.job).mockResolvedValue({
       ...page,

@@ -16,6 +16,7 @@ pub mod library_duplicates;
 pub mod library_relocation;
 pub mod maintenance;
 pub mod mtool;
+mod mtool_translation;
 pub mod paths;
 #[cfg(windows)]
 mod recycle_windows;

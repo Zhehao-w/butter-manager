@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from './api';
 import { QspConfiguration } from './QspConfiguration';
 import { localQsp } from './qsp';
-import { BrowseButton, Modal } from './ui';
+import { BrowseButton, CardTitle, Modal } from './ui';
 import { DeleteGameDialog } from './DeleteGameDialog';
 import { isAssociatedFile } from './library';
 import type { Game, DeleteReport, LibraryPathCheck, RelocateGame } from './types';
@@ -229,7 +229,7 @@ export function GameMaintenance({
   }
   return (
     <section className="panel game-maintenance" aria-label="游戏记录维护">
-      <h3>目录与库记录</h3>
+      <CardTitle icon="clock">目录与库记录</CardTitle>
       <p className="muted">
         可以重命名游戏目录并同步名称；目录已移动时，可以关联新目录保留原记录。
       </p>

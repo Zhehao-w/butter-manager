@@ -1092,6 +1092,9 @@ button.game-link:focus-visible {
 .relocation-editor {
   margin-top: 18px;
 }
+.detail-records > .game-maintenance {
+  margin-top: 0;
+}
 .game-maintenance > p,
 .relocation-editor > p {
   margin: 10px 0;
@@ -4370,10 +4373,12 @@ tbody tr:not(:last-child) td {
   height: 68px;
   border-radius: 18px;
 }
-.detail-card {
+.detail-card,
+.detail-records > .game-maintenance {
   padding: 16px 20px;
 }
-.detail-card .card-title {
+.detail-card .card-title,
+.detail-records > .game-maintenance .card-title {
   margin-bottom: 12px;
 }
 .detail-card .form-grid {

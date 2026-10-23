@@ -120,7 +120,7 @@ describe('batch import flow', () => {
       await expandSettings('启动配置');
       const checkbox = screen.getByRole('checkbox', { name: '公共 MTool' }) as HTMLInputElement;
       expect(checkbox.checked).toBe(detected);
-      expect(!!screen.queryByText('外置翻译包 · 推荐公共 MTool')).toBe(detected);
+      expect(!!screen.queryByText('外置翻译包')).toBe(detected);
       expect(screen.queryByRole('checkbox', { name: '导入成功后清理随包 MTool' })).toBeNull();
       if (detected && !useMtool) fireEvent.click(checkbox);
       await expandSettings('基本信息');

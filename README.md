@@ -37,7 +37,7 @@
 
 [MTool Bakin 专用启动](docs/mtool-bakin.md)按游戏保存策略，使用公共 `BakinLauncher.exe`，不更改全局 injector。已有 Bakin + MTool 游戏可完成一次手动目录扫描，补齐引擎识别及专用启动策略。
 
-开发中：[外置 MTool 翻译包推荐](docs/mtool-external-translation.md)为满足说明、官方链接和字典条件的 MV / MZ 在 Import 默认推荐公共工具；翻译材料保留，字典由用户自行挂载。
+开发中：[外置 MTool 翻译包推荐](docs/mtool-external-translation.md)结合明确使用说明、翻译文件名或引用及字典结构，在 Import 默认推荐公共工具，官网链接可选；翻译材料保留，字典由用户自行挂载。
 
 ## 开始使用
 

@@ -1,22 +1,35 @@
 //! External translation evidence recommends shared MTool; it is never a cleanup target.
-use crate::engine_detection::{bounded_text, local};
-use std::{fs, path::Path};
+use crate::engine_detection::{bounded_prefix, bounded_text, local};
+use serde::de::{Deserializer, Error, MapAccess, Visitor};
+use std::{fmt, fs, path::Path};
 
-const NOTE_LIMIT: usize = 64 * 1024;
+const READ_LIMIT: usize = 64 * 1024;
 const ENTRY_LIMIT: usize = 256;
 const NOTE_COUNT: usize = 4;
+const DICTIONARY_COUNT: usize = 4;
+const MIN_PAIRS: usize = 4;
+const SAMPLE_PAIRS: usize = 32;
+
+fn translation_name(name: &str) -> bool {
+    ["翻译", "翻譯", "translation", "translate"]
+        .iter()
+        .any(|word| name.contains(word))
+}
 
 fn explicit_instructions(text: &str) -> bool {
     let lower = text.to_lowercase();
-    let official = lower
+    // The official link is optional. A lookalike URL must not masquerade as that evidence.
+    let misleading_link = lower
         .split(|c: char| c.is_whitespace() || "\"'<>（）()，。：".contains(c))
+        .filter(|token| token.starts_with("https://") || token.starts_with("http://"))
         .any(|token| {
-            token
-                .strip_prefix("https://mtool.app")
-                .is_some_and(|rest| rest.is_empty() || rest.starts_with(['/', '?', '#']))
+            token.contains("mtool.app")
+                && !token
+                    .strip_prefix("https://mtool.app")
+                    .is_some_and(|rest| rest.is_empty() || rest.starts_with(['/', '?', '#']))
         });
     let compact: String = lower.chars().filter(|c| !c.is_whitespace()).collect();
-    if !official
+    if misleading_link
         || [
             "无需mtool",
             "不用mtool",
@@ -29,36 +42,66 @@ fn explicit_instructions(text: &str) -> bool {
     {
         return false;
     }
-    let external = [
-        "已有mtool",
-        "已有的mtool",
-        "现有mtool",
-        "现有的mtool",
-        "自己的mtool",
-        "自备mtool",
-        "不附带mtool",
-        "不包含mtool",
-        "未附带mtool",
-        "不附带工具",
-        "不包含工具",
-        "existingmtool",
-        "yourmtool",
-        "notincludemtool",
-    ]
-    .iter()
-    .any(|word| compact.contains(word));
-    external
-        && compact.contains("mtool")
-        && ((compact.contains("翻译文件")
-            && compact.contains("游戏")
-            && ["打开", "加载", "挂载", "导入"]
-                .iter()
-                .any(|word| compact.contains(word)))
+    compact.contains("mtool")
+        && ((["翻译", "翻譯"].iter().any(|word| compact.contains(word))
+            && ["游戏", "遊戲"].iter().any(|word| compact.contains(word))
+            && [
+                "打开", "打開", "加载", "載入", "挂载", "掛載", "导入", "匯入",
+            ]
+            .iter()
+            .any(|word| compact.contains(word)))
             || (compact.contains("translation")
                 && compact.contains("game")
                 && ["open", "load", "mount", "import"]
                     .iter()
                     .any(|word| compact.contains(word))))
+}
+
+fn mentions_file(text: &str, filename: &str) -> bool {
+    text.match_indices(filename).any(|(start, _)| {
+        let before = text[..start].chars().next_back();
+        let after = text[start + filename.len()..].chars().next();
+        // Only sibling filenames, never a substring of another name or an escaped path.
+        !before.is_some_and(|c| c.is_ascii_alphanumeric() || "_-.\\/:".contains(c))
+            && !after.is_some_and(|c| c.is_ascii_alphanumeric() || "_-.".contains(c))
+    })
+}
+
+#[derive(Default)]
+struct DictionarySample {
+    pairs: usize,
+    reached_limit: bool,
+}
+impl<'de> Visitor<'de> for &mut DictionarySample {
+    type Value = ();
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("a flat original-to-translation string dictionary")
+    }
+    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<(), A::Error> {
+        while map.next_entry::<String, String>()?.is_some() {
+            self.pairs += 1;
+            if self.pairs == SAMPLE_PAIRS {
+                // Stop intentionally: deserialize_map otherwise consumes the complete object.
+                self.reached_limit = true;
+                return Err(A::Error::custom("translation sample complete"));
+            }
+        }
+        Ok(())
+    }
+}
+
+fn dictionary_prefix(bytes: &[u8]) -> bool {
+    let prefix_limited = bytes.len() == READ_LIMIT;
+    let bytes = bytes.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(bytes);
+    let mut parser = serde_json::Deserializer::from_slice(bytes);
+    let mut sample = DictionarySample::default();
+    let result = (&mut parser).deserialize_map(&mut sample);
+    sample.pairs >= MIN_PAIRS
+        && (sample.reached_limit
+            || match result {
+                Ok(()) => parser.end().is_ok(),
+                Err(error) => prefix_limited && error.is_eof(),
+            })
 }
 
 pub(crate) fn detect(root: &Path, executable: &str, stop: &dyn Fn() -> bool) -> bool {
@@ -84,10 +127,11 @@ pub(crate) fn detect(root: &Path, executable: &str, stop: &dyn Fn() -> bool) -> 
             continue;
         };
         let lower = name.to_lowercase();
+        let hint = translation_name(&lower);
+        let mtool = lower.contains("mtool");
         let note = lower.ends_with(".txt")
-            && lower.contains("mtool")
-            && (lower.contains("翻译") || lower.contains("translation"));
-        let dictionary = ["翻译文件.json", "translation.json"].contains(&lower.as_str());
+            && (mtool || hint || lower.contains("readme") || lower.contains("说明"));
+        let dictionary = lower.ends_with(".json");
         if !note && !dictionary {
             continue;
         }
@@ -107,26 +151,39 @@ pub(crate) fn detect(root: &Path, executable: &str, stop: &dyn Fn() -> bool) -> 
             continue;
         }
         if dictionary && metadata.len() > 0 {
-            dictionaries.push(lower);
-        } else if note && metadata.len() <= NOTE_LIMIT as u64 {
-            notes.push(relative.to_owned());
+            dictionaries.push((!hint, lower, relative.to_owned()));
+        } else if note && metadata.len() <= READ_LIMIT as u64 {
+            notes.push((!mtool, !hint, relative.to_owned()));
         }
-    }
-    if dictionaries.is_empty() {
-        return false;
     }
     notes.sort();
-    notes.iter().take(NOTE_COUNT).any(|relative| {
-        if stop() {
-            return false;
-        }
-        bounded_text(root, relative, NOTE_LIMIT).is_some_and(|text| {
-            explicit_instructions(&text)
-                && dictionaries
-                    .iter()
-                    .any(|file| file == "翻译文件.json" || text.to_lowercase().contains(file))
+    let instructions = notes
+        .iter()
+        .take(NOTE_COUNT)
+        .filter_map(|(_, _, relative)| {
+            if stop() {
+                return None;
+            }
+            bounded_text(root, relative, READ_LIMIT)
+                .filter(|text| explicit_instructions(text))
+                .map(|text| text.to_lowercase())
         })
-    })
+        .collect::<Vec<_>>();
+    if instructions.is_empty() || stop() {
+        return false;
+    }
+    dictionaries.sort();
+    dictionaries
+        .iter()
+        .filter(|(unnamed, name, _)| {
+            !unnamed || instructions.iter().any(|text| mentions_file(text, name))
+        })
+        .take(DICTIONARY_COUNT)
+        .any(|(_, _, relative)| {
+            !stop()
+                && bounded_prefix(root, relative, READ_LIMIT)
+                    .is_some_and(|bytes| dictionary_prefix(&bytes))
+        })
 }
 
 #[cfg(test)]
@@ -134,23 +191,83 @@ mod tests {
     use super::*;
 
     const NOTE: &str = "MTool挂载翻译(翻译说明).txt";
-    const TEXT: &str =
-        "本包不附带工具，请使用已有 MTool 打开游戏及翻译文件。\nhttps://mtool.app/?lang=chs";
+    const TEXT: &str = "本包不附带工具，请使用已有 MTool 打开游戏及翻译文件。";
+    const DICTIONARY: &str =
+        r#"{"New Game":"开始游戏","Continue":"继续","EV001":"EV001","10":"10"}"#;
 
     fn fixture(root: &Path) {
         fs::write(root.join("Game.exe"), b"synthetic").unwrap();
         fs::write(root.join(NOTE), TEXT).unwrap();
-        // A large, deliberately invalid dictionary must not be read or JSON-parsed.
-        let dictionary = fs::File::create(root.join("翻译文件.json")).unwrap();
-        dictionary.set_len(512 * 1024 * 1024).unwrap();
+        fs::write(root.join("翻译文件.json"), DICTIONARY).unwrap();
     }
 
     #[test]
-    fn external_translation_requires_complete_explicit_evidence_and_bounded_notes() {
+    fn external_translation_requires_explicit_instructions_and_a_named_or_referenced_dictionary() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path();
         fixture(root);
+        for (note, dictionary, text) in [
+            (NOTE, "翻译文件.json", TEXT),
+            (
+                "README.txt",
+                "Game_translation_v2.JSON",
+                "Use MTool to open the game and load its translation.",
+            ),
+            (
+                "使用说明.txt",
+                "中文翻譯_v3.json",
+                "請用 MTool 打開遊戲並載入翻譯。",
+            ),
+            ("MTool.txt", "Game_TRANSLATE.json", TEXT),
+            (
+                "翻译说明.txt",
+                "Custom_Patch.json",
+                "用 MTool 打开游戏，加载翻译文件 Custom_Patch.json。",
+            ),
+        ] {
+            if note != NOTE {
+                fs::rename(root.join(NOTE), root.join(note)).unwrap();
+            }
+            if dictionary != "翻译文件.json" {
+                fs::rename(root.join("翻译文件.json"), root.join(dictionary)).unwrap();
+            }
+            fs::write(root.join(note), text).unwrap();
+            assert!(detect(root, "Game.exe", &|| false), "{note}, {dictionary}");
+            if note != NOTE {
+                fs::rename(root.join(note), root.join(NOTE)).unwrap();
+            }
+            if dictionary != "翻译文件.json" {
+                fs::rename(root.join(dictionary), root.join("翻译文件.json")).unwrap();
+            }
+        }
+        fs::write(root.join(NOTE), TEXT).unwrap();
+        fs::rename(root.join("翻译文件.json"), root.join("settings.json")).unwrap();
+        for text in [
+            TEXT.to_owned(),
+            format!("{TEXT} ../settings.json"),
+            format!("{TEXT} settings.json.bak"),
+        ] {
+            fs::write(root.join(NOTE), text).unwrap();
+            assert!(!detect(root, "Game.exe", &|| false));
+        }
+        fs::write(root.join(NOTE), format!("{TEXT} 加载 settings.json。")).unwrap();
         assert!(detect(root, "Game.exe", &|| false));
+        fs::remove_file(root.join("settings.json")).unwrap();
+        assert!(!detect(root, "Game.exe", &|| false));
+    }
+
+    #[test]
+    fn external_translation_rejects_weak_notes_and_misleading_links_but_does_not_require_a_link() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        fixture(root);
+        for text in [
+            TEXT.to_owned(),
+            format!("{TEXT} https://mtool.app/?lang=chs"),
+        ] {
+            fs::write(root.join(NOTE), &text).unwrap();
+            assert!(detect(root, "Game.exe", &|| false));
+        }
         let utf16 = [0xff, 0xfe]
             .into_iter()
             .chain(TEXT.encode_utf16().flat_map(u16::to_le_bytes))
@@ -172,16 +289,62 @@ mod tests {
             .write(true)
             .open(root.join(NOTE))
             .unwrap()
-            .set_len(NOTE_LIMIT as u64 + 1)
+            .set_len(READ_LIMIT as u64 + 1)
             .unwrap();
         assert!(!detect(root, "Game.exe", &|| false));
         fs::write(root.join(NOTE), TEXT).unwrap();
-        fs::rename(root.join("翻译文件.json"), root.join("settings.json")).unwrap();
-        assert!(!detect(root, "Game.exe", &|| false));
-        fs::rename(root.join("settings.json"), root.join("翻译文件.json")).unwrap();
         assert!(!detect(root, "Game.exe", &|| true));
         assert!(!detect(root, "../Game.exe", &|| false));
         assert_eq!(fs::read(root.join("Game.exe")).unwrap(), b"synthetic");
+    }
+
+    #[test]
+    fn external_translation_samples_flat_string_pairs_without_loading_the_full_dictionary() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        fixture(root);
+        let dictionary = root.join("翻译文件.json");
+        for text in [
+            "",
+            "{}",
+            "[]",
+            "not JSON",
+            r#"{"one":"一"}"#,
+            r#"{"width":1280,"height":720,"fullscreen":true}"#,
+            r#"{"config":{"language":"zh"},"translation":["a","b"]}"#,
+            r#"{"a":"A","b":"B","c":"C","d":"D","nested":{}}"#,
+            r#"{"a":"A","b":"B","c":"C","d":"D""#,
+            r#"{"a":"A","b":"B","c":"C","d":"D"} junk"#,
+        ] {
+            fs::write(&dictionary, text).unwrap();
+            assert!(!detect(root, "Game.exe", &|| false), "{text}");
+        }
+        fs::write(&dictionary, format!("\u{feff}{DICTIONARY}")).unwrap();
+        assert!(detect(root, "Game.exe", &|| false));
+        // A large synthetic file proves recognition uses only a bounded prefix and sample.
+        let entries = (0..SAMPLE_PAIRS)
+            .map(|i| format!("\"line{i}\":\"译文{i}\","))
+            .collect::<String>();
+        fs::write(&dictionary, format!("{{{entries}")).unwrap();
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&dictionary)
+            .unwrap()
+            .set_len(2 * READ_LIMIT as u64)
+            .unwrap();
+        assert!(detect(root, "Game.exe", &|| false));
+        // The prefix can end in the middle of a long string, after enough complete pairs.
+        let prefix = format!(
+            "{},\"long\":\"{}",
+            DICTIONARY.trim_end_matches('}'),
+            "a".repeat(2 * READ_LIMIT)
+        );
+        fs::write(&dictionary, prefix).unwrap();
+        assert!(detect(root, "Game.exe", &|| false));
+        assert_eq!(
+            fs::metadata(&dictionary).unwrap().len(),
+            (DICTIONARY.len() - 1 + 9 + 2 * READ_LIMIT) as u64
+        );
     }
 
     #[cfg(unix)]

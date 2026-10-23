@@ -104,15 +104,17 @@ beforeEach(() => {
 });
 describe('batch import flow', () => {
   it.each([
-    { detected: true, useMtool: true },
-    { detected: true, useMtool: false },
-    { detected: false, useMtool: false },
+    { engine: 'RPG Maker MZ', detected: true, useMtool: true },
+    { engine: 'Unity', detected: true, useMtool: false },
+    { engine: 'Unknown', detected: true, useMtool: true },
+    { engine: 'RPG Developer Bakin', detected: true, useMtool: true },
+    { engine: 'RPG Maker MZ', detected: false, useMtool: false },
   ])(
     'recommends external translation MTool without cleanup and respects opt-out: %j',
-    async ({ detected, useMtool }) => {
+    async ({ engine, detected, useMtool }) => {
       vi.mocked(api.job).mockResolvedValue({
         ...page,
-        changes: [{ ...candidate, engine: 'RPG Maker MZ', external_mtool_translation: detected }],
+        changes: [{ ...candidate, engine, external_mtool_translation: detected }],
       });
       renderNewImport({ settings: { ...settings, mtool_root: 'D:/Shared Tool' } });
       await expandSettings('启动配置');
@@ -129,7 +131,7 @@ describe('batch import flow', () => {
       const selection = vi.mocked(api.importPlan).mock.calls[0][1][0];
       expect(selection.mtool).toBe(useMtool);
       expect(!!selection.cleanup_mtool).toBe(false);
-      expect(selection.mtool_strategy).toBe('INJECT');
+      expect(selection.mtool_strategy).toBe(engine === 'RPG Developer Bakin' ? 'BAKIN' : 'INJECT');
       expect(selection.mtool_loader).toBeUndefined();
     },
   );

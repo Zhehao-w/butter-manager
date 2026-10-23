@@ -904,7 +904,8 @@ fn analyze_inner(
     if candidate.status == "ready"
         && !stopped()
         && candidate.qsp.is_none()
-        && ["RPG Maker MV", "RPG Maker MZ"].contains(&candidate.engine.as_str())
+        && !engine_conflict
+        && candidate.engine != "WOLF RPG Editor"
     {
         if let Some(executable) = preferred_executable.or(executable) {
             candidate.external_mtool_translation =
@@ -1286,11 +1287,15 @@ start "" "F:\Old Tool\MTool.exe" "F:\Old Tool""#,
         assert_eq!(decoded.install_path, candidate.install_path);
     }
     #[test]
-    fn external_translation_recommends_mtool_only_for_mv_mz_without_marking_tools_or_loaders() {
+    fn external_translation_supports_other_engines_without_marking_tools_or_loaders() {
         for (marker, expected) in [
             ("js/rpg_core.js", "RPG Maker MV"),
             ("js/rmmz_core.js", "RPG Maker MZ"),
             ("Data/BasicData/Game.dat", "WOLF RPG Editor"),
+            ("UnityPlayer.dll", "Unity"),
+            ("unrecognized.bin", "Unknown"),
+            ("game.qsp", "QSP"),
+            ("data/bakinplayer.exe", "RPG Developer Bakin"),
         ] {
             let temp = tempfile::tempdir().unwrap();
             let root = temp.path();
@@ -1298,6 +1303,13 @@ start "" "F:\Old Tool\MTool.exe" "F:\Old Tool""#,
             fs::write(root.join(marker), b"synthetic").unwrap();
             if expected == "WOLF RPG Editor" {
                 fs::write(root.join("Data/BasicData/CDatabase.dat"), b"synthetic").unwrap();
+            }
+            if expected == "Unity" {
+                fs::create_dir(root.join("Game_Data")).unwrap();
+            }
+            if expected == "RPG Developer Bakin" {
+                fs::write(root.join("data/bakinengine.dll"), b"synthetic").unwrap();
+                fs::write(root.join("data/data.rbpack"), b"synthetic").unwrap();
             }
             let mut pe = vec![0u8; 128];
             pe[..2].copy_from_slice(b"MZ");
@@ -1310,7 +1322,8 @@ start "" "F:\Old Tool\MTool.exe" "F:\Old Tool""#,
                 "不附带工具，使用已有 MTool 打开游戏及翻译文件。https://mtool.app/?lang=chs",
             )
             .unwrap();
-            fs::write(root.join("翻译文件.json"), b"not parsed or mounted").unwrap();
+            let dictionary = br#"{"Start":"Begin","Continue":"Resume","EV001":"EV001","10":"10"}"#;
+            fs::write(root.join("Game_translation_v2.json"), dictionary).unwrap();
             for candidate in [
                 analyze_quick_controlled(root, &|| false, &|_| {}).unwrap(),
                 analyze_directory(root).unwrap(),
@@ -1318,7 +1331,8 @@ start "" "F:\Old Tool\MTool.exe" "F:\Old Tool""#,
                 assert_eq!(candidate.engine, expected);
                 assert_eq!(
                     candidate.external_mtool_translation,
-                    expected != "WOLF RPG Editor"
+                    !["WOLF RPG Editor", "QSP"].contains(&expected),
+                    "{expected}"
                 );
                 assert!(!candidate.mtool_detected);
                 assert!(candidate.bundled_mtool.is_empty());
@@ -1329,9 +1343,15 @@ start "" "F:\Old Tool\MTool.exe" "F:\Old Tool""#,
             assert_eq!(full.executables[0].architecture, "x64");
             assert_eq!(fs::read(root.join("Game.exe")).unwrap(), pe);
             assert_eq!(
-                fs::read(root.join("翻译文件.json")).unwrap(),
-                b"not parsed or mounted"
+                fs::read(root.join("Game_translation_v2.json")).unwrap(),
+                dictionary
             );
+            if expected == "RPG Maker MZ" {
+                fs::write(root.join("js/rpg_core.js"), b"conflicting engine").unwrap();
+                let conflict = analyze_directory(root).unwrap();
+                assert_eq!(conflict.engine, "Unknown");
+                assert!(!conflict.external_mtool_translation);
+            }
         }
     }
     #[test]

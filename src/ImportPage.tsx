@@ -1148,7 +1148,7 @@ export function ImportPage({
                         </span>
                       )}
                       {candidate?.external_mtool_translation && (
-                        <span className="mode" title="已识别翻译说明、MTool 官方链接和配套翻译文件">
+                        <span className="mode" title="已识别明确的 MTool 翻译说明及配套翻译字典">
                           外置翻译包 · 推荐公共 MTool
                         </span>
                       )}

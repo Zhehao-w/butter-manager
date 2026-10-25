@@ -427,7 +427,7 @@ describe('batch import flow', () => {
     async (keepChecked) => {
       const bundled: ScanCandidate = {
         ...candidate,
-        mtool_detected: true,
+        mtool_detected: false,
         bundled_mtool: [
           {
             folder: '辅助工具',
@@ -952,7 +952,7 @@ describe('batch import flow', () => {
       changes: [
         {
           ...candidate,
-          mtool_detected: true,
+          mtool_detected: false,
           bundled_mtool: [
             { folder: 'tool', bats: ['StartWithTool.bat'], safe: true, reason: '已确认' },
           ],

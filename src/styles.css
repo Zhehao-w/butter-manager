@@ -1727,13 +1727,13 @@ button {
 .update-save-review p {
   margin: 6px 0;
 }
-:is(.import-save-options, .import-mtool-choice) {
+.import-save-options {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   margin: 12px 0;
 }
-:is(.import-save-options, .import-mtool-choice) label {
+.import-save-options label {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1744,16 +1744,16 @@ button {
   background: #fff;
   cursor: pointer;
 }
-:is(.import-save-options, .import-mtool-choice) label.selected {
+.import-save-options label.selected {
   border-color: #a9ccff;
   background: #eaf3ff;
   color: var(--accent);
 }
-:is(.import-save-options, .import-mtool-choice) label:has(input:focus-visible) {
+.import-save-options label:has(input:focus-visible) {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
-:is(.import-save-options, .import-mtool-choice) label:has(input:disabled) {
+.import-save-options label:has(input:disabled) {
   cursor: default;
   opacity: 0.65;
 }
@@ -3825,27 +3825,32 @@ tbody tr:not(:last-child) td {
 }
 .import-mtool-choice {
   margin: 0;
+  align-items: flex-start;
+  line-height: 20px;
   font-size: 13px;
+  cursor: pointer;
+}
+.import-mtool-choice input {
+  margin-top: 2px;
+}
+.import-mtool-choice:has(input:disabled) {
+  cursor: default;
+  opacity: 0.65;
+}
+.import-mtool-details {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding-left: 26px;
 }
 .import-mtool-path {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  min-width: 0;
-}
-.import-mtool-path > .icon {
-  flex: none;
-  margin-top: 1px;
-  color: var(--text-secondary);
-}
-.import-mtool-path > div {
   display: grid;
   gap: 2px;
   min-width: 0;
   overflow-wrap: anywhere;
 }
 .import-mtool-review p {
-  margin: 4px 0 0;
+  margin: 0;
 }
 .play-unplayed {
   color: #78869c;

@@ -1,5 +1,13 @@
 # 验证记录
 
+## 1.5.3 随包工具默认启动与清理排版（2026-10-25，PR #28 追加）
+
+随包 MTool 候选即默认选用公共 MTool 启动，不再依赖旧 `mtool_detected` 标记；仅初始化新候选，保留已有手动取消和独立清理选择，QSP 仍使用外部播放器。沿用公共工具路径及实际 EXE / loader 启动链路，不改后端执行规则。扩展现有界面夹具为 `mtool_detected: false`，验证仅凭随包识别也默认启用、取消清理不取消公共工具，以及手动取消公共工具可独立提交。
+
+清理区域改为现有普通 checkbox 行，路径、关联脚本和简短说明对齐到选项文字；去掉按钮块及目录图标，长内容保持换行。静态排版核查与隔离 DOM 回归完成，未用 GUI 自动化或实际 Windows 视觉验收。
+
+Import 界面 **69 项**、TypeScript / Vite、Prettier、版本一致性、修改文档相对链接与差异检查通过；未重复运行未改动的 Rust。1.5.3 / schema 15 保持，README、CHANGELOG、roadmap、开发规则、专项说明及 PR 发布文案同步。PR 合并后无需另补 chores，再按用户安排对 main 合并提交推送 `v1.5.3`，由现有 Tag CI 检查并发布 ZIP 与同名 `.zip.sha256`；本次不合并、Tag、Release 或等待 CI。
+
 ## 1.5.3 发布准备（2026-10-25，PR #28）
 
 同一 PR 中完成正式 **1.5.3** 发布 chores：package、Tauri、Cargo manifest / lock 及应用内版本断言统一；README、CHANGELOG、roadmap、Portable 与当前专项文档同步正式版本和发布资产名称。说明聚焦随包 MTool 默认整目录回收、可取消保留、清理与启动独立及统一选项 / 路径排版，不加入具体游戏示例。沿用 **schema 15**，从 1.5.0–1.5.2 升级无需迁移；历史记录及未完成 Windows 实机验收保持原状态。

@@ -381,7 +381,9 @@ export function ImportPage({
               mtool_strategy: suggestedMtoolStrategy(c),
               executable: suggestedPlayer(c) || '',
               external_player: qspConfig(c),
-              mtool: !c.qsp && (!!c.mtool_detected || !!c.external_mtool_translation),
+              mtool:
+                !c.qsp &&
+                (!!c.bundled_mtool?.length || !!c.mtool_detected || !!c.external_mtool_translation),
               ...(c.bundled_mtool?.length ? { cleanup_mtool: true } : {}),
               existing_id: null,
               new_override: false,
@@ -1716,23 +1718,20 @@ export function ImportPage({
                         {!!candidate?.bundled_mtool?.length && (
                           <ImportSettingSection title="随包 MTool">
                             <div className="import-mtool-review">
-                              <div className="import-mtool-choice">
-                                <label className={choice.cleanup_mtool ? 'selected' : ''}>
-                                  <input
-                                    type="checkbox"
-                                    checked={!!choice.cleanup_mtool}
-                                    disabled={disabled}
-                                    onChange={(event) =>
-                                      update(source, { cleanup_mtool: event.target.checked })
-                                    }
-                                  />
-                                  导入成功后清理随包 MTool
-                                </label>
-                              </div>
-                              {candidate.bundled_mtool.map((bundle) => (
-                                <div className="import-mtool-path" key={bundle.folder}>
-                                  <Icon name="folder" size={16} />
-                                  <div>
+                              <label className="check import-mtool-choice">
+                                <input
+                                  type="checkbox"
+                                  checked={!!choice.cleanup_mtool}
+                                  disabled={disabled}
+                                  onChange={(event) =>
+                                    update(source, { cleanup_mtool: event.target.checked })
+                                  }
+                                />
+                                <span>导入成功后清理随包 MTool</span>
+                              </label>
+                              <div className="import-mtool-details">
+                                {candidate.bundled_mtool.map((bundle) => (
+                                  <div className="import-mtool-path" key={bundle.folder}>
                                     <span className="path">{bundle.folder}/</span>
                                     {!!bundle.bats.length && (
                                       <span className="muted">
@@ -1740,11 +1739,11 @@ export function ImportPage({
                                       </span>
                                     )}
                                   </div>
-                                </div>
-                              ))}
-                              <p className="muted">
-                                回收整个一级目录及关联脚本，包含目录内全部文件。取消勾选则保留，启动方式单独设置。
-                              </p>
+                                ))}
+                                <p className="muted">
+                                  回收整个一级目录（含全部文件）及关联脚本；取消勾选则保留。
+                                </p>
+                              </div>
                             </div>
                           </ImportSettingSection>
                         )}

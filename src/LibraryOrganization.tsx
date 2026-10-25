@@ -107,7 +107,7 @@ export function LibraryBatchActions({
             <button
               type="button"
               key={status}
-              className={`play-${status.toLowerCase()}`}
+              className={`quick-filter-chip play-${status.toLowerCase()}`}
               aria-label={`批量标记为${playLabels[status]}`}
               disabled={locked}
               title={title}

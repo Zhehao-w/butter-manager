@@ -157,6 +157,25 @@ export default function App() {
       );
     });
   }
+  async function savePlayStatus(id: string, status: PlayStatus): Promise<PlayStatus> {
+    if (organizationRequest.current || taskActive || launchRequests.current.size > 0)
+      throw new Error('当前任务或启动请求完成后可修改游玩状态。');
+    organizationRequest.current = true;
+    setOrganizationBusy(true);
+    try {
+      const [saved] = await api.setPlayStatuses([id], status);
+      if (!saved || saved.id !== id) throw new Error('未取得保存后的游玩状态，请刷新后重试。');
+      setGames((current) =>
+        current.map((game) =>
+          game.id === id ? { ...game, play_status: saved.play_status } : game,
+        ),
+      );
+      return saved.play_status;
+    } finally {
+      organizationRequest.current = false;
+      setOrganizationBusy(false);
+    }
+  }
   async function refreshOrganization() {
     const [library, tags] = await Promise.all([api.games(), api.libraryTags()]);
     setGames(library);
@@ -195,7 +214,7 @@ export default function App() {
   const [visibleLaunchingIds, setVisibleLaunchingIds] = useState<Set<string>>(new Set());
   const launchRequests = useRef(new Set<string>());
   async function playGame(id: string, configuration?: LaunchConfiguration) {
-    if (taskActive) throw new Error('当前任务完成后可启动');
+    if (taskActive || organizationRequest.current) throw new Error('当前任务完成后可启动');
     if (launchRequests.current.has(id)) return;
     launchRequests.current.add(id);
     setLaunchingIds((current) => new Set(current).add(id));
@@ -1104,7 +1123,7 @@ export default function App() {
                 <div className="library-quick-filters" role="group" aria-label="快捷筛选">
                   <button
                     type="button"
-                    className="quick-filter-all"
+                    className="quick-filter-chip quick-filter-all"
                     aria-pressed={
                       !filters.favoritesOnly &&
                       !filters.tags?.length &&
@@ -1125,7 +1144,7 @@ export default function App() {
                   </button>
                   <button
                     type="button"
-                    className="quick-filter-all favorite-quick-filter"
+                    className="quick-filter-chip favorite-quick-filter"
                     aria-pressed={!!filters.favoritesOnly}
                     onClick={() =>
                       setFilters((current) => ({
@@ -1922,6 +1941,8 @@ export default function App() {
           launching={launchingIds.has(game.id)}
           launchProgressVisible={visibleLaunchingIds.has(game.id)}
           onPlay={(configuration) => playGame(game.id, configuration)}
+          statusLocked={taskActive || launchingIds.size > 0}
+          onStatusChange={(status) => savePlayStatus(game.id, status)}
           onSaved={(saved) => {
             setLibraryTags((current) => [
               ...new Map([...current, ...saved.tags].map((tag) => [tag.id, tag])).values(),
@@ -2752,6 +2773,8 @@ function GameDetail({
   launching,
   launchProgressVisible,
   onPlay,
+  statusLocked,
+  onStatusChange,
   onSaved,
   onClose,
 }: {
@@ -2773,6 +2796,8 @@ function GameDetail({
   launching: boolean;
   launchProgressVisible: boolean;
   onPlay: (configuration: LaunchConfiguration) => Promise<void>;
+  statusLocked: boolean;
+  onStatusChange: (status: PlayStatus) => Promise<PlayStatus>;
   onSaved: (game: Game) => void;
   onClose: () => void;
 }) {
@@ -3059,6 +3084,15 @@ function GameDetail({
       setMessage('游戏资料已保存。');
     });
   }
+  async function saveStatus(status: PlayStatus) {
+    if (busy || statusLocked || status === (game.play_status ?? 'UNPLAYED')) return;
+    await run(async () => {
+      setMessage('正在保存游玩状态…');
+      const saved = await onStatusChange(status);
+      setDraft((current) => ({ ...current, play_status: saved }));
+      setMessage('游玩状态已自动保存。');
+    });
+  }
   useWindowCloseGuard({ dirty, busy: busy || launching, save: saveGame });
   function useQsp() {
     setDraft((current) => ({
@@ -3326,9 +3360,10 @@ function GameDetail({
                   <legend>游玩状态</legend>
                   <PlayStatusControl
                     value={draft.play_status ?? 'UNPLAYED'}
-                    onChange={(status) => field('play_status', status)}
+                    disabled={statusLocked}
+                    onChange={(status) => void saveStatus(status)}
                   />
-                  <span className="muted">成功启动会标记为正在玩；已通关会保留。</span>
+                  <span className="muted">更改后自动保存；成功启动标记为正在玩，已通关保留。</span>
                 </fieldset>
                 <label>
                   版本

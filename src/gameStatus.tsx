@@ -12,7 +12,7 @@ export const playLabels: Record<PlayStatus, string> = {
 };
 const playAppearance: Record<PlayStatus, { icon: IconName; tone: string }> = {
   UNPLAYED: { icon: 'library', tone: 'slate' },
-  PLAYING: { icon: 'play', tone: 'pink' },
+  PLAYING: { icon: 'play', tone: 'playing' },
   COMPLETED: { icon: 'flag', tone: 'teal' },
 };
 export const launchModes = ['直接启动', '默认应用', 'MTool', 'QSP 播放器'] as const;
@@ -50,9 +50,11 @@ type FilterGroup = 'statuses' | 'engines' | 'modes' | 'tags';
 export function PlayStatusControl({
   value,
   onChange,
+  disabled = false,
 }: {
   value: PlayStatus;
   onChange: (status: PlayStatus) => void;
+  disabled?: boolean;
 }) {
   const name = useId();
   return (
@@ -70,6 +72,7 @@ export function PlayStatusControl({
               name={name}
               value={status}
               checked={value === status}
+              disabled={disabled}
               onChange={() => onChange(status)}
             />
             <Icon name={playAppearance[status].icon} size={14} />
@@ -208,7 +211,7 @@ export function EngineQuickFilters({
       {options.map((option, index) => (
         <button
           key={option.key}
-          className={`tone-${engineTone(option.engines[0] ?? 'Unknown')}${index >= visibleCount && !option.other ? ' quick-engine-overflow' : ''}`}
+          className={`quick-filter-chip tone-${engineTone(option.engines[0] ?? 'Unknown')}${index >= visibleCount && !option.other ? ' quick-engine-overflow' : ''}`}
           type="button"
           aria-pressed={option.active}
           disabled={!option.count && !option.active}
@@ -240,7 +243,7 @@ export function PlayQuickFilters({
           <button
             key={status}
             type="button"
-            className={`play-${status.toLowerCase()}`}
+            className={`quick-filter-chip play-${status.toLowerCase()}`}
             aria-pressed={active}
             onClick={() => onChange(active ? [] : [status])}
           >

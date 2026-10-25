@@ -427,6 +427,7 @@ describe('batch import flow', () => {
     async (keepChecked) => {
       const bundled: ScanCandidate = {
         ...candidate,
+        mtool_detected: true,
         bundled_mtool: [
           {
             folder: '辅助工具',
@@ -458,7 +459,7 @@ describe('batch import flow', () => {
       expect(vi.mocked(api.importPlan).mock.calls[0][1][0].cleanup_mtool).toBe(keepChecked);
     },
   );
-  it('keeps ambiguous bundles without a cleanup option and explains the reason', async () => {
+  it('defaults every detected bundle to cleanup without legacy eligibility restrictions', async () => {
     vi.mocked(api.job).mockResolvedValue({
       ...page,
       changes: [
@@ -472,8 +473,20 @@ describe('batch import flow', () => {
     });
     renderNewImport();
     await expandSettings('随包 MTool');
-    await screen.findByText('混有游戏资源，保留目录');
-    expect(screen.queryByRole('checkbox', { name: '导入成功后清理随包 MTool' })).toBeNull();
+    const cleanup = await screen.findByRole('checkbox', { name: '导入成功后清理随包 MTool' });
+    expect((cleanup as HTMLInputElement).checked).toBe(true);
+    expect(screen.queryByText('混有游戏资源，保留目录')).toBeNull();
+    fireEvent.click(cleanup);
+    expect((cleanup as HTMLInputElement).checked).toBe(false);
+    await expandSettings('启动配置');
+    const publicMtool = screen.getByRole('checkbox', { name: '公共 MTool' }) as HTMLInputElement;
+    expect(publicMtool.checked).toBe(false);
+    await expandSettings('随包 MTool');
+    fireEvent.click(screen.getByRole('checkbox', { name: '导入成功后清理随包 MTool' }));
+    await expandSettings('启动配置');
+    expect((screen.getByRole('checkbox', { name: '公共 MTool' }) as HTMLInputElement).checked).toBe(
+      false,
+    );
   });
   it('shows retained MTool paths and failure reasons in successful import history with retry', async () => {
     vi.mocked(api.importPlans).mockResolvedValue([
@@ -959,12 +972,13 @@ describe('batch import flow', () => {
     ).toBe(false);
   });
 
-  it('exposes invalid MTool configuration while folded and updates its cleanup summary', async () => {
+  it('keeps cleanup selected independently when disabling public MTool without configured tools', async () => {
     vi.mocked(api.job).mockResolvedValue({
       ...page,
       changes: [
         {
           ...candidate,
+          mtool_detected: true,
           bundled_mtool: [
             { folder: 'tool', bats: ['StartWithTool.bat'], safe: true, reason: '已确认' },
           ],
@@ -980,13 +994,18 @@ describe('batch import flow', () => {
     fireEvent.click(screen.getByRole('button', { name: '收起设置' }));
     expect(screen.getByRole('alert').textContent).toContain('请先配置公共 MTool');
     expect(screen.getByText('随包 MTool：回收清理')).toBeTruthy();
-    await expandSettings('随包 MTool');
-    fireEvent.click(screen.getByRole('checkbox', { name: '导入成功后清理随包 MTool' }));
     await expandSettings('启动配置');
     fireEvent.click(screen.getByRole('checkbox', { name: '公共 MTool' }));
     fireEvent.click(screen.getByRole('button', { name: '收起设置' }));
     expect(screen.queryByRole('alert')).toBeNull();
-    expect(screen.getByText('随包 MTool：保留')).toBeTruthy();
+    expect(screen.getByText('随包 MTool：回收清理')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '生成导入与更新计划（1）' }));
+    await waitFor(() => expect(api.importPlan).toHaveBeenCalledOnce());
+    expect(vi.mocked(api.importPlan).mock.calls[0][1][0]).toMatchObject({
+      cleanup_mtool: true,
+      mtool: false,
+      external_player: null,
+    });
   });
 
   it('keeps authoritative preview blockers and errors visible after folding', async () => {

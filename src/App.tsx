@@ -2928,6 +2928,32 @@ function GameDetail({
   const [folderError, setFolderError] = useState<string | null>(null);
   const busy = requestBusy || maintenanceBusy;
   const [message, setMessage] = useState('');
+  const saveFeedbackTimer = useRef<number | null>(null);
+  const saveFeedbackOwner = useRef(0);
+  useEffect(
+    () => () => {
+      if (saveFeedbackTimer.current !== null) window.clearTimeout(saveFeedbackTimer.current);
+      saveFeedbackTimer.current = null;
+      saveFeedbackOwner.current += 1;
+    },
+    [],
+  );
+  function beginSaveFeedback(progress: string) {
+    if (saveFeedbackTimer.current !== null) window.clearTimeout(saveFeedbackTimer.current);
+    const owner = ++saveFeedbackOwner.current;
+    const timer = window.setTimeout(() => {
+      if (owner !== saveFeedbackOwner.current) return;
+      saveFeedbackTimer.current = null;
+      setMessage(progress);
+    }, 300);
+    saveFeedbackTimer.current = timer;
+    return (result?: string) => {
+      if (owner !== saveFeedbackOwner.current) return;
+      window.clearTimeout(timer);
+      saveFeedbackTimer.current = null;
+      if (result) setMessage(result);
+    };
+  }
   const [confirmClose, setConfirmClose] = useState(false);
   const edit = {
     ...draft,
@@ -3064,17 +3090,20 @@ function GameDetail({
     setDraft((current) => ({ ...current, [key]: value }));
     setDebugText('');
   }
-  async function run(action: () => Promise<void>) {
+  async function run(action: () => Promise<void>, saveProgress?: string) {
     setBusy(true);
-    setMessage('');
+    const finishFeedback = saveProgress ? beginSaveFeedback(saveProgress) : null;
+    if (!saveProgress) setMessage('');
     try {
       if (pendingStatus.current) await pendingStatus.current;
       await action();
       return true;
     } catch (reason) {
-      setMessage(String(reason));
+      if (finishFeedback) finishFeedback(String(reason));
+      else setMessage(String(reason));
       return false;
     } finally {
+      finishFeedback?.();
       setBusy(false);
     }
   }
@@ -3092,7 +3121,7 @@ function GameDetail({
       setSaves(saved.save_paths.join('\n'));
       onSaved(saved);
       setMessage('游戏资料已保存。');
-    });
+    }, '正在保存游戏资料…');
   }
   async function saveStatus(status: PlayStatus) {
     if (
@@ -3102,16 +3131,17 @@ function GameDetail({
       status === (game.play_status ?? 'UNPLAYED')
     )
       return;
-    setMessage('正在保存游玩状态…');
+    const finishFeedback = beginSaveFeedback('正在保存游玩状态…');
     const write = onStatusChange(status);
     pendingStatus.current = write;
     try {
       const saved = await write;
       setDraft((current) => ({ ...current, play_status: saved }));
-      setMessage('游玩状态已自动保存。');
+      finishFeedback('游玩状态已自动保存。');
     } catch (reason) {
-      setMessage(`游玩状态保存失败：${String(reason)}`);
+      finishFeedback(`游玩状态保存失败：${String(reason)}`);
     } finally {
+      finishFeedback();
       pendingStatus.current = null;
     }
   }

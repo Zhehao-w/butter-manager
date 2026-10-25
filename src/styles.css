@@ -13,9 +13,9 @@
   --favorite-text: #984d73;
   --favorite-background: #ffedf5;
   --favorite-border: #f3cadd;
-  --playing-color: #925817;
-  --playing-background: #fff4e4;
-  --playing-border: #efd7b5;
+  --playing-color: #236b85;
+  --playing-background: #ebf7fc;
+  --playing-border: #c4e1ed;
   /* EngineSelect's Lucide chevron, rotated down and tinted to --text-secondary. */
   --dropdown-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23788aa9' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
   --line: #e3edfa;
@@ -3519,7 +3519,7 @@ button.library-play-button:active:not(:disabled) {
 .quick-filter-chip.play-playing {
   --quick-color: var(--playing-color);
   --quick-tint: var(--playing-background);
-  --quick-accent: #c18a41;
+  --quick-accent: #6ea8c1;
   --quick-border: var(--playing-border);
 }
 .quick-filter-chip.play-completed {

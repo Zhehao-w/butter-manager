@@ -124,6 +124,7 @@ export default function App() {
   const [libraryTags, setLibraryTags] = useState<LibraryTag[]>([]);
   const [tagManagerOpen, setTagManagerOpen] = useState(false);
   const [organizationBusy, setOrganizationBusy] = useState(false);
+  const [playStatusSaving, setPlayStatusSaving] = useState(false);
   const organizationRequest = useRef(false);
   const [selectionMode, setSelectionMode] = useState(false);
   const [librarySelected, setLibrarySelected] = useState<Set<string>>(new Set());
@@ -156,6 +157,25 @@ export default function App() {
         ),
       );
     });
+  }
+  async function savePlayStatus(id: string, status: PlayStatus): Promise<PlayStatus> {
+    if (organizationRequest.current || taskActive || launchRequests.current.size > 0)
+      throw new Error('当前任务或启动请求完成后可修改游玩状态。');
+    organizationRequest.current = true;
+    setPlayStatusSaving(true);
+    try {
+      const [saved] = await api.setPlayStatuses([id], status);
+      if (!saved || saved.id !== id) throw new Error('未取得保存后的游玩状态，请刷新后重试。');
+      setGames((current) =>
+        current.map((game) =>
+          game.id === id ? { ...game, play_status: saved.play_status } : game,
+        ),
+      );
+      return saved.play_status;
+    } finally {
+      organizationRequest.current = false;
+      setPlayStatusSaving(false);
+    }
   }
   async function refreshOrganization() {
     const [library, tags] = await Promise.all([api.games(), api.libraryTags()]);
@@ -195,7 +215,7 @@ export default function App() {
   const [visibleLaunchingIds, setVisibleLaunchingIds] = useState<Set<string>>(new Set());
   const launchRequests = useRef(new Set<string>());
   async function playGame(id: string, configuration?: LaunchConfiguration) {
-    if (taskActive) throw new Error('当前任务完成后可启动');
+    if (taskActive || organizationRequest.current) throw new Error('当前任务完成后可启动');
     if (launchRequests.current.has(id)) return;
     launchRequests.current.add(id);
     setLaunchingIds((current) => new Set(current).add(id));
@@ -473,7 +493,7 @@ export default function App() {
     starting || scanning || processing || importBusy || duplicateBusy || organizationBusy;
   const windowClosing = useWindowClosing(
     desktop,
-    taskActive || organizationBusy || linkBusy || launchingIds.size > 0,
+    taskActive || playStatusSaving || organizationBusy || linkBusy || launchingIds.size > 0,
     setError,
   );
 
@@ -1104,7 +1124,7 @@ export default function App() {
                 <div className="library-quick-filters" role="group" aria-label="快捷筛选">
                   <button
                     type="button"
-                    className="quick-filter-all"
+                    className="quick-filter-chip quick-filter-all"
                     aria-pressed={
                       !filters.favoritesOnly &&
                       !filters.tags?.length &&
@@ -1125,7 +1145,7 @@ export default function App() {
                   </button>
                   <button
                     type="button"
-                    className="quick-filter-all favorite-quick-filter"
+                    className="quick-filter-chip favorite-quick-filter"
                     aria-pressed={!!filters.favoritesOnly}
                     onClick={() =>
                       setFilters((current) => ({
@@ -1883,7 +1903,7 @@ export default function App() {
         <TagManager
           tags={libraryTags}
           games={games}
-          locked={taskActive || organizationBusy || launchingIds.size > 0}
+          locked={taskActive || playStatusSaving || organizationBusy || launchingIds.size > 0}
           onChanged={refreshOrganization}
           onClose={() => setTagManagerOpen(false)}
         />
@@ -1922,6 +1942,8 @@ export default function App() {
           launching={launchingIds.has(game.id)}
           launchProgressVisible={visibleLaunchingIds.has(game.id)}
           onPlay={(configuration) => playGame(game.id, configuration)}
+          statusLocked={taskActive || playStatusSaving || launchingIds.size > 0}
+          onStatusChange={(status) => savePlayStatus(game.id, status)}
           onSaved={(saved) => {
             setLibraryTags((current) => [
               ...new Map([...current, ...saved.tags].map((tag) => [tag.id, tag])).values(),
@@ -2752,6 +2774,8 @@ function GameDetail({
   launching,
   launchProgressVisible,
   onPlay,
+  statusLocked,
+  onStatusChange,
   onSaved,
   onClose,
 }: {
@@ -2773,6 +2797,8 @@ function GameDetail({
   launching: boolean;
   launchProgressVisible: boolean;
   onPlay: (configuration: LaunchConfiguration) => Promise<void>;
+  statusLocked: boolean;
+  onStatusChange: (status: PlayStatus) => Promise<PlayStatus>;
   onSaved: (game: Game) => void;
   onClose: () => void;
 }) {
@@ -2821,6 +2847,7 @@ function GameDetail({
     'data-detail-tab': tab,
   });
   const previousStatus = useRef(game.play_status);
+  const pendingStatus = useRef<Promise<PlayStatus> | null>(null);
   useEffect(() => {
     const old = previousStatus.current;
     setDraft((current) =>
@@ -2833,9 +2860,14 @@ function GameDetail({
   const [saveToOpen, setSaveToOpen] = useState('');
   const [saveEditorOpen, setSaveEditorOpen] = useState(false);
   const editorSaveBaseline = useRef<string | null>(null);
-  function openSaveEditor() {
-    editorSaveBaseline.current = saves;
-    setSaveEditorOpen(true);
+  async function openSaveEditor() {
+    try {
+      if (pendingStatus.current) await pendingStatus.current;
+      editorSaveBaseline.current = saves;
+      setSaveEditorOpen(true);
+    } catch (reason) {
+      setMessage(String(reason));
+    }
   }
   const saveLocations = lines(saves);
   const selectedSave = saveLocations.includes(saveToOpen) ? saveToOpen : saveLocations[0];
@@ -2896,9 +2928,36 @@ function GameDetail({
   const [folderError, setFolderError] = useState<string | null>(null);
   const busy = requestBusy || maintenanceBusy;
   const [message, setMessage] = useState('');
+  const saveFeedbackTimer = useRef<number | null>(null);
+  const saveFeedbackOwner = useRef(0);
+  useEffect(
+    () => () => {
+      if (saveFeedbackTimer.current !== null) window.clearTimeout(saveFeedbackTimer.current);
+      saveFeedbackTimer.current = null;
+      saveFeedbackOwner.current += 1;
+    },
+    [],
+  );
+  function beginSaveFeedback(progress: string) {
+    if (saveFeedbackTimer.current !== null) window.clearTimeout(saveFeedbackTimer.current);
+    const owner = ++saveFeedbackOwner.current;
+    const timer = window.setTimeout(() => {
+      if (owner !== saveFeedbackOwner.current) return;
+      saveFeedbackTimer.current = null;
+      setMessage(progress);
+    }, 300);
+    saveFeedbackTimer.current = timer;
+    return (result?: string) => {
+      if (owner !== saveFeedbackOwner.current) return;
+      window.clearTimeout(timer);
+      saveFeedbackTimer.current = null;
+      if (result) setMessage(result);
+    };
+  }
   const [confirmClose, setConfirmClose] = useState(false);
   const edit = {
     ...draft,
+    play_status: game.play_status,
     tags: appendTag(draft.tags ?? [], tagInput, libraryTags),
     aliases: lines(aliases),
     save_paths: lines(saves),
@@ -3006,7 +3065,6 @@ function GameDetail({
         'display_title',
         'current_version',
         'engine',
-        'play_status',
         'main_executable',
         'working_directory',
         'launch_arguments',
@@ -3024,7 +3082,7 @@ function GameDetail({
     saves !== game.save_paths.join('\n');
   const detailStatus = message || analysisNotice;
   const close = () => {
-    if (busy) return;
+    if (busy || pendingStatus.current) return;
     if (dirty) setConfirmClose(true);
     else onClose();
   };
@@ -3032,16 +3090,20 @@ function GameDetail({
     setDraft((current) => ({ ...current, [key]: value }));
     setDebugText('');
   }
-  async function run(action: () => Promise<void>) {
+  async function run(action: () => Promise<void>, saveProgress?: string) {
     setBusy(true);
-    setMessage('');
+    const finishFeedback = saveProgress ? beginSaveFeedback(saveProgress) : null;
+    if (!saveProgress) setMessage('');
     try {
+      if (pendingStatus.current) await pendingStatus.current;
       await action();
       return true;
     } catch (reason) {
-      setMessage(String(reason));
+      if (finishFeedback) finishFeedback(String(reason));
+      else setMessage(String(reason));
       return false;
     } finally {
+      finishFeedback?.();
       setBusy(false);
     }
   }
@@ -3049,17 +3111,45 @@ function GameDetail({
     if (busy || launching) return false;
     const form = document.getElementById(formId) as HTMLFormElement | null;
     if (form && !form.reportValidity()) return false;
+    const statusWrite = pendingStatus.current;
     return run(async () => {
-      const saved = await api.saveGame(edit);
+      const status = await statusWrite;
+      const saved = await api.saveGame({ ...edit, ...(status ? { play_status: status } : {}) });
       setDraft({ ...saved });
       setTagInput('');
       setAliases(saved.aliases.join('\n'));
       setSaves(saved.save_paths.join('\n'));
       onSaved(saved);
       setMessage('游戏资料已保存。');
-    });
+    }, '正在保存游戏资料…');
   }
-  useWindowCloseGuard({ dirty, busy: busy || launching, save: saveGame });
+  async function saveStatus(status: PlayStatus) {
+    if (
+      busy ||
+      pendingStatus.current ||
+      statusLocked ||
+      status === (game.play_status ?? 'UNPLAYED')
+    )
+      return;
+    const finishFeedback = beginSaveFeedback('正在保存游玩状态…');
+    const write = onStatusChange(status);
+    pendingStatus.current = write;
+    try {
+      const saved = await write;
+      setDraft((current) => ({ ...current, play_status: saved }));
+      finishFeedback('游玩状态已自动保存。');
+    } catch (reason) {
+      finishFeedback(`游玩状态保存失败：${String(reason)}`);
+    } finally {
+      finishFeedback();
+      pendingStatus.current = null;
+    }
+  }
+  useWindowCloseGuard({
+    dirty,
+    busy: busy || launching || !!pendingStatus.current,
+    save: saveGame,
+  });
   function useQsp() {
     setDraft((current) => ({
       ...current,
@@ -3144,7 +3234,8 @@ function GameDetail({
                   }
                   onClick={() => {
                     setMessage('');
-                    void onPlay(configuration)
+                    const launch = () => onPlay(configuration);
+                    void (pendingStatus.current ? pendingStatus.current.then(launch) : launch())
                       .then(() => setMessage('启动请求已发送。'))
                       .catch((reason) => setMessage(String(reason)));
                   }}
@@ -3246,7 +3337,7 @@ function GameDetail({
         <FolderErrorDialog
           game={game}
           reason={folderError}
-          locked={dirty || launching || analysisLocked}
+          locked={dirty || launching || analysisLocked || !!pendingStatus.current}
           onClose={() => setFolderError(null)}
           onRemoved={onRemoved}
           onBusy={setMaintenanceBusy}
@@ -3326,9 +3417,11 @@ function GameDetail({
                   <legend>游玩状态</legend>
                   <PlayStatusControl
                     value={draft.play_status ?? 'UNPLAYED'}
-                    onChange={(status) => field('play_status', status)}
+                    disabled={statusLocked}
+                    saving={!!pendingStatus.current}
+                    onChange={(status) => void saveStatus(status)}
                   />
-                  <span className="muted">成功启动会标记为正在玩；已通关会保留。</span>
+                  <span className="muted">更改后自动保存；成功启动标记为正在玩，已通关保留。</span>
                 </fieldset>
                 <label>
                   版本
@@ -3691,7 +3784,7 @@ function GameDetail({
       <div className="detail-records" {...panelProps('records')}>
         <GameMaintenance
           game={game}
-          locked={dirty || launching || analysisLocked}
+          locked={dirty || launching || analysisLocked || !!pendingStatus.current}
           onBusy={setMaintenanceBusy}
           onRemoved={onRemoved}
           onDeleted={onDeleted}

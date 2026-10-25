@@ -828,8 +828,9 @@ describe('iteration interactions', () => {
     await waitFor(() => expect(api.listEditableSaves).toHaveBeenCalledTimes(2));
     expect(api.saveGame).not.toHaveBeenCalled();
   });
-  it('preserves drafts across detail tabs, submits all changes together and supports keyboard navigation', async () => {
+  it('preserves drafts across detail tabs, autosaves status and submits the remaining edits together', async () => {
     vi.mocked(api.saveGame).mockImplementation(async (edit) => ({ ...game, ...edit }));
+    vi.mocked(api.setPlayStatuses).mockResolvedValue([{ ...game, play_status: 'COMPLETED' }]);
     const detail = await openDetail();
     expect(
       within(detail)
@@ -840,6 +841,8 @@ describe('iteration interactions', () => {
       target: { value: '修改标题' },
     });
     fireEvent.click(within(detail).getByRole('radio', { name: '已通关' }));
+    await within(detail).findByText('游玩状态已自动保存。');
+    expect(api.setPlayStatuses).toHaveBeenCalledWith([game.id], 'COMPLETED');
     showDetailTab('启动配置');
     fireEvent.change(within(detail).getByRole('textbox', { name: /启动文件（/ }), {
       target: { value: 'new.exe' },
@@ -884,6 +887,297 @@ describe('iteration interactions', () => {
     ).toBe('<GAME>/save');
     expect(api.play).not.toHaveBeenCalled();
   });
+  it.each(['PLAYING', 'COMPLETED', 'UNPLAYED'] as const)(
+    'autosaves detail status %s independently and reloads it after reopening the manager',
+    async (status) => {
+      let stored: Game = { ...game, play_status: status === 'UNPLAYED' ? 'PLAYING' : 'UNPLAYED' };
+      vi.mocked(api.games).mockImplementation(async () => [stored]);
+      vi.mocked(api.setPlayStatuses).mockImplementation(async (ids, next) => {
+        expect(ids).toEqual([game.id]);
+        stored = { ...stored, play_status: next };
+        return [stored];
+      });
+      const view = render(<App />);
+      fireEvent.click(await screen.findByRole('button', { name: game.display_title }));
+      const detail = screen.getByRole('dialog', { name: game.display_title });
+      const label = { PLAYING: '正在玩', COMPLETED: '已通关', UNPLAYED: '未启动' }[status];
+      fireEvent.click(within(detail).getByRole('radio', { name: label }));
+      await within(detail).findByText('游玩状态已自动保存。');
+      expect(
+        (within(detail).getByRole('button', { name: '保存资料' }) as HTMLButtonElement).disabled,
+      ).toBe(true);
+      expect(api.saveGame).not.toHaveBeenCalled();
+      expect(api.play).not.toHaveBeenCalled();
+      expect(stored).toEqual({ ...game, play_status: status });
+      view.unmount();
+      render(<App />);
+      fireEvent.click(await screen.findByRole('button', { name: game.display_title }));
+      const reopened = screen.getByRole('dialog', { name: game.display_title });
+      expect(
+        (within(reopened).getByRole('radio', { name: label }) as HTMLInputElement).checked,
+      ).toBe(true);
+      expect(api.setPlayStatuses).toHaveBeenCalledOnce();
+      fireEvent.click(within(reopened).getByRole('button', { name: '关闭弹窗' }));
+      expect(screen.queryByRole('dialog', { name: game.display_title })).toBeNull();
+    },
+  );
+  it('autosaves only the play status when unrelated detail fields are invalid and remain unsaved', async () => {
+    vi.mocked(api.setPlayStatuses).mockResolvedValue([{ ...game, play_status: 'COMPLETED' }]);
+    const detail = await openDetail();
+    fireEvent.change(within(detail).getByRole('textbox', { name: '显示名称' }), {
+      target: { value: '' },
+    });
+    showDetailTab('启动配置');
+    fireEvent.change(within(detail).getByRole('textbox', { name: '启动参数' }), {
+      target: { value: '"unfinished' },
+    });
+    showDetailTab('基础信息');
+    fireEvent.click(within(detail).getByRole('radio', { name: '已通关' }));
+    await within(detail).findByText('游玩状态已自动保存。');
+    expect(api.setPlayStatuses).toHaveBeenCalledWith([game.id], 'COMPLETED');
+    expect(api.saveGame).not.toHaveBeenCalled();
+    expect(
+      (within(detail).getByRole('textbox', { name: '显示名称' }) as HTMLInputElement).value,
+    ).toBe('');
+    showDetailTab('启动配置');
+    expect(
+      (within(detail).getByRole('textbox', { name: '启动参数' }) as HTMLInputElement).value,
+    ).toBe('"unfinished');
+    fireEvent.click(within(detail).getByRole('button', { name: '关闭弹窗' }));
+    expect(await screen.findByText('有未保存的修改')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '放弃并关闭' }));
+    fireEvent.click(screen.getByRole('button', { name: game.display_title }));
+    const reopened = screen.getByRole('dialog', { name: game.display_title });
+    expect(
+      (within(reopened).getByRole('radio', { name: '已通关' }) as HTMLInputElement).checked,
+    ).toBe(true);
+    expect(
+      (within(reopened).getByRole('textbox', { name: '显示名称' }) as HTMLInputElement).value,
+    ).toBe(game.display_title);
+  });
+  it('keeps the saved status while a request is pending or fails and allows a retry', async () => {
+    let rejectStatus!: (reason: Error) => void;
+    vi.mocked(api.setPlayStatuses)
+      .mockImplementationOnce(
+        () =>
+          new Promise((_, reject) => {
+            rejectStatus = reject;
+          }),
+      )
+      .mockResolvedValueOnce([{ ...game, play_status: 'COMPLETED' }]);
+    const detail = await openDetail();
+    fireEvent.change(within(detail).getByRole('textbox', { name: '显示名称' }), {
+      target: { value: '尚未保存的名称' },
+    });
+    fireEvent.click(within(detail).getByRole('radio', { name: '已通关' }));
+    await within(detail).findByText('正在保存游玩状态…');
+    const unplayed = within(detail).getByRole('radio', { name: '未启动' }) as HTMLInputElement;
+    expect(unplayed.checked).toBe(true);
+    expect(unplayed.matches(':disabled')).toBe(true);
+    for (const name of ['启动', '打开目录', '编辑存档', '分析游戏配置', '保存资料'])
+      expect((within(detail).getByRole('button', { name }) as HTMLButtonElement).disabled).toBe(
+        false,
+      );
+    const title = within(detail).getByRole('textbox', { name: '显示名称' });
+    expect(title.matches(':disabled')).toBe(false);
+    fireEvent.change(title, { target: { value: '保存期间继续编辑' } });
+    fireEvent.click(within(detail).getByRole('button', { name: '关闭弹窗' }));
+    expect(screen.getByRole('dialog', { name: game.display_title })).toBe(detail);
+    rejectStatus(new Error('synthetic status failure'));
+    await within(detail).findByText(/synthetic status failure/);
+    expect(unplayed.checked).toBe(true);
+    expect(unplayed.matches(':disabled')).toBe(false);
+    fireEvent.click(within(detail).getByRole('radio', { name: '已通关' }));
+    await within(detail).findByText('游玩状态已自动保存。');
+    expect(api.setPlayStatuses).toHaveBeenCalledTimes(2);
+    expect(api.saveGame).not.toHaveBeenCalled();
+    expect(
+      (within(detail).getByRole('textbox', { name: '显示名称' }) as HTMLInputElement).value,
+    ).toBe('保存期间继续编辑');
+  });
+  it('waits for status autosave before submitting the remaining form without restoring the old status', async () => {
+    let finishStatus!: (games: Game[]) => void;
+    let finishSave!: () => void;
+    vi.mocked(api.setPlayStatuses).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishStatus = resolve;
+        }),
+    );
+    vi.mocked(api.saveGame).mockImplementation(
+      (edit) =>
+        new Promise((resolve) => {
+          finishSave = () => resolve({ ...game, ...edit });
+        }),
+    );
+    const detail = await openDetail();
+    fireEvent.change(within(detail).getByRole('textbox', { name: '显示名称' }), {
+      target: { value: '待保存名称' },
+    });
+    fireEvent.click(within(detail).getByRole('radio', { name: '已通关' }));
+    await within(detail).findByText('正在保存游玩状态…');
+    fireEvent.click(within(detail).getByRole('button', { name: '保存资料' }));
+    await within(detail).findByText('正在保存游戏资料…');
+    expect(api.saveGame).not.toHaveBeenCalled();
+    finishStatus([{ ...game, play_status: 'COMPLETED' }]);
+    await waitFor(() =>
+      expect(api.saveGame).toHaveBeenCalledWith(
+        expect.objectContaining({ display_title: '待保存名称', play_status: 'COMPLETED' }),
+      ),
+    );
+    expect(within(detail).getByText('正在保存游戏资料…')).toBeTruthy();
+    expect(within(detail).queryByText('游玩状态已自动保存。')).toBeNull();
+    finishSave();
+    await within(detail).findByText('游戏资料已保存。');
+    expect(
+      (within(detail).getByRole('radio', { name: '已通关' }) as HTMLInputElement).checked,
+    ).toBe(true);
+  });
+  it.each(['启动', '编辑存档'] as const)(
+    'waits for the pending status write before %s without disabling unrelated controls',
+    async (name) => {
+      let finishStatus!: (games: Game[]) => void;
+      vi.mocked(api.setPlayStatuses).mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            finishStatus = resolve;
+          }),
+      );
+      vi.mocked(api.play).mockResolvedValue({ ...game, play_status: 'COMPLETED' });
+      const detail = await openDetail();
+      fireEvent.click(within(detail).getByRole('radio', { name: '已通关' }));
+      await within(detail).findByText('正在保存游玩状态…');
+      const action = within(detail).getByRole('button', { name });
+      expect((action as HTMLButtonElement).disabled).toBe(false);
+      fireEvent.click(action);
+      expect(api.play).not.toHaveBeenCalled();
+      expect(api.listEditableSaves).not.toHaveBeenCalled();
+      finishStatus([{ ...game, play_status: 'COMPLETED' }]);
+      if (name === '启动') await waitFor(() => expect(api.play).toHaveBeenCalledOnce());
+      else await waitFor(() => expect(api.listEditableSaves).toHaveBeenCalledWith(game.id));
+      expect(api.saveGame).not.toHaveBeenCalled();
+    },
+  );
+  it.each(['status', 'manual'] as const)(
+    'shows only results for fast %s saves, keeps repeated success stable and cancels late progress on failure',
+    async (mode) => {
+      vi.mocked(api.setPlayStatuses).mockImplementation(async (_, status) => [
+        { ...game, play_status: status },
+      ]);
+      vi.mocked(api.saveGame).mockImplementation(async (edit) => ({ ...game, ...edit }));
+      const detail = await openDetail();
+      const feedback = detail.querySelector('.detail-feedback') as HTMLElement;
+      let attempt = 0;
+      const save = () => {
+        if (mode === 'status')
+          fireEvent.click(
+            within(detail).getByRole('radio', { name: ['已通关', '正在玩', '未启动'][attempt++] }),
+          );
+        else {
+          fireEvent.change(within(detail).getByRole('textbox', { name: '显示名称' }), {
+            target: { value: `快速保存${++attempt}` },
+          });
+          fireEvent.click(within(detail).getByRole('button', { name: '保存资料' }));
+        }
+      };
+      vi.useFakeTimers();
+      try {
+        save();
+        expect(feedback.textContent).not.toContain('正在保存');
+        await act(async () => {});
+        const success = mode === 'status' ? '游玩状态已自动保存。' : '游戏资料已保存。';
+        expect(feedback.textContent).toBe(success);
+        save();
+        expect(feedback.textContent).toBe(success);
+        await act(async () => {});
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(1000);
+        });
+        expect(feedback.textContent).toBe(success);
+        if (mode === 'status')
+          vi.mocked(api.setPlayStatuses).mockRejectedValueOnce(new Error('fast save failure'));
+        else vi.mocked(api.saveGame).mockRejectedValueOnce(new Error('fast save failure'));
+        save();
+        expect(feedback.textContent).toBe(success);
+        await act(async () => {});
+        expect(feedback.textContent).toContain('fast save failure');
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(1000);
+        });
+        expect(feedback.textContent).toContain('fast save failure');
+        expect(feedback.textContent).not.toContain('正在保存');
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+  it.each([
+    ['status', 'success'],
+    ['status', 'error'],
+    ['manual', 'success'],
+    ['manual', 'error'],
+  ] as const)(
+    'delays slow %s save feedback until 300ms and replaces it immediately with %s',
+    async (mode, outcome) => {
+      let complete!: () => void;
+      let fail!: (error: Error) => void;
+      vi.mocked(api.setPlayStatuses).mockImplementation(
+        () =>
+          new Promise((resolve, reject) => {
+            complete = () => resolve([{ ...game, play_status: 'COMPLETED' }]);
+            fail = reject;
+          }),
+      );
+      vi.mocked(api.saveGame).mockImplementation(
+        (edit) =>
+          new Promise((resolve, reject) => {
+            complete = () => resolve({ ...game, ...edit });
+            fail = reject;
+          }),
+      );
+      const detail = await openDetail();
+      const feedback = detail.querySelector('.detail-feedback') as HTMLElement;
+      vi.useFakeTimers();
+      try {
+        if (mode === 'status')
+          fireEvent.click(within(detail).getByRole('radio', { name: '已通关' }));
+        else {
+          fireEvent.change(within(detail).getByRole('textbox', { name: '显示名称' }), {
+            target: { value: '慢速保存' },
+          });
+          fireEvent.click(within(detail).getByRole('button', { name: '保存资料' }));
+          await act(async () => {});
+        }
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(299);
+        });
+        expect(feedback.textContent).not.toContain('正在保存');
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(1);
+        });
+        expect(feedback.textContent).toBe(
+          mode === 'status' ? '正在保存游玩状态…' : '正在保存游戏资料…',
+        );
+        await act(async () => {
+          if (outcome === 'success') complete();
+          else fail(new Error('slow save failure'));
+        });
+        if (outcome === 'success')
+          expect(feedback.textContent).toBe(
+            mode === 'status' ? '游玩状态已自动保存。' : '游戏资料已保存。',
+          );
+        else expect(feedback.textContent).toContain('slow save failure');
+        expect(feedback.textContent).not.toContain('正在保存');
+        const result = feedback.textContent;
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(1000);
+        });
+        expect(feedback.textContent).toBe(result);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
   it('applies Other and engine capsules with existing search and status filters', async () => {
     const games = ['Unity', 'Unity', "Ren'Py", 'HTML', 'Godot', 'QSP', 'KiriKiri', 'Unknown'].map(
       (engine, index) => ({ ...game, id: String(index), display_title: `Title ${index}`, engine }),
@@ -1060,7 +1354,7 @@ describe('iteration interactions', () => {
       await screen.findByRole('button', { name: '扫描目录' });
       openConfig('设置');
       const about = within(screen.getByRole('region', { name: '关于应用' }));
-      expect(about.getByText('v1.5.1')).toBeTruthy();
+      expect(about.getByText('v1.5.2')).toBeTruthy();
       expect(about.getByText(`构建 ${commit ?? '未知'}`)).toBeTruthy();
     },
   );
@@ -1318,7 +1612,7 @@ describe('iteration interactions', () => {
       'character-new',
     );
     expect(within(sidebar).getByText('by Zhehao-w')).toBeTruthy();
-    expect(within(sidebar).getByText('v1.5.1').className).toBe('sidebar-version');
+    expect(within(sidebar).getByText('v1.5.2').className).toBe('sidebar-version');
     expect(sidebar.querySelectorAll('img')).toHaveLength(2);
     expect(screen.queryByRole('button', { name: '关于' })).toBeNull();
     expect(screen.queryByRole('region', { name: '关于页面' })).toBeNull();
@@ -2411,6 +2705,10 @@ describe('iteration interactions', () => {
     const launching = within(modal).getByRole('button', { name: '启动' });
     expect(launching.getAttribute('data-launch-pending')).toBe('true');
     expect((launching as HTMLButtonElement).disabled).toBe(true);
+    const completed = within(modal).getByRole('radio', { name: '已通关' });
+    expect(completed.matches(':disabled')).toBe(true);
+    fireEvent.click(completed);
+    expect(api.setPlayStatuses).not.toHaveBeenCalled();
     fireEvent.click(launching);
     expect(api.play).toHaveBeenCalledTimes(1);
     expect(screen.getByRole('dialog')).toBe(modal);
@@ -2426,6 +2724,9 @@ describe('iteration interactions', () => {
     ).toBe(true);
     complete();
     await waitForEnabledButton('启动', within(reopened));
+    expect(within(reopened).getByRole('radio', { name: '已通关' }).matches(':disabled')).toBe(
+      false,
+    );
     await waitFor(() => {
       expect(
         (within(reopened).getByRole('radio', { name: '正在玩' }) as HTMLInputElement).checked,

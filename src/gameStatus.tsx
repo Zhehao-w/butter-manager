@@ -51,14 +51,21 @@ export function PlayStatusControl({
   value,
   onChange,
   disabled = false,
+  saving = false,
 }: {
   value: PlayStatus;
   onChange: (status: PlayStatus) => void;
   disabled?: boolean;
+  saving?: boolean;
 }) {
   const name = useId();
   return (
-    <div className="play-status-control" role="radiogroup" aria-label="游玩状态">
+    <div
+      className="play-status-control"
+      role="radiogroup"
+      aria-label="游玩状态"
+      aria-busy={saving || undefined}
+    >
       {Object.entries(playLabels).map(([key, label]) => {
         const status = key as PlayStatus;
         return (

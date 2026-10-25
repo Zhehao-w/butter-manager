@@ -974,9 +974,13 @@ describe('iteration interactions', () => {
     const unplayed = within(detail).getByRole('radio', { name: '未启动' }) as HTMLInputElement;
     expect(unplayed.checked).toBe(true);
     expect(unplayed.matches(':disabled')).toBe(true);
-    expect(
-      (within(detail).getByRole('button', { name: '启动' }) as HTMLButtonElement).disabled,
-    ).toBe(true);
+    for (const name of ['启动', '打开目录', '编辑存档', '分析游戏配置', '保存资料'])
+      expect((within(detail).getByRole('button', { name }) as HTMLButtonElement).disabled).toBe(
+        false,
+      );
+    const title = within(detail).getByRole('textbox', { name: '显示名称' });
+    expect(title.matches(':disabled')).toBe(false);
+    fireEvent.change(title, { target: { value: '保存期间继续编辑' } });
     fireEvent.click(within(detail).getByRole('button', { name: '关闭弹窗' }));
     expect(screen.getByRole('dialog', { name: game.display_title })).toBe(detail);
     rejectStatus(new Error('synthetic status failure'));
@@ -989,8 +993,59 @@ describe('iteration interactions', () => {
     expect(api.saveGame).not.toHaveBeenCalled();
     expect(
       (within(detail).getByRole('textbox', { name: '显示名称' }) as HTMLInputElement).value,
-    ).toBe('尚未保存的名称');
+    ).toBe('保存期间继续编辑');
   });
+  it('waits for status autosave before submitting the remaining form without restoring the old status', async () => {
+    let finishStatus!: (games: Game[]) => void;
+    vi.mocked(api.setPlayStatuses).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishStatus = resolve;
+        }),
+    );
+    vi.mocked(api.saveGame).mockImplementation(async (edit) => ({ ...game, ...edit }));
+    const detail = await openDetail();
+    fireEvent.change(within(detail).getByRole('textbox', { name: '显示名称' }), {
+      target: { value: '待保存名称' },
+    });
+    fireEvent.click(within(detail).getByRole('radio', { name: '已通关' }));
+    await within(detail).findByText('正在保存游玩状态…');
+    fireEvent.click(within(detail).getByRole('button', { name: '保存资料' }));
+    expect(api.saveGame).not.toHaveBeenCalled();
+    finishStatus([{ ...game, play_status: 'COMPLETED' }]);
+    await within(detail).findByText('游戏资料已保存。');
+    expect(api.saveGame).toHaveBeenCalledWith(
+      expect.objectContaining({ display_title: '待保存名称', play_status: 'COMPLETED' }),
+    );
+    expect(
+      (within(detail).getByRole('radio', { name: '已通关' }) as HTMLInputElement).checked,
+    ).toBe(true);
+  });
+  it.each(['启动', '编辑存档'] as const)(
+    'waits for the pending status write before %s without disabling unrelated controls',
+    async (name) => {
+      let finishStatus!: (games: Game[]) => void;
+      vi.mocked(api.setPlayStatuses).mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            finishStatus = resolve;
+          }),
+      );
+      vi.mocked(api.play).mockResolvedValue({ ...game, play_status: 'COMPLETED' });
+      const detail = await openDetail();
+      fireEvent.click(within(detail).getByRole('radio', { name: '已通关' }));
+      await within(detail).findByText('正在保存游玩状态…');
+      const action = within(detail).getByRole('button', { name });
+      expect((action as HTMLButtonElement).disabled).toBe(false);
+      fireEvent.click(action);
+      expect(api.play).not.toHaveBeenCalled();
+      expect(api.listEditableSaves).not.toHaveBeenCalled();
+      finishStatus([{ ...game, play_status: 'COMPLETED' }]);
+      if (name === '启动') await waitFor(() => expect(api.play).toHaveBeenCalledOnce());
+      else await waitFor(() => expect(api.listEditableSaves).toHaveBeenCalledWith(game.id));
+      expect(api.saveGame).not.toHaveBeenCalled();
+    },
+  );
   it('applies Other and engine capsules with existing search and status filters', async () => {
     const games = ['Unity', 'Unity', "Ren'Py", 'HTML', 'Godot', 'QSP', 'KiriKiri', 'Unknown'].map(
       (engine, index) => ({ ...game, id: String(index), display_title: `Title ${index}`, engine }),

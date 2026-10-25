@@ -382,11 +382,9 @@ export function ImportPage({
               executable: suggestedPlayer(c) || '',
               external_player: qspConfig(c),
               mtool:
-                !!c.bundled_mtool?.some((bundle) => bundle.safe) ||
-                (!c.qsp && (!!c.mtool_detected || !!c.external_mtool_translation)),
-              ...(c.bundled_mtool?.some((bundle) => bundle.safe)
-                ? { cleanup_mtool: true, external_player: null }
-                : {}),
+                !c.qsp &&
+                (!!c.bundled_mtool?.length || !!c.mtool_detected || !!c.external_mtool_translation),
+              ...(c.bundled_mtool?.length ? { cleanup_mtool: true } : {}),
               existing_id: null,
               new_override: false,
               preserve_saves: true,
@@ -972,7 +970,7 @@ export function ImportPage({
                 !!existing &&
                 !existing.save_paths.length &&
                 choice.preserve_saves !== false;
-              const toolLaunch = !!choice.mtool || !!choice.cleanup_mtool;
+              const toolLaunch = !!choice.mtool;
               const strategy =
                 choice.mtool_strategy ??
                 item?.update?.old?.mtool_strategy ??
@@ -988,19 +986,8 @@ export function ImportPage({
                 !choice.external_player &&
                 /\.exe$/i.test(choice.executable) &&
                 !!launchArguments.trim();
-              const bundledLaunch =
-                !!choice.cleanup_mtool &&
-                !!candidate?.bundled_mtool?.some((bundle) => {
-                  const executable = choice.executable.replaceAll('\\', '/').toLocaleLowerCase();
-                  return (
-                    executable.startsWith(bundle.folder.toLocaleLowerCase() + '/') ||
-                    bundle.bats.some((bat) => executable === bat.toLocaleLowerCase())
-                  );
-                });
               const mtoolIssue =
-                !item &&
-                toolLaunch &&
-                (!settings.mtool_root || !/\.exe$/i.test(choice.executable) || bundledLaunch);
+                !item && toolLaunch && (!settings.mtool_root || !/\.exe$/i.test(choice.executable));
               const issues = item
                 ? item.blockers
                 : [
@@ -1011,12 +998,11 @@ export function ImportPage({
                       ? ['旧游戏未配置存档位置：请先在游戏详情添加位置，或选择使用新包存档。']
                       : []),
                     ...(toolLaunch && !settings.mtool_root
-                      ? ['请先配置公共 MTool，或取消公共 MTool 和随包清理。']
+                      ? ['请先配置公共 MTool，或取消公共 MTool 启动。']
                       : []),
                     ...(toolLaunch && !/\.exe$/i.test(choice.executable)
                       ? ['MTool 需要有效的游戏 EXE，请调整启动文件。']
                       : []),
-                    ...(bundledLaunch ? ['启动文件位于待清理的工具目录中，请改为游戏 EXE。'] : []),
                     ...(choice.external_player
                       ? !choice.external_player.game_file
                         ? ['请选择 QSP 主游戏文件。']
@@ -1411,8 +1397,8 @@ export function ImportPage({
                               <label>
                                 <input
                                   type="checkbox"
-                                  checked={!!choice.cleanup_mtool || choice.mtool}
-                                  disabled={disabled || !!choice.cleanup_mtool}
+                                  checked={choice.mtool}
+                                  disabled={disabled}
                                   onChange={(e) => update(source, { mtool: e.target.checked })}
                                 />
                                 公共 MTool
@@ -1730,44 +1716,34 @@ export function ImportPage({
                           )}
                         </ImportSettingSection>
                         {!!candidate?.bundled_mtool?.length && (
-                          <ImportSettingSection title="随包 MTool" attention={mtoolIssue}>
+                          <ImportSettingSection title="随包 MTool">
                             <div className="import-mtool-review">
-                              {candidate.bundled_mtool.map((bundle) => (
-                                <div key={bundle.folder}>
-                                  <span className="path">
-                                    {bundle.folder}/
-                                    {bundle.bats.length ? ` · ${bundle.bats.join('、')}` : ''}
-                                  </span>
-                                  {!bundle.safe && <p className="muted">{bundle.reason}</p>}
-                                </div>
-                              ))}
-                              {candidate.bundled_mtool.some((bundle) => bundle.safe) && (
-                                <label>
-                                  <input
-                                    type="checkbox"
-                                    checked={!!choice.cleanup_mtool}
-                                    disabled={disabled}
-                                    onChange={(event) =>
-                                      update(source, {
-                                        cleanup_mtool: event.target.checked,
-                                        ...(event.target.checked
-                                          ? { mtool: true, external_player: null }
-                                          : {}),
-                                      })
-                                    }
-                                  />
-                                  导入成功后清理随包 MTool
-                                </label>
-                              )}
-                              <p className="muted">
-                                回收整个已确认的一级工具目录（包含工具自己的记录和备份）及关联
-                                BAT。勾选后使用公共 MTool 启动，请确认游戏 EXE 与公共工具配置。
-                              </p>
-                              {!!choice.cleanup_mtool && !settings.mtool_root && (
-                                <p className="notice">
-                                  请先在 MTool 设置中配置公共工具，或取消清理。
+                              <label className="check import-mtool-choice">
+                                <input
+                                  type="checkbox"
+                                  checked={!!choice.cleanup_mtool}
+                                  disabled={disabled}
+                                  onChange={(event) =>
+                                    update(source, { cleanup_mtool: event.target.checked })
+                                  }
+                                />
+                                <span>导入成功后清理随包 MTool</span>
+                              </label>
+                              <div className="import-mtool-details">
+                                {candidate.bundled_mtool.map((bundle) => (
+                                  <div className="import-mtool-path" key={bundle.folder}>
+                                    <span className="path">{bundle.folder}/</span>
+                                    {!!bundle.bats.length && (
+                                      <span className="muted">
+                                        关联脚本：{bundle.bats.join('、')}
+                                      </span>
+                                    )}
+                                  </div>
+                                ))}
+                                <p className="muted">
+                                  回收整个一级目录（含全部文件）及关联脚本；取消勾选则保留。
                                 </p>
-                              )}
+                              </div>
                             </div>
                           </ImportSettingSection>
                         )}

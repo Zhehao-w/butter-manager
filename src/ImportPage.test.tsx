@@ -427,6 +427,7 @@ describe('batch import flow', () => {
     async (keepChecked) => {
       const bundled: ScanCandidate = {
         ...candidate,
+        mtool_detected: false,
         bundled_mtool: [
           {
             folder: '辅助工具',
@@ -455,26 +456,12 @@ describe('batch import flow', () => {
       if (!selection.checked) fireEvent.click(selection);
       fireEvent.click(screen.getByRole('button', { name: '生成导入与更新计划（1）' }));
       await waitFor(() => expect(api.importPlan).toHaveBeenCalledOnce());
-      expect(vi.mocked(api.importPlan).mock.calls[0][1][0].cleanup_mtool).toBe(keepChecked);
+      expect(vi.mocked(api.importPlan).mock.calls[0][1][0]).toMatchObject({
+        cleanup_mtool: keepChecked,
+        mtool: true,
+      });
     },
   );
-  it('keeps ambiguous bundles without a cleanup option and explains the reason', async () => {
-    vi.mocked(api.job).mockResolvedValue({
-      ...page,
-      changes: [
-        {
-          ...candidate,
-          bundled_mtool: [
-            { folder: 'tool', bats: [], safe: false, reason: '混有游戏资源，保留目录' },
-          ],
-        },
-      ],
-    });
-    renderNewImport();
-    await expandSettings('随包 MTool');
-    await screen.findByText('混有游戏资源，保留目录');
-    expect(screen.queryByRole('checkbox', { name: '导入成功后清理随包 MTool' })).toBeNull();
-  });
   it('shows retained MTool paths and failure reasons in successful import history with retry', async () => {
     vi.mocked(api.importPlans).mockResolvedValue([
       {
@@ -959,12 +946,13 @@ describe('batch import flow', () => {
     ).toBe(false);
   });
 
-  it('exposes invalid MTool configuration while folded and updates its cleanup summary', async () => {
+  it('keeps cleanup selected independently when disabling public MTool without configured tools', async () => {
     vi.mocked(api.job).mockResolvedValue({
       ...page,
       changes: [
         {
           ...candidate,
+          mtool_detected: false,
           bundled_mtool: [
             { folder: 'tool', bats: ['StartWithTool.bat'], safe: true, reason: '已确认' },
           ],
@@ -980,13 +968,18 @@ describe('batch import flow', () => {
     fireEvent.click(screen.getByRole('button', { name: '收起设置' }));
     expect(screen.getByRole('alert').textContent).toContain('请先配置公共 MTool');
     expect(screen.getByText('随包 MTool：回收清理')).toBeTruthy();
-    await expandSettings('随包 MTool');
-    fireEvent.click(screen.getByRole('checkbox', { name: '导入成功后清理随包 MTool' }));
     await expandSettings('启动配置');
     fireEvent.click(screen.getByRole('checkbox', { name: '公共 MTool' }));
     fireEvent.click(screen.getByRole('button', { name: '收起设置' }));
     expect(screen.queryByRole('alert')).toBeNull();
-    expect(screen.getByText('随包 MTool：保留')).toBeTruthy();
+    expect(screen.getByText('随包 MTool：回收清理')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '生成导入与更新计划（1）' }));
+    await waitFor(() => expect(api.importPlan).toHaveBeenCalledOnce());
+    expect(vi.mocked(api.importPlan).mock.calls[0][1][0]).toMatchObject({
+      cleanup_mtool: true,
+      mtool: false,
+      external_player: null,
+    });
   });
 
   it('keeps authoritative preview blockers and errors visible after folding', async () => {
@@ -994,16 +987,20 @@ describe('batch import flow', () => {
       {
         ...plan,
         items: [
-          { ...plan.items[0], blockers: ['启动文件依赖待删除的工具目录'], error: '文件校验失败' },
+          {
+            ...plan.items[0],
+            blockers: ['目标目录或游戏库记录已存在；不会覆盖'],
+            error: '文件校验失败',
+          },
         ],
       },
     ]);
     render(<ImportPage {...props()} />);
     fireEvent.click(await screen.findByRole('tab', { name: /待确认/ }));
-    await screen.findByText('启动文件依赖待删除的工具目录');
+    await screen.findByText('目标目录或游戏库记录已存在；不会覆盖');
     fireEvent.click(screen.getByRole('button', { name: '收起设置' }));
     expect(screen.getAllByRole('alert').map((alert) => alert.textContent)).toEqual(
-      expect.arrayContaining(['启动文件依赖待删除的工具目录', '文件校验失败']),
+      expect.arrayContaining(['目标目录或游戏库记录已存在；不会覆盖', '文件校验失败']),
     );
     expect(screen.queryByRole('button', { name: '确认执行计划' })).toBeNull();
     expect(api.importApply).not.toHaveBeenCalled();

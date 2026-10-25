@@ -758,10 +758,6 @@ impl ImportStore {
             if selection.title.trim().is_empty() {
                 blockers.push("游戏名称不能为空".into());
             }
-            if selection.cleanup_mtool {
-                selection.mtool = true;
-                selection.external_player = None;
-            }
             if selection.mtool
                 && !settings.mtool_root.is_empty()
                 && !Path::new(&settings.mtool_root).is_dir()
@@ -775,10 +771,7 @@ impl ImportStore {
             {
                 blockers.push("MTool 需要游戏 EXE；文档请使用直接启动".into());
             }
-            if selection.engine == "QSP"
-                && selection.external_player.is_none()
-                && !selection.cleanup_mtool
-            {
+            if selection.engine == "QSP" && selection.external_player.is_none() {
                 selection.external_player = crate::external_player::qsp_config(&candidate);
             }
             let launch_check = if let Some(config) = &selection.external_player {
@@ -901,28 +894,6 @@ impl ImportStore {
             {
                 if let Err(error) = crate::launcher::bakin_launcher_file(&settings) {
                     item.blockers.push(error.to_string());
-                }
-            }
-            if let Some(cleanup) = &item.mtool_cleanup {
-                if let Err(error) = mtool_cleanup::check_dependencies(
-                    cleanup,
-                    &config,
-                    &settings,
-                    &item.candidate.save_paths,
-                ) {
-                    item.blockers.push(error.to_string());
-                }
-                if let Err(error) = mtool_cleanup::check_launch_paths(&source, cleanup, &config) {
-                    item.blockers.push(error.to_string());
-                }
-                if let Err(error) = mtool_cleanup::check_shared_launch(&source, &config, &settings)
-                {
-                    item.blockers.push(error.to_string());
-                }
-                if let Some(game) = existing {
-                    if let Err(error) = mtool_cleanup::check_save_paths(cleanup, &game.save_paths) {
-                        item.blockers.push(error.to_string());
-                    }
                 }
             }
         }

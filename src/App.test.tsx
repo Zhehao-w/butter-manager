@@ -1222,7 +1222,7 @@ describe('iteration interactions', () => {
       await screen.findByRole('button', { name: '扫描目录' });
       openConfig('设置');
       const about = within(screen.getByRole('region', { name: '关于应用' }));
-      expect(about.getByText('v1.5.1')).toBeTruthy();
+      expect(about.getByText('v1.5.2')).toBeTruthy();
       expect(about.getByText(`构建 ${commit ?? '未知'}`)).toBeTruthy();
     },
   );
@@ -1480,7 +1480,7 @@ describe('iteration interactions', () => {
       'character-new',
     );
     expect(within(sidebar).getByText('by Zhehao-w')).toBeTruthy();
-    expect(within(sidebar).getByText('v1.5.1').className).toBe('sidebar-version');
+    expect(within(sidebar).getByText('v1.5.2').className).toBe('sidebar-version');
     expect(sidebar.querySelectorAll('img')).toHaveLength(2);
     expect(screen.queryByRole('button', { name: '关于' })).toBeNull();
     expect(screen.queryByRole('region', { name: '关于页面' })).toBeNull();

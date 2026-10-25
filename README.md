@@ -41,18 +41,18 @@
 
 [详情状态自动保存与快捷筛选样式](docs/library-organization.md#详情状态与快捷筛选)随 1.5.2 交付：游玩状态即改即存，其他草稿保留；收藏与正在玩采用不同配色，快捷筛选交互统一。
 
-[随包 MTool 清理](docs/import-mtool-cleanup.md)未发布调整：发现工具后默认勾选回收整个一级目录及关联 BAT，可取消保留；不按目录内容筛选，启动方式单独设置。
+[随包 MTool 清理](docs/import-mtool-cleanup.md)随 1.5.3 调整：发现工具后默认勾选回收整个一级目录及关联 BAT，可取消保留；不按目录内容筛选，启动方式单独设置。
 
 ## 开始使用
 
-**当前版本 1.5.2**：详情游玩状态独立自动保存，统一收藏、游玩状态和引擎快捷筛选交互。正式下载以 Release 页面为准。
+**当前版本 1.5.3**：随包 MTool 默认勾选整目录回收、可取消保留，清理与启动方式独立，选项及路径展示统一。正式下载以 Release 页面为准。
 
-1. **下载程序**：通过页首下载入口获取 `butter-manager-v1.5.2-windows-x64-portable.zip`，解压到可写的专用目录。
+1. **下载程序**：通过页首下载入口获取 `butter-manager-v1.5.3-windows-x64-portable.zip`，解压到可写的专用目录。
 2. **配置游戏库**：运行 `butter-manager.exe`，在“设置”中选择游戏库根目录并保存。首次启动自动创建旁边的 `data/`。
 3. **登记已有游戏**：点击“扫描目录”，选择需要入库的游戏。扫描登记保持游戏原位；完整扫描也会按已保存配置补齐已有游戏的空存档路径，不覆盖已有路径。新下载的游戏从“导入”添加。
 4. **开始游玩**：从游戏库启动，或在详情中调整资料与启动配置。“正在玩”随成功提交的启动请求更新，手动设置的“已通关”保留。
 
-Windows 需要 [WebView2 Runtime](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution)。发布页提供 Portable ZIP 和 `butter-manager-v1.5.2-windows-x64-portable.zip.sha256`；独立 EXE 仅保留在 CI artifact 中。未签名程序可能出现 SmartScreen 提示，请核对来源与校验值。
+Windows 需要 [WebView2 Runtime](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution)。发布页提供 Portable ZIP 和 `butter-manager-v1.5.3-windows-x64-portable.zip.sha256`；独立 EXE 仅保留在 CI artifact 中。未签名程序可能出现 SmartScreen 提示，请核对来源与校验值。
 
 ```text
 butter-manager/
@@ -60,7 +60,7 @@ butter-manager/
 └── data/                 # 游戏库、设置、恢复记录与 WebView2 用户资料
 ```
 
-**升级**：关闭管理器，从新版 ZIP 提取 EXE 并替换旧 EXE，保留整个现有 `data/`；不要用下载目录中新建的空资料覆盖原库。“设置 → 关于应用”可查看应用版本与构建提交。**1.5.2 沿用 schema 15，从 1.5.0 / 1.5.1 升级无需迁移；从 1.4.0 及更早版本升级时自动迁移。已使用 schema 15 的开发构建无需再次迁移；1.4.0 及更早 EXE 无法打开升级后的库，请勿直接降级。**
+**升级**：关闭管理器，从新版 ZIP 提取 EXE 并替换旧 EXE，保留整个现有 `data/`；不要用下载目录中新建的空资料覆盖原库。“设置 → 关于应用”可查看应用版本与构建提交。**1.5.3 沿用 schema 15，从 1.5.0–1.5.2 升级无需迁移；从 1.4.0 及更早版本升级时自动迁移。已使用 schema 15 的开发构建无需再次迁移；1.4.0 及更早 EXE 无法打开升级后的库，请勿直接降级。**
 
 **迁移**：先完成或撤回文件任务，关闭程序，再复制整个程序文件夹和游戏目录。路径变化后，在“设置 → 高级维护”预览并确认新旧根目录映射；此功能重新关联记录，不搬动文件。
 

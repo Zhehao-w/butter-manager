@@ -1716,30 +1716,34 @@ export function ImportPage({
                         {!!candidate?.bundled_mtool?.length && (
                           <ImportSettingSection title="随包 MTool">
                             <div className="import-mtool-review">
+                              <div className="import-mtool-choice">
+                                <label className={choice.cleanup_mtool ? 'selected' : ''}>
+                                  <input
+                                    type="checkbox"
+                                    checked={!!choice.cleanup_mtool}
+                                    disabled={disabled}
+                                    onChange={(event) =>
+                                      update(source, { cleanup_mtool: event.target.checked })
+                                    }
+                                  />
+                                  导入成功后清理随包 MTool
+                                </label>
+                              </div>
                               {candidate.bundled_mtool.map((bundle) => (
-                                <div key={bundle.folder}>
-                                  <span className="path">
-                                    {bundle.folder}/
-                                    {bundle.bats.length ? ` · ${bundle.bats.join('、')}` : ''}
-                                  </span>
+                                <div className="import-mtool-path" key={bundle.folder}>
+                                  <Icon name="folder" size={16} />
+                                  <div>
+                                    <span className="path">{bundle.folder}/</span>
+                                    {!!bundle.bats.length && (
+                                      <span className="muted">
+                                        关联脚本：{bundle.bats.join('、')}
+                                      </span>
+                                    )}
+                                  </div>
                                 </div>
                               ))}
-                              <label>
-                                <input
-                                  type="checkbox"
-                                  checked={!!choice.cleanup_mtool}
-                                  disabled={disabled}
-                                  onChange={(event) =>
-                                    update(source, {
-                                      cleanup_mtool: event.target.checked,
-                                    })
-                                  }
-                                />
-                                导入成功后清理随包 MTool
-                              </label>
                               <p className="muted">
-                                勾选后回收以上整个一级目录（含全部文件）及关联
-                                BAT；取消则保留。启动方式单独设置。
+                                回收整个一级目录及关联脚本，包含目录内全部文件。取消勾选则保留，启动方式单独设置。
                               </p>
                             </div>
                           </ImportSettingSection>

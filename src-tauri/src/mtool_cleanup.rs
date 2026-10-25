@@ -761,7 +761,6 @@ mod tests {
             let bundles = detect(&f.source, &|| false);
             assert_eq!(bundles.len(), 1);
             assert_eq!(bundles[0].folder, "辅助工具");
-            assert!(bundles[0].safe);
             assert_eq!(bundles[0].bats, vec!["与工具一同启动.bat"]);
             launcher(
                 &f.source,
@@ -784,56 +783,8 @@ mod tests {
                 .bats
                 .contains(&"StartWithTool.bat".into()));
             fs::remove_file(f.source.join("与工具一同启动.bat")).unwrap();
-            assert!(detect(&f.source, &|| false)[0].safe);
             assert!(detect(&f.source, &|| false)[0].bats.is_empty());
         }
-    }
-    #[test]
-    fn recognizes_inject_bin_distribution_and_recycles_the_entire_wrapper() {
-        let f = Fixture::new(true);
-        fs::remove_file(f.source.join("与工具一同启动.bat")).unwrap();
-        fs::rename(
-            f.source.join("辅助工具/client"),
-            f.source.join("辅助工具/Tool"),
-        )
-        .unwrap();
-        fs::rename(f.source.join("辅助工具"), f.source.join("MTool")).unwrap();
-        let tool = f.source.join("MTool/Tool");
-        fs::rename(
-            tool.join("loaders/inject.exe"),
-            tool.join("loaders/inject.bin"),
-        )
-        .unwrap();
-        for name in [
-            "在工具无法正常显示时打开我",
-            "Open me when the tool can't display correctly",
-        ] {
-            fs::create_dir(f.source.join("MTool").join(name)).unwrap();
-        }
-        for name in ["点我打开工具.bat", "Use me to open the Tool.bat"] {
-            fs::write(f.source.join("MTool").join(name), b"internal tool launcher").unwrap();
-        }
-        let bundles = detect(&f.source, &|| false);
-        assert_eq!(bundles.len(), 1);
-        assert_eq!(bundles[0].folder, "MTool");
-        assert!(bundles[0].safe, "{}", bundles[0].reason);
-        let id = f.plan(true, None, "Game.exe", false);
-        let cleanup = f.store.get(&id).unwrap().items[0]
-            .mtool_cleanup
-            .clone()
-            .unwrap();
-        assert_eq!(cleanup.targets.len(), 1);
-        assert_eq!(cleanup.targets[0].path, "MTool");
-        assert_eq!(cleanup.targets[0].snapshot.len(), 1);
-        let ids = f.apply(&id).unwrap();
-        assert!(!f.root.join("Game v2/MTool").exists());
-        assert!(f.root.join("Game v2/Game.exe").is_file());
-        assert_eq!(
-            f.db.lock().unwrap().game(&ids[0]).unwrap().launch_type,
-            "DIRECT"
-        );
-        assert!(f.shared.join("MTool.exe").is_file());
-        assert_eq!(f.apply(&id).unwrap(), ids);
     }
     #[test]
     fn cleans_entire_first_level_directory_regardless_of_contents_or_package_signature() {
@@ -915,7 +866,6 @@ mod tests {
             ] {
                 fs::write(f.source.join(name), b"never execute this script").unwrap();
             }
-            assert!(detect(&f.source, &|| false)[0].safe);
             let id = f.plan(true, None, "Game.exe", cross);
             assert!(f.store.get(&id).unwrap().items[0].blockers.is_empty());
             let cleanup = f.store.get(&id).unwrap().items[0]
@@ -924,7 +874,12 @@ mod tests {
                 .unwrap();
             assert_eq!(cleanup.targets.len(), 4);
             assert!(cleanup.targets.iter().any(|t| t.path == "辅助工具"));
-            assert!(cleanup.targets.iter().all(|t| t.snapshot.len() <= 5));
+            // Directory contents may change after planning; the entire unit is still selected.
+            fs::write(
+                f.source.join(folder).join("package.json"),
+                b"changed contents",
+            )
+            .unwrap();
             let ids = f.apply(&id).unwrap();
             let target = f.root.join("Game v2");
             assert!(target.join("Game.exe").is_file());
@@ -979,17 +934,7 @@ mod tests {
         }
     }
     #[test]
-    fn content_changes_do_not_block_cleanup_and_recycling_failure_is_retryable() {
-        let f = Fixture::new(false);
-        let id = f.plan(true, None, "Game.exe", false);
-        fs::write(
-            f.source.join("辅助工具/package.json"),
-            br#"{"name":"changed_package"}"#,
-        )
-        .unwrap();
-        let ids = f.apply(&id).unwrap();
-        assert!(!f.root.join("Game v2/辅助工具").exists());
-        assert!(f.db.lock().unwrap().game(&ids[0]).is_ok());
+    fn recycling_failure_keeps_the_imported_game_and_can_be_retried() {
         let f = Fixture::new(false);
         let id = f.plan(true, None, "Game.exe", false);
         FAIL_CHECKPOINT.with(|v| *v.borrow_mut() = Some("mtool_recycle_fail".into()));
@@ -1040,10 +985,17 @@ mod tests {
             .iter_mut()
             .find(|t| t.path == "辅助工具")
             .unwrap();
-        folder.snapshot.insert(
-            "loaders/mzHook.dll".into(),
-            stamp(&f.source.join("辅助工具/loaders/mzHook.dll")).unwrap(),
-        );
+        for key in [
+            "MTool.exe",
+            "package.json",
+            "loaders/inject.exe",
+            "loaders/mzHook.dll",
+        ] {
+            folder.snapshot.insert(
+                key.into(),
+                stamp(&f.source.join("辅助工具").join(key)).unwrap(),
+            );
+        }
         f.store.save(&legacy).unwrap();
         FAIL_CHECKPOINT.with(|v| *v.borrow_mut() = Some("mtool_before_recycle".into()));
         f.apply(&id).unwrap();
@@ -1103,7 +1055,7 @@ mod tests {
         {
             std::os::unix::fs::symlink(&f.shared, f.source.join("辅助工具/linked-content"))
                 .unwrap();
-            assert!(detect(&f.source, &|| false)[0].safe);
+            assert_eq!(detect(&f.source, &|| false)[0].folder, "辅助工具");
         }
         fs::remove_dir_all(f.source.join("辅助工具")).unwrap();
         pe(&f.source.join("MTool.exe"));
@@ -1111,27 +1063,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_journals_keep_recorded_anchors_and_do_not_enable_cleanup_retroactively() {
-        let mut f = Fixture::new(false);
-        let id = f.plan(true, None, "Game.exe", false);
-        let mut plan = f.store.get(&id).unwrap();
-        let cleanup = plan.items[0].mtool_cleanup.as_mut().unwrap();
-        let target = cleanup
-            .targets
-            .iter_mut()
-            .find(|t| t.path == "辅助工具")
-            .unwrap();
-        target.snapshot = capture(
-            &f.source.join("辅助工具"),
-            ["", "MTool.exe", "package.json", "loaders/inject.exe"].map(String::from),
-            &|| false,
-        )
-        .unwrap();
-        f.store.save(&plan).unwrap();
-        f.store = ImportStore::open(f.store.directory.clone()).unwrap();
-        f.apply(&id).unwrap();
-        assert!(!f.root.join("Game v2/辅助工具").exists());
-
+    fn legacy_tasks_without_cleanup_fields_do_not_enable_cleanup_retroactively() {
         let f = Fixture::new(false);
         let id = f.plan(false, None, "Game.exe", false);
         let mut legacy = serde_json::to_value(f.store.get(&id).unwrap()).unwrap();

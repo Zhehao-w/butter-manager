@@ -429,7 +429,7 @@ export function ImportPage({
                     existing_id: suggestions[0].id,
                     engine:
                       next[source].engine === 'Unknown' && !next[source].engine_override
-                        ? games.find((game) => game.id === suggestions[0].id)?.engine ?? 'Unknown'
+                        ? (games.find((game) => game.id === suggestions[0].id)?.engine ?? 'Unknown')
                         : next[source].engine,
                     mtool_strategy: undefined,
                     remember_association: true,
@@ -628,7 +628,7 @@ export function ImportPage({
                 !current[source].engine_override &&
                 candidates.find((candidate) => candidate.install_path === source)?.engine ===
                   'Unknown'
-                  ? games.find((game) => game.id === change.existing_id)?.engine ?? 'Unknown'
+                  ? (games.find((game) => game.id === change.existing_id)?.engine ?? 'Unknown')
                   : current[source].engine,
               working_directory: undefined,
               launch_arguments: undefined,

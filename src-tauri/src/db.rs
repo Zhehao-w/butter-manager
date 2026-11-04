@@ -2147,10 +2147,10 @@ mod tests {
         db.edit_game(edit.clone()).unwrap();
         db.sync_mtool_defaults(std::slice::from_ref(&candidate))
             .unwrap();
-        assert_eq!(db.game("old").unwrap().engine, "Unknown");
+        assert_eq!(db.game("old").unwrap().engine, "Ren'Py");
         edit.engine = "bad\nengine".into();
         assert!(db.edit_game(edit).is_err());
-        assert_eq!(db.game("old").unwrap().engine, "Unknown");
+        assert_eq!(db.game("old").unwrap().engine, "Ren'Py");
         db.clear_library().unwrap();
         assert_eq!(
             db.connection

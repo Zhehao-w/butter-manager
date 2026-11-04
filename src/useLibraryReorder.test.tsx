@@ -28,10 +28,7 @@ describe('launch reorder motion', () => {
     view.rerender();
     expect(f.element.scrollTop).toBe(150);
     expect(f.animate).toHaveBeenCalledWith(
-      [
-        { transform: 'translate(0px, 80px) translateY(200px)' },
-        { transform: 'translateY(200px)' },
-      ],
+      [{ transform: 'translate(0px, 80px) translateY(200px)' }, { transform: 'translateY(200px)' }],
       { duration: 180, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' },
     );
     view.unmount();
@@ -59,10 +56,9 @@ describe('launch reorder motion', () => {
 
   it('discards pending motion when the user changes the sort or view', () => {
     const f = fixture();
-    const view = renderHook(
-      ({ scope }) => useLibraryReorder({ current: f.element }, scope, true),
-      { initialProps: { scope: 'list' } },
-    );
+    const view = renderHook(({ scope }) => useLibraryReorder({ current: f.element }, scope, true), {
+      initialProps: { scope: 'list' },
+    });
     act(() => view.result.current());
     f.move();
     view.rerender({ scope: 'grid' });

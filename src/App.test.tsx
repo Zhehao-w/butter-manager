@@ -3995,9 +3995,9 @@ describe('scan synchronization races', () => {
       finish([{ ...game, engine: 'Unity' }]);
     });
     expect(screen.getByRole('dialog', { name: 'Saved name' })).toBeTruthy();
-    expect(
-      (screen.getByRole('textbox', { name: '显示名称' }) as HTMLInputElement).value,
-    ).toBe('Saved name');
+    expect((screen.getByRole('textbox', { name: '显示名称' }) as HTMLInputElement).value).toBe(
+      'Saved name',
+    );
   });
 });
 

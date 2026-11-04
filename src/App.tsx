@@ -785,9 +785,7 @@ export default function App() {
   const virtualized = filtered.length > 50;
   const virtualItemKey = useMemo(
     () => (index: number) =>
-      layout === 'list'
-        ? `list-${filtered[index]?.id}`
-        : `grid-${cardColumns}-${index}`,
+      layout === 'list' ? `list-${filtered[index]?.id}` : `grid-${cardColumns}-${index}`,
     [layout, cardColumns, filtered],
   );
   prepareLibraryReorder.current = useLibraryReorder(

@@ -161,6 +161,9 @@ pub struct Selection {
     pub target_name: String,
     pub version: String,
     pub engine: String,
+    /// Distinguish an explicit Unknown choice from an unidentified update package.
+    #[serde(default)]
+    pub engine_override: bool,
     pub executable: String,
     /// Update-only overrides; absent values inherit the previous configuration.
     #[serde(default)]
@@ -677,6 +680,13 @@ impl ImportStore {
                 .existing_id
                 .as_ref()
                 .and_then(|id| games.iter().find(|g| &g.id == id));
+            if selection.engine == "Unknown" && !selection.engine_override {
+                if candidate.engine != "Unknown" {
+                    selection.engine = candidate.engine.clone();
+                } else if let Some(game) = existing {
+                    selection.engine = game.engine.clone();
+                }
+            }
             if selection.existing_id.is_some() && existing.is_none() {
                 blockers.push("关联的游戏已不存在，请重新选择".into());
             }
@@ -1958,6 +1968,7 @@ mod tests {
         let settings = f.db.lock().unwrap().settings().unwrap();
         let candidate = scanner::analyze_directory(&source).unwrap();
         let mut selection = Selection {
+            engine_override: false,
             mtool_strategy: None,
             source: candidate.install_path.clone(),
             title: candidate.suggested_title.clone(),
@@ -2047,6 +2058,7 @@ mod tests {
         let selections = candidates
             .iter()
             .map(|c| Selection {
+                engine_override: false,
                 mtool_strategy: None,
                 source: c.install_path.clone(),
                 title: c.suggested_title.clone(),
@@ -2169,6 +2181,7 @@ mod tests {
             let selections = candidates
                 .iter()
                 .map(|c| Selection {
+                    engine_override: false,
                     mtool_strategy: None,
                     source: c.install_path.clone(),
                     title: c.suggested_title.clone(),

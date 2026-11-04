@@ -258,6 +258,7 @@ impl Fixture {
     ) -> String {
         let candidate = scanner::analyze_directory(&self.source).unwrap();
         let mut selection = Selection {
+            engine_override: false,
             mtool_strategy: None,
             source: paths::path_text(&self.source).unwrap(),
             title: "incoming name".into(),
@@ -1316,6 +1317,7 @@ fn source_containing_an_external_save_is_blocked_but_ordinary_payload_changes_ar
     let settings = f.db.lock().unwrap().settings().unwrap();
     let job = f.tasks.begin("plan", settings.game_root.clone()).unwrap();
     let selection = Selection {
+        engine_override: false,
         mtool_strategy: None,
         source: paths::path_text(&f.source).unwrap(),
         title: "game".into(),
@@ -2066,4 +2068,42 @@ fn missing_bakin_launcher_blocks_update_before_moving_and_allows_withdrawal() {
         .unwrap();
     f.store.withdraw(&id, &job, &f.db).unwrap();
     job.finish(Ok(vec![]));
+}
+
+#[test]
+fn unknown_update_engine_inherits_unless_explicit_and_rollback_keeps_the_original() {
+    for (explicit, selected, expected) in [
+        (false, "Unknown", "RPG Maker MV"),
+        (true, "Unknown", "Unknown"),
+        (true, "Unity", "Unity"),
+    ] {
+        let f = Fixture::new();
+        fs::remove_file(f.source.join("游戏.html")).unwrap();
+        fs::write(f.source.join("Game.exe"), b"synthetic EXE").unwrap();
+        assert_eq!(
+            scanner::analyze_directory(&f.source).unwrap().engine,
+            "Unknown"
+        );
+        let operation = f.plan_with(true, true, |selection| {
+            selection.executable = "Game.exe".into();
+            selection.engine = selected.into();
+            selection.engine_override = explicit;
+        });
+        let plan = f.store.get(&operation).unwrap();
+        assert_eq!(plan.items[0].selection.engine, expected);
+        let mut legacy = serde_json::to_value(&plan).unwrap();
+        legacy["items"][0]["selection"]
+            .as_object_mut()
+            .unwrap()
+            .remove("engine_override");
+        let legacy: Plan = serde_json::from_value(legacy).unwrap();
+        assert_eq!(legacy.items[0].selection.engine, expected);
+        f.apply(&operation).unwrap();
+        assert_eq!(f.db.lock().unwrap().game(&f.id).unwrap().engine, expected);
+        f.rollback(&operation).unwrap();
+        assert_eq!(
+            f.db.lock().unwrap().game(&f.id).unwrap().engine,
+            "RPG Maker MV"
+        );
+    }
 }

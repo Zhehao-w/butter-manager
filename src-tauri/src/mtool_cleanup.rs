@@ -708,6 +708,7 @@ mod tests {
                     settings,
                     vec![candidate],
                     vec![Selection {
+                        engine_override: false,
                         mtool_strategy: None,
                         source: paths::path_text(&self.source).unwrap(),
                         title: "Game v2".into(),

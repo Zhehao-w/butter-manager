@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import Mock
 import zipfile
 
-from publish_release import publish_release
+from publish_release import publish_release, release_text
 
 
 COMMIT = "a" * 40
@@ -56,7 +56,11 @@ class FakeGitHub:
         action = args[1]
         if action == "create":
             assert "--verify-tag" in args and "--draft" in args
-            self.current = {"id": 1, "tag_name": args[2], "draft": True, "assets": []}
+            self.current = {
+                "id": 1, "tag_name": args[2], "draft": True, "assets": [],
+                "name": args[args.index("--title") + 1],
+                "body": Path(args[args.index("--notes-file") + 1]).read_text(encoding="utf-8"),
+            }
         elif action == "upload":
             if self.upload_error:
                 raise subprocess.CalledProcessError(1, args, stderr="fixture upload interrupted")
@@ -78,6 +82,9 @@ class FakeGitHub:
             if self.edit_error:
                 raise subprocess.CalledProcessError(1, args, stderr="fixture publication interrupted")
             self.current["draft"] = False
+            if "--title" in args:
+                self.current["name"] = args[args.index("--title") + 1]
+                self.current["body"] = Path(args[args.index("--notes-file") + 1]).read_text(encoding="utf-8")
         else:
             raise AssertionError(args)
         return ""
@@ -90,12 +97,19 @@ class PublishReleaseTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="publish-release-test-")
         self.addCleanup(self.temp.cleanup)
-        self.directory = Path(self.temp.name)
+        self.directory = Path(self.temp.name) / "assets"
+        self.directory.mkdir()
+        self.changelog = Path(self.temp.name) / "CHANGELOG.md"
         self.github = FakeGitHub()
         self.make_assets()
 
     def make_assets(self, version="1.0.0", entries=None):
         self.version = version
+        self.changelog.write_text(
+            f"# Changes\n\n## {version} · Fixture changes\n\n- Synthetic change.\n\n"
+            "## 0.9.0\n\n- Earlier change.\n",
+            encoding="utf-8",
+        )
         self.tag = "v" + version
         self.exe = self.directory / "butter-manager.exe"
         self.exe.write_bytes(b"MZ synthetic executable fixture")
@@ -115,7 +129,7 @@ class PublishReleaseTests(unittest.TestCase):
         options = dict(
             directory=self.directory, tag=self.tag, version=self.version,
             repository=REPOSITORY, commit=COMMIT, linux_commit=COMMIT,
-            create=True, gh=self.github, sleep=Mock(),
+            create=True, gh=self.github, sleep=Mock(), changelog=self.changelog,
         )
         options.update(changes)
         publish_release(**options)
@@ -125,7 +139,11 @@ class PublishReleaseTests(unittest.TestCase):
         self.assertEqual(self.github.mutations(), ["create", "upload", "edit"])
         self.assertFalse(self.github.current["draft"])
         self.assertEqual(len(self.github.current["assets"]), 2)
-        self.assertIn("--generate-notes", next(a for a in self.github.calls if a[:2] == ["release", "create"]))
+        create = next(a for a in self.github.calls if a[:2] == ["release", "create"])
+        self.assertNotIn("--generate-notes", create)
+        self.assertEqual(self.github.current["name"], "v1.0.0 · Fixture changes")
+        self.assertIn("- Synthetic change.", self.github.current["body"])
+        self.assertIn("/compare/v0.9.0...v1.0.0", self.github.current["body"])
 
     def test_only_zip_and_checksum_are_uploaded_not_standalone_exe(self):
         self.publish()
@@ -349,6 +367,47 @@ class PublishReleaseTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.publish()
         self.assertEqual(self.github.calls, [])
+
+
+    def test_changelog_rejects_missing_duplicate_and_empty_versions_before_mutating(self):
+        for content in [
+            "## 9.0.0\n\n- Wrong version.\n",
+            "## 1.0.0\n\n- First.\n\n## 1.0.0\n\n- Duplicate.\n",
+            "## 1.0.0 · Empty\n\n## 0.9.0\n\n- Earlier.\n",
+        ]:
+            with self.subTest(content=content):
+                self.github = FakeGitHub()
+                self.changelog.write_text(content, encoding="utf-8")
+                with self.assertRaises(ValueError):
+                    self.publish()
+                self.assertEqual(self.github.mutations(), [])
+
+    def test_resume_draft_uses_checked_out_notes_but_public_and_manual_notes_are_preserved(self):
+        self.github.current = {
+            "id": 1, "tag_name": self.tag, "draft": True, "assets": [],
+            "name": "Old", "body": "Old draft",
+        }
+        self.publish()
+        self.assertEqual(self.github.current["name"], "v1.0.0 · Fixture changes")
+        self.github.current["body"] = "Manual published notes"
+        self.github.calls.clear()
+        self.changelog.unlink()
+        self.publish()
+        self.assertEqual(self.github.mutations(), [])
+        self.assertEqual(self.github.current["body"], "Manual published notes")
+        self.publish(create=False)
+        self.assertEqual(self.github.current["body"], "Manual published notes")
+
+    def test_changelog_exact_version_handles_prereleases_crlf_and_shell_text_as_data(self):
+        self.changelog.write_bytes(
+            "## 1.0.0-rc.1 · Preview\r\n\r\n- Keep $(example) and `code`.\r\n"
+            "### Details\r\n\r\nText.\r\n\r\n## 1.0.0\r\n\r\nStable.\r\n".encode("utf-8")
+        )
+        title, body = release_text(self.changelog, "1.0.0-rc.1", REPOSITORY)
+        self.assertEqual(title, "v1.0.0-rc.1 · Preview")
+        self.assertIn("$(example)", body)
+        self.assertIn("### Details", body)
+        self.assertNotIn("Stable.", body)
 
 
 if __name__ == "__main__":

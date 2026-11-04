@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
 import time
 from urllib.parse import quote
 import zipfile
@@ -59,7 +60,27 @@ def validate_assets(directory, tag):
             raise ValueError("ZIP executable differs from the build EXE.")
     return {name: built[name] for name in release_names}
 
-def publish_release(directory, tag, version, repository, commit, linux_commit, create=False, gh=run_gh, sleep=time.sleep):
+
+def release_text(changelog, version, repository):
+    content = Path(changelog).read_text(encoding="utf-8-sig")
+    headings = list(re.finditer(r"^##[ \t]+(\S+?)(?:[ \t]+·[ \t]+(.+?))?[ \t]*$", content, re.MULTILINE))
+    selected = [index for index, heading in enumerate(headings) if heading[1] == version]
+    if len(selected) != 1:
+        raise ValueError("CHANGELOG must contain exactly one matching version section.")
+    index = selected[0]
+    heading = headings[index]
+    end = headings[index + 1].start() if index + 1 < len(headings) else len(content)
+    body = content[heading.end():end].strip()
+    if not body:
+        raise ValueError("CHANGELOG release section is empty.")
+    title = f"v{version}" + (f" · {heading[2].strip()}" if heading[2] else "")
+    if index + 1 < len(headings):
+        previous = headings[index + 1][1]
+        if re.fullmatch(r"\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?", previous):
+            body += f"\n\n[完整变更](https://github.com/{repository}/compare/v{previous}...v{version})"
+    return title, body + "\n"
+
+def publish_release(directory, tag, version, repository, commit, linux_commit, create=False, gh=run_gh, sleep=time.sleep, changelog=None):
     if not re.fullmatch(r"v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?", tag):
         raise ValueError("Expected a v-prefixed version tag, such as v1.0.0.")
     if tag != f"v{version}":
@@ -103,16 +124,31 @@ def publish_release(directory, tag, version, repository, commit, linux_commit, c
 
     verify_tag()
     current = release()
+    metadata = None
+    if create and (current is None or current["draft"]):
+        if changelog is None:
+            raise ValueError("Automatic publishing requires a CHANGELOG.")
+        metadata = release_text(changelog, version, repository)
+
+    def with_notes(args):
+        if metadata is None:
+            return gh(args)
+        title, body = metadata
+        # Notes stay outside the verified assets directory and are passed as argv, never a shell.
+        with tempfile.TemporaryDirectory(prefix="butter-release-notes-") as temporary:
+            notes = Path(temporary) / "notes.md"
+            notes.write_text(body, encoding="utf-8")
+            return gh([*args, "--title", title, "--notes-file", str(notes)])
+
     if current is None:
         if not create:
             raise ValueError("Manual/Release-event uploads require an existing Release.")
         args = [
             "release", "create", tag, "--repo", repository, "--verify-tag", "--draft",
-            "--title", tag, "--generate-notes",
         ]
         if "-" in tag.split("+", 1)[0]:
             args.append("--prerelease")
-        gh(args)
+        with_notes(args)
         # A newly created draft can take a few seconds to appear in the list.
         # Retry reads only; never repeat creation or publish an unverified draft.
         for attempt in range(6):
@@ -150,7 +186,7 @@ def publish_release(directory, tag, version, repository, commit, linux_commit, c
     verify_tag()
     if create and verified["draft"]:
         prerelease = "true" if "-" in tag.split("+", 1)[0] else "false"
-        gh([
+        with_notes([
             "release", "edit", tag, "--repo", repository,
             "--draft=false", f"--prerelease={prerelease}",
         ])
@@ -171,6 +207,7 @@ if __name__ == "__main__":
             os.environ["EXPECTED_COMMIT"],
             os.environ["LINUX_COMMIT"],
             create=os.environ.get("CREATE_RELEASE") == "true",
+            changelog=root / "CHANGELOG.md",
         )
     except (ValueError, OSError, KeyError, zipfile.BadZipFile, subprocess.CalledProcessError) as error:
         print(f"Release publishing failed: {error}", file=sys.stderr)

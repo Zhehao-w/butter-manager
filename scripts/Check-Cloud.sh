@@ -21,6 +21,10 @@ export PNPM_CONFIG_STATE_DIR="$PWD/.tools/pnpm-state"
 mkdir -p "$CARGO_HOME" "$TMPDIR" "$PNPM_CONFIG_STATE_DIR"
 
 pnpm install --frozen-lockfile
+# Temporary formatter diagnostics for the unavailable local executor.
+pnpm format
+cargo fmt --manifest-path src-tauri/Cargo.toml --all
+git diff -- src src-tauri
 pnpm format:check
 cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
 pnpm test:ui

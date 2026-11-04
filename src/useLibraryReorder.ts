@@ -49,7 +49,13 @@ export function useLibraryReorder(
       animation.onfinish = () => animations.current.delete(animation);
     }
   });
-  useLayoutEffect(() => cancel, []);
+  useLayoutEffect(
+    () => () => {
+      pending.current = null;
+      cancel();
+    },
+    [scope, enabled],
+  );
   return () => {
     const element = container.current;
     if (!enabled || !element) return;

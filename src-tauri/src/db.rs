@@ -614,15 +614,21 @@ impl Database {
         let mut qsp_ids = vec![];
         let mut bakin_ids = vec![];
         let mut save_candidates = vec![];
+        let mut engine_candidates = vec![];
         for candidate in candidates.iter().filter(|c| c.status == "ready") {
             let Some(id) = &candidate.registered_id else {
                 continue;
             };
             let game = self.game(id)?;
-            if game.install_path != candidate.install_path || !game.save_paths.is_empty() {
+            if game.install_path != candidate.install_path {
                 continue;
             }
-            save_candidates.push(game);
+            if game.engine == "Unknown" && candidate.engine != "Unknown" {
+                engine_candidates.push((id.clone(), candidate.engine.clone()));
+            }
+            if game.save_paths.is_empty() {
+                save_candidates.push(game);
+            }
         }
         for candidate in candidates
             .iter()
@@ -685,6 +691,12 @@ impl Database {
         }
         let transaction = self.connection.transaction()?;
         let mut changed_ids = vec![];
+        for (id, engine) in engine_candidates {
+            // Unknown is a missing value, even when an old import marked it manual.
+            if transaction.execute("UPDATE games SET engine=?2,engine_source='detected',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?1 AND engine='Unknown'", params![id, engine])? > 0 {
+                changed_ids.push(id);
+            }
+        }
         for id in qsp_ids {
             // A complete scan can refresh detected engines, but never a manual engine or launch.
             if transaction.execute("UPDATE games SET engine='QSP',engine_source='detected',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?1 AND engine!='QSP' AND engine_source!='manual'", [&id])? > 0 {
@@ -2092,7 +2104,8 @@ mod tests {
     #[test]
     fn engine_migration_and_manual_override_survive_scan_and_reopen() {
         let temp = tempfile::tempdir().unwrap();
-        let path = temp.path().join("library.db");
+        let root = dunce::canonicalize(temp.path()).unwrap();
+        let path = root.join("library.db");
         let connection = Connection::open(&path).unwrap();
         for migration in [
             include_str!("../migrations/001_initial.sql"),
@@ -2102,16 +2115,18 @@ mod tests {
         ] {
             connection.execute_batch(migration).unwrap();
         }
-        connection.execute("INSERT INTO games(id,canonical_title,display_title,install_path,install_path_key,engine,version_source) VALUES('old','Old','Old',?1,'fixture','Unity','unknown')", [temp.path().to_str().unwrap()]).unwrap();
+        connection.execute("INSERT INTO games(id,canonical_title,display_title,install_path,install_path_key,engine,version_source) VALUES('old','Old','Old',?1,'fixture','Unity','unknown')", [root.to_str().unwrap()]).unwrap();
         drop(connection);
         let mut db = Database::open(&path).unwrap();
         assert_eq!(db.game("old").unwrap().engine, "Unity");
         let created_at = db.game("old").unwrap().created_at;
         let mut edit = draft(&db.game("old").unwrap());
         edit.engine = "QSP".into();
-        edit.save_paths = vec![temp.path().join("save").display().to_string()];
+        edit.save_paths = vec![root.join("save").display().to_string()];
         db.edit_game(edit).unwrap();
-        let mut candidate = analyze_directory(temp.path()).unwrap();
+        let mut candidate = analyze_directory(&root).unwrap();
+        assert_eq!(candidate.status, "ready");
+        assert_eq!(candidate.install_path, db.game("old").unwrap().install_path);
         candidate.engine = "Ren'Py".into();
         candidate.registered_id = Some("old".into());
         db.sync_mtool_defaults(std::slice::from_ref(&candidate))
@@ -2135,10 +2150,10 @@ mod tests {
         db.edit_game(edit.clone()).unwrap();
         db.sync_mtool_defaults(std::slice::from_ref(&candidate))
             .unwrap();
-        assert_eq!(db.game("old").unwrap().engine, "Unknown");
+        assert_eq!(db.game("old").unwrap().engine, "Ren'Py");
         edit.engine = "bad\nengine".into();
         assert!(db.edit_game(edit).is_err());
-        assert_eq!(db.game("old").unwrap().engine, "Unknown");
+        assert_eq!(db.game("old").unwrap().engine, "Ren'Py");
         db.clear_library().unwrap();
         assert_eq!(
             db.connection
@@ -2405,6 +2420,48 @@ mod tests {
             .aliases
             .is_empty());
         assert_eq!(std::fs::read(root.join("Game.exe")).unwrap(), b"fixture");
+    }
+
+    #[test]
+    fn complete_scan_fills_any_unknown_engine_but_preserves_known_manual_engines() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("synthetic game");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(root.join("Game.exe"), b"synthetic EXE").unwrap();
+        let path = temp.path().join("fixture.db");
+        let mut db = Database::open(&path).unwrap();
+        let id = db
+            .register(&[analyze_directory(&root).unwrap()])
+            .unwrap()
+            .remove(0);
+        let mut scan = analyze_directory(&root).unwrap();
+        scan.registered_id = Some(id.clone());
+        assert_eq!(db.game(&id).unwrap().engine, "Unknown");
+        for engine in ["Unity", "RPG Maker MZ"] {
+            db.connection
+                .execute(
+                    "UPDATE games SET engine='Unknown',engine_source='manual' WHERE id=?1",
+                    [&id],
+                )
+                .unwrap();
+            scan.engine = engine.into();
+            scan.status = "incomplete".into();
+            assert!(db.sync_mtool_defaults(&[scan.clone()]).unwrap().is_empty());
+            scan.status = "ready".into();
+            let changed = db.sync_mtool_defaults(&[scan.clone()]).unwrap();
+            assert_eq!(changed.len(), 1);
+            assert_eq!(changed[0].engine, engine);
+        }
+        let mut edit = draft(&db.game(&id).unwrap());
+        edit.engine = "Unreal Engine".into();
+        db.edit_game(edit).unwrap();
+        scan.engine = "Unity".into();
+        assert!(db.sync_mtool_defaults(&[scan]).unwrap().is_empty());
+        drop(db);
+        assert_eq!(
+            Database::open(&path).unwrap().game(&id).unwrap().engine,
+            "Unreal Engine"
+        );
     }
 
     #[test]

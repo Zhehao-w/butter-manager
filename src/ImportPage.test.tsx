@@ -1907,3 +1907,49 @@ describe('batch import flow', () => {
     );
   });
 });
+
+describe('update engine defaults', () => {
+  it.each([false, true])(
+    'inherits known engines unless Unknown is explicitly selected: %s',
+    async (explicitUnknown) => {
+      const installed = makeGame({
+        id: 'installed',
+        display_title: 'Old',
+        engine: 'Unreal Engine',
+        install_path: 'E:/Library/Old',
+        current_version: 'v1',
+        save_paths: ['<GAME>/Save'],
+      });
+      vi.mocked(api.job).mockResolvedValue({
+        ...page,
+        changes: [{ ...candidate, engine: 'Unknown' }],
+      });
+      vi.mocked(api.importMatches).mockResolvedValue({
+        [candidate.install_path]: [
+          {
+            id: installed.id,
+            title: installed.display_title,
+            version: 'v1',
+            path: installed.install_path,
+            reason: '名称一致',
+            auto_associate: true,
+          },
+        ],
+      });
+      renderNewImport({ games: [installed] });
+      await expandSettings('游戏关联');
+      await screen.findByRole('button', { name: '已关联：Old' });
+      await expandSettings('基本信息');
+      if (explicitUnknown)
+        fireEvent.change(screen.getByRole('combobox', { name: '引擎' }), {
+          target: { value: 'Unknown' },
+        });
+      await waitForEnabledButton('生成导入与更新计划（1）');
+      fireEvent.click(screen.getByRole('button', { name: '生成导入与更新计划（1）' }));
+      await waitFor(() => expect(api.importPlan).toHaveBeenCalledOnce());
+      const selection = vi.mocked(api.importPlan).mock.calls[0][1][0];
+      expect(selection.engine).toBe(explicitUnknown ? 'Unknown' : 'Unreal Engine');
+      expect(!!selection.engine_override).toBe(explicitUnknown);
+    },
+  );
+});

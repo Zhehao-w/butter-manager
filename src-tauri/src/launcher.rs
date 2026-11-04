@@ -107,6 +107,7 @@ fn launch_observed(
                 running,
                 game.mtool_strategy,
             )
+            .map(|_| ())
         }
         _ => Err(Error::Validation(
             "CUSTOM_BAT 暂不支持；下载 BAT 不会被执行".into(),
@@ -136,24 +137,23 @@ fn launch_mtool(
     runtime: &mut Command,
     running: Option<&crate::runtime::RunningGames>,
     strategy: crate::domain::MToolStrategy,
-) -> Result<()> {
+) -> Result<std::process::Child> {
     let label = if strategy == crate::domain::MToolStrategy::Bakin {
         "BakinLauncher"
     } else {
         "injector"
     };
-    // Separate arguments; downloaded BATs are never executed. Observe before waiting: a failed
-    // injector/runtime can still have launched a game, which must keep mutation guards active.
+    // Observe the injector's tree before waiting: a failed launch can leave a live game.
+    // The shared runtime is independent and must not keep this game's mutation guard active.
     let status = spawn_mtool(id, injector, running, 0x0800_0000)?.wait()?;
     if !status.success() {
         return Err(Error::Validation(format!("{label} 退出状态：{status}")));
     }
-    spawn_mtool(id, runtime, running, 0).map_err(|error| {
+    runtime.spawn().map_err(|error| {
         Error::Validation(format!(
             "{label} 已启动，但 MTool runtime 启动失败：{error}"
         ))
-    })?;
-    Ok(())
+    })
 }
 
 fn mtool_commands(game: &Game, settings: &Settings) -> Result<(Command, Command)> {
@@ -172,7 +172,7 @@ fn mtool_commands(game: &Game, settings: &Settings) -> Result<(Command, Command)
     let mut runtime_command = Command::new(runtime);
     runtime_command
         .arg(Path::new(&settings.mtool_root))
-        .current_dir(&working);
+        .current_dir(Path::new(&settings.mtool_root));
     Ok((inject_command, runtime_command))
 }
 
@@ -344,8 +344,9 @@ pub fn debug_bat(game: &Game, settings: &Settings) -> Result<String> {
         None => format!("{} {}", quoted(&injector)?, quoted(&target)?),
     };
     Ok(format!(
-        "@chcp 65001\r\n@cd /d {}\r\n{launcher_line}\r\nstart \"\" {} {}\r\n",
+        "@chcp 65001\r\n@cd /d {}\r\n{launcher_line}\r\nstart \"\" /d {} {} {}\r\n",
         quoted(&mtool_working_directory(game)?)?,
+        quoted(Path::new(&settings.mtool_root))?,
         quoted(&runtime)?,
         quoted(Path::new(&settings.mtool_root))?
     ))
@@ -481,7 +482,7 @@ mod tests {
     }
     #[cfg(windows)]
     #[test]
-    fn mtool_tracks_runtime_and_injector_descendants_including_partial_launch_failures() {
+    fn mtool_tracks_game_tree_but_not_shared_runtime_including_partial_launch_failures() {
         use std::process::Stdio;
         for mode in [
             "runtime",
@@ -492,22 +493,27 @@ mod tests {
             "injector_failure",
         ] {
             let temp = tempfile::tempdir().unwrap();
-            let mut game = crate::maintenance::tests::fixture_game(temp.path());
+            let root = dunce::canonicalize(temp.path()).unwrap();
+            let game_root = root.join("game");
+            let shared_root = root.join("shared MTool");
+            std::fs::create_dir_all(&game_root).unwrap();
+            std::fs::create_dir_all(&shared_root).unwrap();
+            let mut game = crate::maintenance::tests::fixture_game(&game_root);
             if mode.starts_with("bakin_") {
                 game.mtool_strategy = crate::domain::MToolStrategy::Bakin;
             }
-            let game_signal = temp.path().join("game-running");
-            let runtime_signal = temp.path().join("runtime-running");
+            let game_signal = root.join("game-running");
+            let runtime_signal = root.join("runtime-running");
             for signal in [&game_signal, &runtime_signal] {
                 std::fs::write(signal, b"fixture").unwrap();
             }
             // Tiny cmd fixtures avoid PowerShell's slow first startup on cold CI runners.
             // These isolated scripts are test processes, never downloaded game launchers.
-            for (script, signal) in [
-                ("game-loop.cmd", &game_signal),
-                ("runtime-loop.cmd", &runtime_signal),
+            for (directory, script, signal) in [
+                (&game_root, "game-loop.cmd", &game_signal),
+                (&shared_root, "runtime-loop.cmd", &runtime_signal),
             ] {
-                std::fs::write(temp.path().join(script), format!("@echo off\r\n:wait\r\nif not exist \"{}\" exit /b 0\r\nping.exe -n 2 127.0.0.1 >nul 2>&1\r\ngoto wait\r\n", signal.display())).unwrap();
+                std::fs::write(directory.join(script), format!("@echo off\r\n:wait\r\nif not exist \"{}\" exit /b 0\r\nping.exe -n 2 127.0.0.1 >nul 2>&1\r\ngoto wait\r\n", signal.display())).unwrap();
             }
             let mut injector = Command::new(std::env::var_os("ComSpec").unwrap());
             let script = if mode == "runtime" {
@@ -522,21 +528,21 @@ mod tests {
                     }
                 )
             };
-            std::fs::write(temp.path().join("injector.cmd"), script).unwrap();
+            std::fs::write(game_root.join("injector.cmd"), script).unwrap();
             injector
                 .args(["/d", "/q", "/c", "injector.cmd"])
-                .current_dir(temp.path())
+                .current_dir(&game_root)
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null());
             let mut runtime = if mode == "runtime_failure" {
-                Command::new(temp.path().join("missing-runtime.exe"))
+                Command::new(shared_root.join("missing-runtime.exe"))
             } else {
                 Command::new(std::env::var_os("ComSpec").unwrap())
             };
             runtime
                 .args(["/d", "/q", "/c", "runtime-loop.cmd"])
-                .current_dir(temp.path())
+                .current_dir(&shared_root)
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null());
@@ -549,23 +555,23 @@ mod tests {
                 game.mtool_strategy,
             );
             assert_eq!(result.is_err(), mode.ends_with("failure"), "{mode}");
-            if mode == "bakin_failure" {
-                assert!(result.unwrap_err().to_string().contains("BakinLauncher"));
+            let mut runtime_child = match result {
+                Ok(child) => Some(child),
+                Err(error) => {
+                    if mode == "bakin_failure" {
+                        assert!(error.to_string().contains("BakinLauncher"));
+                    }
+                    None
+                }
+            };
+            if mode != "runtime" {
+                assert!(running.ensure_tracked_idle(&game).is_err(), "{mode}");
+                assert!(running.ensure_idle(&game).is_err(), "{mode}");
             }
-            assert!(running.ensure_tracked_idle(&game).is_err(), "{mode}");
-            assert!(running.ensure_idle(&game).is_err(), "{mode}");
             let mut other = game.clone();
             other.id = "another-game".into();
             running.ensure_tracked_idle(&other).unwrap();
-            if mode == "descendants" || mode == "bakin_descendants" {
-                std::fs::remove_file(&runtime_signal).unwrap();
-                // Removing the runtime signal does not release the injector's surviving child.
-                assert!(running.ensure_tracked_idle(&game).is_err());
-            }
             std::fs::remove_file(&game_signal).unwrap();
-            if runtime_signal.exists() {
-                std::fs::remove_file(&runtime_signal).unwrap();
-            }
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
             while running.ensure_tracked_idle(&game).is_err() {
                 assert!(
@@ -573,6 +579,18 @@ mod tests {
                     "{mode}: fixture process did not exit"
                 );
                 std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            // File operations are allowed after the game exits, while the shared runtime lives.
+            running.ensure_idle(&game).unwrap();
+            if let Some(child) = runtime_child.as_mut() {
+                assert!(child.try_wait().unwrap().is_none(), "{mode}");
+                let renamed = root.join("renamed game");
+                std::fs::rename(&game_root, &renamed).unwrap();
+                std::fs::rename(&renamed, &game_root).unwrap();
+            }
+            std::fs::remove_file(&runtime_signal).unwrap();
+            if let Some(mut child) = runtime_child {
+                assert!(child.wait().unwrap().success(), "{mode}");
             }
         }
     }
@@ -785,7 +803,7 @@ mod tests {
                 runtime.get_args().collect::<Vec<_>>(),
                 vec![tool.as_os_str()]
             );
-            assert_eq!(runtime.get_current_dir(), inject.get_current_dir());
+            assert_eq!(runtime.get_current_dir(), Some(tool.as_path()));
         }
         write_pe(&game_dir.join("任意游戏.exe"), 0xaa64);
         assert!(preview_mtool(&game, &settings).is_err());
@@ -860,13 +878,14 @@ mod tests {
             runtime.get_args().collect::<Vec<_>>(),
             vec![tool.as_os_str()]
         );
-        assert_eq!(runtime.get_current_dir(), Some(directory.as_path()));
+        assert_eq!(runtime.get_current_dir(), Some(tool.as_path()));
         let preview = preview_mtool(&game, &settings).unwrap();
         assert_eq!(preview.mtool_strategy, MToolStrategy::Bakin);
         assert_eq!(preview.launcher, "loaders/BakinLauncher.exe");
         assert!(preview.loader.is_empty());
         let debug = debug_bat(&game, &settings).unwrap();
         assert!(debug.contains("BakinLauncher.exe"));
+        assert!(debug.contains(&format!(r#"start "" /d "{}" "#, tool.display())));
         assert!(debug.contains("みゆつれ.exe"));
         assert!(!debug.contains("injector"));
         assert!(!debug.contains("mzHook"));

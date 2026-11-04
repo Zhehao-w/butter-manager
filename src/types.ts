@@ -288,6 +288,7 @@ export interface ImportSelection {
   // Omitted/null inherits; an empty string clears.
   launch_arguments?: string | null;
   cleanup_mtool?: boolean;
+  engine_override?: boolean;
   external_player?: ExternalPlayer | null;
   working_directory?: string | null;
   // Omitted/null inherits; an empty string explicitly selects automatic detection.

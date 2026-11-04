@@ -370,7 +370,7 @@ export function ImportPage({
       });
       setChoices((current) => {
         const next = { ...current };
-        for (const c of changes)
+        for (const c of changes) {
           if (!next[c.install_path])
             next[c.install_path] = {
               source: c.install_path,
@@ -390,6 +390,13 @@ export function ImportPage({
               preserve_saves: true,
               saves_confirmed: false,
             };
+          else if (
+            !next[c.install_path].engine_override &&
+            next[c.install_path].engine === 'Unknown' &&
+            c.engine !== 'Unknown'
+          )
+            next[c.install_path] = { ...next[c.install_path], engine: c.engine };
+        }
         return next;
       });
       setSelected(
@@ -420,6 +427,10 @@ export function ImportPage({
                   next[source] = {
                     ...next[source],
                     existing_id: suggestions[0].id,
+                    engine:
+                      next[source].engine === 'Unknown' && !next[source].engine_override
+                        ? (games.find((game) => game.id === suggestions[0].id)?.engine ?? 'Unknown')
+                        : next[source].engine,
                     mtool_strategy: undefined,
                     remember_association: true,
                   };
@@ -613,6 +624,12 @@ export function ImportPage({
               mtool_strategy: change.existing_id
                 ? undefined
                 : suggestedMtoolStrategy(candidates.find((c) => c.install_path === source)),
+              engine:
+                !current[source].engine_override &&
+                candidates.find((candidate) => candidate.install_path === source)?.engine ===
+                  'Unknown'
+                  ? (games.find((game) => game.id === change.existing_id)?.engine ?? 'Unknown')
+                  : current[source].engine,
               working_directory: undefined,
               launch_arguments: undefined,
               mtool_loader: undefined,
@@ -1305,6 +1322,7 @@ export function ImportPage({
                                     engine === 'QSP'
                                       ? {
                                           engine: 'QSP',
+                                          engine_override: true,
                                           mtool: false,
                                           external_player:
                                             choice.external_player ??
@@ -1314,7 +1332,7 @@ export function ImportPage({
                                             ? choice.executable
                                             : (candidate ? suggestedPlayer(candidate) : null) || '',
                                         }
-                                      : { engine, external_player: null },
+                                      : { engine, engine_override: true, external_player: null },
                                   )
                                 }
                               />

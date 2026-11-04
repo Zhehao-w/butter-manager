@@ -1354,7 +1354,7 @@ describe('iteration interactions', () => {
       await screen.findByRole('button', { name: '扫描目录' });
       openConfig('设置');
       const about = within(screen.getByRole('region', { name: '关于应用' }));
-      expect(about.getByText('v1.5.3')).toBeTruthy();
+      expect(about.getByText('v1.5.4')).toBeTruthy();
       expect(about.getByText(`构建 ${commit ?? '未知'}`)).toBeTruthy();
     },
   );
@@ -1612,7 +1612,7 @@ describe('iteration interactions', () => {
       'character-new',
     );
     expect(within(sidebar).getByText('by Zhehao-w')).toBeTruthy();
-    expect(within(sidebar).getByText('v1.5.3').className).toBe('sidebar-version');
+    expect(within(sidebar).getByText('v1.5.4').className).toBe('sidebar-version');
     expect(sidebar.querySelectorAll('img')).toHaveLength(2);
     expect(screen.queryByRole('button', { name: '关于' })).toBeNull();
     expect(screen.queryByRole('region', { name: '关于页面' })).toBeNull();
@@ -3924,4 +3924,126 @@ describe('iteration interactions', () => {
     expect(screen.getByText('启动文件：main-v1.2.exe')).toBeTruthy();
     expect(api.startScan).toHaveBeenCalledTimes(1);
   });
+});
+
+describe('scan synchronization races', () => {
+  async function pendingScan() {
+    let finish!: (games: Game[]) => void;
+    vi.mocked(api.syncScanMtool).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    render(<App />);
+    await waitForEnabledButton('扫描目录');
+    fireEvent.click(screen.getByRole('button', { name: '扫描目录' }));
+    await waitFor(() => expect(api.syncScanMtool).toHaveBeenCalledOnce());
+    goLibrary();
+    fireEvent.click(screen.getByRole('button', { name: game.display_title }));
+    return {
+      detail: screen.getByRole('dialog', { name: game.display_title }),
+      finish,
+    };
+  }
+
+  it('submits corrected defaults from an open detail while keeping an unsaved name', async () => {
+    vi.mocked(api.saveGame).mockImplementation(async (edit) => ({
+      ...game,
+      ...edit,
+      tags: edit.tags ?? [],
+      launch_arguments: edit.launch_arguments ?? '',
+      mtool_strategy: edit.mtool_strategy ?? 'INJECT',
+    }));
+    const { detail, finish } = await pendingScan();
+    fireEvent.change(within(detail).getByRole('textbox', { name: '显示名称' }), {
+      target: { value: 'My draft' },
+    });
+    await act(async () => {
+      finish([
+        {
+          ...game,
+          engine: 'RPG Developer Bakin',
+          launch_type: 'MTOOL',
+          mtool_strategy: 'BAKIN',
+          mtool_target_exe: game.main_executable,
+        },
+      ]);
+    });
+    expect(
+      (within(detail).getByRole('combobox', { name: '游戏引擎' }) as HTMLSelectElement).value,
+    ).toBe('RPG Developer Bakin');
+    fireEvent.click(within(detail).getByRole('button', { name: '保存资料' }));
+    await waitFor(() => expect(api.saveGame).toHaveBeenCalledOnce());
+    expect(vi.mocked(api.saveGame).mock.calls[0][0]).toMatchObject({
+      display_title: 'My draft',
+      engine: 'RPG Developer Bakin',
+      launch_type: 'MTOOL',
+      mtool_strategy: 'BAKIN',
+    });
+  });
+
+  it('keeps a saved title when an older scan response arrives afterwards', async () => {
+    vi.mocked(api.saveGame).mockResolvedValue({ ...game, display_title: 'Saved name' });
+    const { detail, finish } = await pendingScan();
+    fireEvent.change(within(detail).getByRole('textbox', { name: '显示名称' }), {
+      target: { value: 'Saved name' },
+    });
+    fireEvent.click(within(detail).getByRole('button', { name: '保存资料' }));
+    await screen.findByRole('dialog', { name: 'Saved name' });
+    await act(async () => {
+      finish([{ ...game, engine: 'Unity' }]);
+    });
+    expect(screen.getByRole('dialog', { name: 'Saved name' })).toBeTruthy();
+    expect((screen.getByRole('textbox', { name: '显示名称' }) as HTMLInputElement).value).toBe(
+      'Saved name',
+    );
+  });
+});
+
+describe('recently played sorting after launch', () => {
+  it.each(['list', 'grid'] as const)(
+    'keeps the %s viewport and surviving nodes during reordering',
+    async (layout) => {
+      mockLibraryViewport();
+      const library = Array.from({ length: 80 }, (_, index) =>
+        makeGame({
+          id: `game-${index}`,
+          display_title: `Game ${index}`,
+          last_launched_at: new Date(1700000000000 - index * 1000).toISOString(),
+        }),
+      );
+      vi.mocked(api.games).mockResolvedValue(library);
+      let finish!: (game: Game) => void;
+      vi.mocked(api.play).mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      );
+      localStorage.setItem('butter-manager.sort.library', 'played-desc');
+      localStorage.setItem('butter-manager.view.library', layout);
+      render(<App />);
+      await screen.findByRole('button', { name: '启动 Game 5' });
+      const viewport = screen.getByLabelText('游戏列表');
+      viewport.scrollTop = 73;
+      fireEvent.scroll(viewport);
+      const survivor = viewport.querySelector('[data-library-game="game-4"]');
+      const first = () =>
+        viewport.querySelector<HTMLElement>('[data-library-game]')?.dataset.libraryGame;
+      expect(first()).toBe('game-0');
+      fireEvent.click(screen.getByRole('button', { name: '启动 Game 5' }));
+      expect(first()).toBe('game-0');
+      await act(async () => {
+        finish({
+          ...library[5],
+          last_launched_at: '2026-11-03T12:00:00Z',
+          play_status: 'PLAYING',
+        });
+      });
+      await waitFor(() => expect(first()).toBe('game-5'));
+      expect(viewport.scrollTop).toBe(73);
+      expect(viewport.querySelector('[data-library-game="game-4"]')).toBe(survivor);
+    },
+  );
 });

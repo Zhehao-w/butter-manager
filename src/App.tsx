@@ -6,6 +6,8 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { version as appVersion } from '../package.json';
 import { useStableVirtualizer } from './useStableVirtualizer';
 import { api } from './api';
+import { mergeDetailDraft, mergeScanGame } from './gameSync';
+import { useLibraryReorder } from './useLibraryReorder';
 import { useNotifications, NotificationToast } from './notifications';
 import { appIcon, sidebarCharacter } from './appearance';
 import {
@@ -214,6 +216,7 @@ export default function App() {
   const [launchingIds, setLaunchingIds] = useState<Set<string>>(new Set());
   const [visibleLaunchingIds, setVisibleLaunchingIds] = useState<Set<string>>(new Set());
   const launchRequests = useRef(new Set<string>());
+  const prepareLibraryReorder = useRef(() => {});
   async function playGame(id: string, configuration?: LaunchConfiguration) {
     if (taskActive || organizationRequest.current) throw new Error('当前任务完成后可启动');
     if (launchRequests.current.has(id)) return;
@@ -224,6 +227,7 @@ export default function App() {
     }, 300);
     try {
       const launched = await (configuration ? api.play(id, configuration) : api.play(id));
+      if (launched) prepareLibraryReorder.current();
       if (launched)
         setGames((current) =>
           current.map((game) =>
@@ -370,6 +374,7 @@ export default function App() {
       acceptPathChecks(job.path_checks || []);
       if (job.status === 'completed') {
         try {
+          const before = new Map(games.map((game) => [game.id, game]));
           const changed = await api.syncScanMtool(job.id);
           if (currentScanId.current !== job.id) return;
           if (changed.length) {
@@ -378,12 +383,7 @@ export default function App() {
             setGames((current) =>
               current.map((game) =>
                 updates.has(game.id)
-                  ? {
-                      ...updates.get(game.id)!,
-                      favorite: game.favorite,
-                      tags: game.tags,
-                      play_status: game.play_status,
-                    }
+                  ? mergeScanGame(game, before.get(game.id), updates.get(game.id)!)
                   : game,
               ),
             );
@@ -785,8 +785,13 @@ export default function App() {
   const virtualized = filtered.length > 50;
   const virtualItemKey = useMemo(
     () => (index: number) =>
-      `${layout}-${cardColumns}-${filtered[index * (layout === 'list' ? 1 : cardColumns)]?.id}`,
+      layout === 'list' ? `list-${filtered[index]?.id}` : `grid-${cardColumns}-${index}`,
     [layout, cardColumns, filtered],
+  );
+  prepareLibraryReorder.current = useLibraryReorder(
+    libraryScroll,
+    `${layout}:${cardColumns}:${sort}:${search}:${JSON.stringify(filters)}:${issuesOnly}:${otherEnginesOnly}`,
+    sort.startsWith('played') && !previewOpen && !importOpen && !settingsOpen,
   );
   const virtualizer = useVirtualizer<HTMLElement, HTMLElement>({
     count: layout === 'list' ? filtered.length : Math.ceil(filtered.length / cardColumns),
@@ -1234,6 +1239,7 @@ export default function App() {
                       {libraryRows.map(({ game: g, row }) => (
                         <tr
                           key={g.id}
+                          data-library-game={g.id}
                           data-index={row?.index}
                           aria-rowindex={row ? row.index + 2 : filtered.indexOf(g) + 2}
                           style={
@@ -1378,6 +1384,7 @@ export default function App() {
                           ).map((g) => (
                             <article
                               key={g.id}
+                              data-library-game={g.id}
                               className={`game-card ${g.id === highlightedGameId ? 'selected' : ''} ${selectionMode && librarySelected.has(g.id) ? 'is-batch-selected' : ''}`}
                               onMouseEnter={() => setHighlightedGameId(g.id)}
                               onFocus={() => setHighlightedGameId(g.id)}
@@ -2807,6 +2814,12 @@ function GameDetail({
     mtool_strategy: game.mtool_strategy ?? 'INJECT',
     launch_arguments: game.launch_arguments ?? '',
   });
+  const previousGame = useRef(game);
+  useEffect(() => {
+    const before = previousGame.current;
+    previousGame.current = game;
+    setDraft((current) => mergeDetailDraft(current, before, game));
+  }, [game]);
   const [tagInput, setTagInput] = useState('');
   const previousTags = useRef(libraryTags);
   useEffect(() => {

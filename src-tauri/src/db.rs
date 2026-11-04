@@ -2104,7 +2104,8 @@ mod tests {
     #[test]
     fn engine_migration_and_manual_override_survive_scan_and_reopen() {
         let temp = tempfile::tempdir().unwrap();
-        let path = temp.path().join("library.db");
+        let root = dunce::canonicalize(temp.path()).unwrap();
+        let path = root.join("library.db");
         let connection = Connection::open(&path).unwrap();
         for migration in [
             include_str!("../migrations/001_initial.sql"),
@@ -2114,16 +2115,18 @@ mod tests {
         ] {
             connection.execute_batch(migration).unwrap();
         }
-        connection.execute("INSERT INTO games(id,canonical_title,display_title,install_path,install_path_key,engine,version_source) VALUES('old','Old','Old',?1,'fixture','Unity','unknown')", [temp.path().to_str().unwrap()]).unwrap();
+        connection.execute("INSERT INTO games(id,canonical_title,display_title,install_path,install_path_key,engine,version_source) VALUES('old','Old','Old',?1,'fixture','Unity','unknown')", [root.to_str().unwrap()]).unwrap();
         drop(connection);
         let mut db = Database::open(&path).unwrap();
         assert_eq!(db.game("old").unwrap().engine, "Unity");
         let created_at = db.game("old").unwrap().created_at;
         let mut edit = draft(&db.game("old").unwrap());
         edit.engine = "QSP".into();
-        edit.save_paths = vec![temp.path().join("save").display().to_string()];
+        edit.save_paths = vec![root.join("save").display().to_string()];
         db.edit_game(edit).unwrap();
-        let mut candidate = analyze_directory(temp.path()).unwrap();
+        let mut candidate = analyze_directory(&root).unwrap();
+        assert_eq!(candidate.status, "ready");
+        assert_eq!(candidate.install_path, db.game("old").unwrap().install_path);
         candidate.engine = "Ren'Py".into();
         candidate.registered_id = Some("old".into());
         db.sync_mtool_defaults(std::slice::from_ref(&candidate))

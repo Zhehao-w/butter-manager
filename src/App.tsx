@@ -3578,7 +3578,8 @@ function GameDetail({
                       </BrowseButton>
                     </div>
                     <span className="muted">
-                      EXE 直接运行，其他文档用 Windows 默认应用打开。QSP 使用本地播放器启动。
+                      EXE 直接运行，BAT 请手动选择可信脚本。其他文档用 Windows 默认应用打开，QSP
+                      使用本地播放器。
                     </span>
                   </label>
                 )}

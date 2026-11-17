@@ -242,7 +242,7 @@ mod windows {
             let _ = child.kill();
             let _ = child.wait();
             return Err(Error::Validation(format!(
-                "无法建立 MTool 运行跟踪，未启动：{error}"
+                "无法建立游戏运行跟踪，未启动：{error}"
             )));
         }
         Ok((

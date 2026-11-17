@@ -1,6 +1,6 @@
 [package]
 name = "butter_manager"
-version = "1.5.4"
+version = "1.5.5"
 edition = "2021"
 rust-version = "1.90"
 description = "Local Game Library & Launcher"

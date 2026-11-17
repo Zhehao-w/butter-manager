@@ -60,11 +60,12 @@ pub fn contained_file(root: &Path, relative: &str, extension: &str) -> Result<Pa
     Ok(path)
 }
 
-/// Selected game documents stay inside the install directory. Incoming scripts/shortcuts
-/// retain the existing no-script-launch boundary; ordinary documents use their association.
+/// Manually selected launch files stay inside the install directory. BAT is the only
+/// supported script type. Ordinary documents use their association.
 pub fn launch_file(root: &Path, relative: &str) -> Result<PathBuf> {
     let root = dunce::canonicalize(root)?;
-    let path = dunce::canonicalize(root.join(relative_path(relative)?))?;
+    let relative = relative_path(relative)?;
+    let path = dunce::canonicalize(root.join(&relative))?;
     if !path.starts_with(&root) || !path.is_file() {
         return Err(Error::Validation("启动文件必须在游戏目录内".into()));
     }
@@ -73,14 +74,21 @@ pub fn launch_file(root: &Path, relative: &str) -> Result<PathBuf> {
         .and_then(|s| s.to_str())
         .unwrap_or("")
         .to_ascii_lowercase();
+    if extension == "bat"
+        && !relative
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("bat"))
+    {
+        return Err(Error::Validation("请选择 .bat 文件本身作为启动文件".into()));
+    }
     if [
-        "bat", "cmd", "ps1", "vbs", "vbe", "js", "jse", "wsf", "wsh", "hta", "lnk", "url", "reg",
-        "msi", "com", "scr", "cpl",
+        "cmd", "ps1", "vbs", "vbe", "js", "jse", "wsf", "wsh", "hta", "lnk", "url", "reg", "msi",
+        "com", "scr", "cpl",
     ]
     .contains(&extension.as_str())
     {
         return Err(Error::Validation(
-            "请选择游戏程序或游戏文档；脚本和快捷方式暂不支持作为启动文件".into(),
+            "请选择游戏程序、BAT 或游戏文档；其他脚本和快捷方式不支持".into(),
         ));
     }
     Ok(path)
@@ -169,7 +177,7 @@ mod tests {
         }
     }
     #[test]
-    fn selected_documents_accept_unicode_and_reject_escape_directories_and_scripts() {
+    fn selected_launch_files_accept_bat_and_documents_and_reject_escape_and_other_scripts() {
         let temp = tempfile::tempdir().unwrap();
         std::fs::create_dir(temp.path().join("包装")).unwrap();
         for file in [
@@ -179,7 +187,7 @@ mod tests {
             "page.htm",
             "game.EXE",
             "custom.game",
-            "download.bat",
+            "游戏 & [1].BAT",
             "download.CMD",
             "escape.lnk",
         ] {
@@ -192,16 +200,17 @@ mod tests {
             "page.htm",
             "game.EXE",
             "custom.game",
+            "游戏 & [1].BAT",
         ] {
             assert!(launch_file(temp.path(), &format!("包装/{file}")).is_ok());
         }
         for file in [
-            "包装/download.bat",
             "包装/download.CMD",
             "包装/escape.lnk",
             "包装",
             "missing.html",
             "../outside.html",
+            "../outside.bat",
             "https://example.com",
         ] {
             assert!(launch_file(temp.path(), file).is_err(), "{file}");

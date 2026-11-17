@@ -1585,7 +1585,10 @@ async fn choose_launch_file(
                 .add_filter("QSP 游戏文件", &["qsp"])
                 .set_title("选择 QSP 主游戏文件"),
             None => picker
-                .add_filter("常用启动文件", &["exe", "html", "htm", "qsp", "gam", "swf"])
+                .add_filter(
+                    "常用启动文件",
+                    &["exe", "bat", "html", "htm", "qsp", "gam", "swf"],
+                )
                 .add_filter("所有文件", &["*"])
                 .set_title("选择游戏目录内的启动文件"),
             _ => return Err("不支持的文件类型".into()),

@@ -1875,6 +1875,22 @@ fn remove_partial_copy(source: &Path, target: &Path, manifest: &[Entry], job: &J
 #[cfg(test)]
 mod tests {
     #[test]
+    fn manually_selected_bat_is_saved_as_a_direct_launcher() {
+        let f = Fixture::new();
+        let source = f.game("Synthetic batch launcher");
+        let executable = "包装/启动游戏.BAT";
+        fs::write(source.join(executable), b"@exit /b 0\r\n").unwrap();
+        let id = f.plan_with_launch(std::slice::from_ref(&source), executable);
+        assert!(f.store.get(&id).unwrap().items[0].blockers.is_empty());
+        let game_id = f.apply(&id).unwrap().remove(0);
+        let game = f.db.lock().unwrap().game(&game_id).unwrap();
+        assert_eq!(game.launch_type, "DIRECT");
+        assert_eq!(game.main_executable.as_deref(), Some(executable));
+        assert_eq!(game.working_directory, "包装");
+        assert!(Path::new(&game.install_path).join(executable).is_file());
+    }
+
+    #[test]
     fn new_import_arguments_persist_and_malformed_journals_stop_before_moving() {
         for arguments in ["-dx11 --profile \"my saves\"", "", "\"unfinished"] {
             let f = Fixture::new();
@@ -2173,6 +2189,9 @@ mod tests {
             game
         }
         fn plan(&self, sources: &[PathBuf]) -> String {
+            self.plan_with_launch(sources, "包装/游戏.html")
+        }
+        fn plan_with_launch(&self, sources: &[PathBuf], executable: &str) -> String {
             let settings = self.db.lock().unwrap().settings().unwrap();
             let candidates = sources
                 .iter()
@@ -2188,7 +2207,7 @@ mod tests {
                     target_name: leaf_name(&c.install_path),
                     version: "v1.2.3".into(),
                     engine: "HTML".into(),
-                    executable: "包装/游戏.html".into(),
+                    executable: executable.into(),
                     working_directory: None,
                     mtool_loader: None,
                     launch_arguments: None,

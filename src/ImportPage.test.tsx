@@ -103,6 +103,43 @@ beforeEach(() => {
   vi.mocked(api.cancel).mockResolvedValue();
 });
 describe('batch import flow', () => {
+  it('uses an explicitly selected batch as the direct import launcher', async () => {
+    const executable = '包装\\启动游戏.BAT';
+    vi.mocked(api.chooseLaunchFile).mockResolvedValue(executable);
+    renderNewImport();
+    await expandSettings('启动配置');
+    fireEvent.click(screen.getByRole('checkbox', { name: '公共 MTool' }));
+    fireEvent.click(screen.getByRole('button', { name: '更改启动文件' }));
+    await waitFor(() =>
+      expect(
+        (screen.getByRole('checkbox', { name: '公共 MTool' }) as HTMLInputElement).checked,
+      ).toBe(false),
+    );
+    expect(screen.queryByRole('textbox', { name: '启动参数' })).toBeNull();
+    const item = plan.items[0];
+    vi.mocked(api.importPlans).mockResolvedValue([
+      {
+        ...plan,
+        items: [
+          {
+            ...item,
+            selection: { ...item.selection, executable, cleanup_mtool: true },
+            mtool_cleanup: {
+              bundles: [],
+              targets: [{ path: '包装/启动游戏.bat', state: 'pending', error: null }],
+            },
+          },
+        ],
+      },
+    ]);
+    vi.mocked(api.job).mockResolvedValue(makeJob({ id: plan.id, kind: 'import_plan' }));
+    fireEvent.click(screen.getByRole('button', { name: '预览导入与更新（1）' }));
+    expect(api.importPlan).toHaveBeenCalledWith('analysis', [
+      expect.objectContaining({ executable, mtool: false }),
+    ]);
+    await screen.findByText(/选定的 BAT 在随包 MTool 清理范围内/);
+    await waitForEnabledButton('确认并执行');
+  });
   it.each([
     { engine: 'RPG Maker MZ', detected: true, useMtool: true },
     { engine: 'Unity', detected: true, useMtool: false },
@@ -126,7 +163,7 @@ describe('batch import flow', () => {
       await expandSettings('基本信息');
       await expandSettings('启动配置');
       expect(checkbox.checked).toBe(useMtool);
-      fireEvent.click(screen.getByRole('button', { name: '生成导入与更新计划（1）' }));
+      fireEvent.click(screen.getByRole('button', { name: '预览导入与更新（1）' }));
       await waitFor(() => expect(api.importPlan).toHaveBeenCalledOnce());
       const selection = vi.mocked(api.importPlan).mock.calls[0][1][0];
       expect(selection.mtool).toBe(useMtool);
@@ -147,7 +184,7 @@ describe('batch import flow', () => {
     ).toBe('BAKIN');
     expect(screen.getByText('公共 MTool · Bakin')).toBeTruthy();
     expect(screen.queryByRole('textbox', { name: '启动参数' })).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: '生成导入与更新计划（1）' }));
+    fireEvent.click(screen.getByRole('button', { name: '预览导入与更新（1）' }));
     await waitFor(() => expect(api.importPlan).toHaveBeenCalledOnce());
     expect(vi.mocked(api.importPlan).mock.calls[0][1][0]).toEqual(
       expect.objectContaining({ mtool_strategy: 'BAKIN', mtool: true }),
@@ -191,38 +228,11 @@ describe('batch import flow', () => {
     ).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: '恢复继承旧配置' }));
     expect(select.value).toBe('BAKIN');
-    fireEvent.click(screen.getByRole('button', { name: '生成导入与更新计划（1）' }));
+    fireEvent.click(screen.getByRole('button', { name: '预览导入与更新（1）' }));
     await waitFor(() => expect(api.importPlan).toHaveBeenCalledOnce());
     expect(vi.mocked(api.importPlan).mock.calls[0][1][0].mtool_strategy).toBeUndefined();
   });
 
-  it('shows the argument indicator from a pending update snapshot after the library config changes', async () => {
-    const old = makeGame({ id: 'snapshot-game', launch_arguments: '' });
-    vi.mocked(api.importPlans).mockResolvedValue([
-      {
-        ...plan,
-        items: [
-          {
-            ...plan.items[0],
-            selection: { ...plan.items[0].selection, existing_id: old.id },
-            update: {
-              old: { launch_arguments: '-dx11' },
-              old_version: 'v1.0',
-              saves: [],
-              required_bytes: 0,
-              quarantine: '',
-              rollback_available: false,
-            },
-          },
-        ],
-      },
-    ]);
-    render(<ImportPage {...props()} games={[old]} />);
-    fireEvent.click(await screen.findByRole('tab', { name: /待确认/ }));
-    expect((await screen.findByText('含启动参数')).getAttribute('title')).toBe('启动参数：-dx11');
-    await expandSettings('基本信息');
-    expect(screen.getByText('启动参数：-dx11')).toBeTruthy();
-  });
   it.each(['new', 'inherit', 'override', 'clear', 'reset'])(
     'passes explicit arguments and preserves update inheritance: %s',
     async (mode) => {
@@ -255,7 +265,7 @@ describe('batch import flow', () => {
       const indicator = screen.queryByText('含启动参数');
       if (mode === 'clear') expect(indicator).toBeNull();
       else expect(indicator?.getAttribute('title')).toBe(`启动参数：${input.value}`);
-      fireEvent.click(screen.getByRole('button', { name: '生成导入与更新计划（1）' }));
+      fireEvent.click(screen.getByRole('button', { name: '预览导入与更新（1）' }));
       await waitFor(() => expect(api.importPlan).toHaveBeenCalledOnce());
       expect(vi.mocked(api.importPlan).mock.calls[0][1][0].launch_arguments).toBe(
         mode === 'inherit' || mode === 'reset'
@@ -273,8 +283,7 @@ describe('batch import flow', () => {
     fireEvent.change(input, { target: { value: '"unfinished' } });
     expect(screen.getByRole('alert').textContent).toContain('双引号未闭合');
     expect(
-      (screen.getByRole('button', { name: '生成导入与更新计划（1）' }) as HTMLButtonElement)
-        .disabled,
+      (screen.getByRole('button', { name: '预览导入与更新（1）' }) as HTMLButtonElement).disabled,
     ).toBe(true);
     expect(api.importPlan).not.toHaveBeenCalled();
     fireEvent.change(input, { target: { value: '-dx11' } });
@@ -312,7 +321,7 @@ describe('batch import flow', () => {
       renderNewImport({ games: [existing] });
       const associate = await screen.findByRole('button', { name: '关联：月光庭院' });
       expect(screen.getByText('关联记忆')).toBeTruthy();
-      const generate = screen.getByRole('button', { name: '生成导入与更新计划（1）' });
+      const generate = screen.getByRole('button', { name: '预览导入与更新（1）' });
       expect((generate as HTMLButtonElement).disabled).toBe(true);
       expect(screen.queryByRole('checkbox', { name: '记住本次关联' })).toBeNull();
       fireEvent.click(associate);
@@ -364,7 +373,7 @@ describe('batch import flow', () => {
       (screen.getByRole('checkbox', { name: '记住本次关联' }) as HTMLInputElement).checked,
     ).toBe(true);
     fireEvent.click(screen.getByRole('button', { name: '改为新游戏' }));
-    fireEvent.click(screen.getByRole('button', { name: '生成导入与更新计划（1）' }));
+    fireEvent.click(screen.getByRole('button', { name: '预览导入与更新（1）' }));
     await waitFor(() => expect(api.importPlan).toHaveBeenCalled());
     const selection = vi.mocked(api.importPlan).mock.calls.at(-1)![1][0];
     expect(selection.existing_id).toBeNull();
@@ -454,7 +463,7 @@ describe('batch import flow', () => {
         name: '选择 Game v1.2',
       }) as HTMLInputElement;
       if (!selection.checked) fireEvent.click(selection);
-      fireEvent.click(screen.getByRole('button', { name: '生成导入与更新计划（1）' }));
+      fireEvent.click(screen.getByRole('button', { name: '预览导入与更新（1）' }));
       await waitFor(() => expect(api.importPlan).toHaveBeenCalledOnce());
       expect(vi.mocked(api.importPlan).mock.calls[0][1][0]).toMatchObject({
         cleanup_mtool: keepChecked,
@@ -499,58 +508,28 @@ describe('batch import flow', () => {
     await waitFor(() => expect(api.importApply).toHaveBeenCalledWith(plan.id));
   });
   it.each([
-    [['completed', 'copying'], 1, 1],
-    [['completed', 'withdrawn', 'rolled_back', 'pending', 'update_copy', 'rollback_restore'], 3, 2],
-    [['completed', 'withdrawn', 'rolled_back'], 0, 2],
-  ] as const)(
-    'counts only actionable items in a partially finished plan: %j',
-    async (states, pending, records) => {
-      vi.mocked(api.importPlans).mockResolvedValue([
-        {
-          ...plan,
-          status: 'failed',
-          items: states.map((state, index) => ({
-            ...plan.items[0],
-            selection: { ...plan.items[0].selection, source: `D:/Incoming/Game${index}` },
-            target: `E:/Library/Game${index}`,
-            state,
-            error:
-              state === 'copying' || state === 'rollback_restore' ? '写入失败，等待恢复' : null,
-          })),
-        },
-        {
-          ...plan,
-          id: 'finished',
-          status: 'completed',
-          items: [{ ...plan.items[0], state: 'completed' }],
-        },
-        {
-          ...plan,
-          id: 'withdrawn',
-          status: 'withdrawn',
-          items: [{ ...plan.items[0], state: 'withdrawn' }],
-        },
-      ]);
-      render(<ImportPage {...props()} />);
-      await waitFor(() =>
-        expect(screen.getByRole('tab', { name: /导入记录/ }).textContent).toBe(
-          `导入记录 (${records + 1})`,
-        ),
-      );
-      expect(screen.getByRole('tab', { name: /待确认/ }).textContent).toBe(
-        pending ? `待确认 (${pending})` : '待确认',
-      );
-      fireEvent.click(screen.getByRole('tab', { name: /待确认/ }));
-      if (pending > 0) {
-        expect(screen.getByRole('button', { name: '继续未完成项' })).toBeTruthy();
-        if (!states.some((state) => state.startsWith('rollback_'))) {
-          expect(screen.getByRole('button', { name: '撤回未完成项' })).toBeTruthy();
-        }
-      }
-      expect(api.importApply).not.toHaveBeenCalled();
-      expect(api.discardImportPlan).not.toHaveBeenCalled();
-    },
-  );
+    ['copying', true],
+    ['rollback_restore', false],
+  ] as const)('preserves history and recovery actions during %s', async (state, canWithdraw) => {
+    vi.mocked(api.importPlans).mockResolvedValue([
+      {
+        ...plan,
+        status: 'failed',
+        items: ['completed', 'withdrawn', 'rolled_back', state].map((itemState, index) => ({
+          ...plan.items[0],
+          selection: { ...plan.items[0].selection, source: 'D:/Incoming/Game' + index },
+          state: itemState,
+        })),
+      },
+    ]);
+    render(<ImportPage {...props()} />);
+    const recovery = await screen.findByRole('button', { name: /恢复未完成导入/ });
+    expect(screen.getByRole('tab', { name: '导入记录 (2)' })).toBeTruthy();
+    fireEvent.click(recovery);
+    const review = screen.getByRole('dialog', { name: '恢复未完成导入' });
+    const withdraw = within(review).queryByRole('button', { name: '撤回未完成项' });
+    expect(Boolean(withdraw)).toBe(canWithdraw);
+  });
   it.each([
     [
       '妹系罗盘～在无人岛的悠闲慢活～シスターズコンパス～妹たちと無人島でラブラブスローライフ',
@@ -595,7 +574,7 @@ describe('batch import flow', () => {
         (screen.getByRole('checkbox', { name: `选择 ${title}` }) as HTMLInputElement).checked,
       ).toBe(true);
       const generate = screen.getByRole('button', {
-        name: '生成导入与更新计划（1）',
+        name: '预览导入与更新（1）',
       }) as HTMLButtonElement;
       expect(generate.disabled).toBe(true);
       fireEvent.click(associate);
@@ -673,6 +652,50 @@ describe('batch import flow', () => {
     await screen.findByText('分析完成，请选择要导入或更新的游戏。');
     expect(screen.queryByRole('progressbar')).toBeNull();
   });
+  it('uses the same search field in history and starts new imports from there', async () => {
+    vi.mocked(api.chooseImportSources)
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([candidate.install_path]);
+    render(<ImportPage {...props()} />);
+    const search = screen.getByRole('textbox', { name: '导入搜索' }) as HTMLInputElement;
+    const tabs = screen.getByRole('tablist', { name: '导入分类' });
+    expect(search.closest('.search')?.nextElementSibling).toBe(tabs);
+    const history = screen.getByRole('tab', { name: '导入记录' });
+    fireEvent.click(history);
+    expect(screen.getByRole('textbox', { name: '导入搜索' })).toBe(search);
+    expect(screen.queryByRole('combobox', { name: '导入排序' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '继续导入' })).toBeNull();
+    fireEvent.change(search, { target: { value: 'Finished Game' } });
+    const add = screen.getByRole('button', { name: '添加文件夹' });
+    fireEvent.click(add);
+    await waitFor(() => expect((add as HTMLButtonElement).disabled).toBe(false));
+    expect(history.getAttribute('aria-selected')).toBe('true');
+    expect(search.value).toBe('Finished Game');
+    fireEvent.click(add);
+    await screen.findByRole('checkbox', { name: '选择 Game v1.2' });
+    expect(screen.getByRole('tab', { name: '新的导入 (1)' }).getAttribute('aria-selected')).toBe(
+      'true',
+    );
+    expect(search.value).toBe('');
+    expect(api.importApply).not.toHaveBeenCalled();
+  });
+  it('keeps confirmation actions outside the scrollable list for a long import preview', async () => {
+    const items = Array.from({ length: 60 }, (_, index) => ({
+      ...plan.items[0],
+      selection: { ...plan.items[0].selection, source: `D:/Incoming/Game ${index + 1}` },
+      target: `E:/Library/Game ${index + 1}`,
+    }));
+    vi.mocked(api.importPlans).mockResolvedValue([{ ...plan, items }]);
+    render(<ImportPage {...props()} />);
+    fireEvent.click(await screen.findByRole('button', { name: /查看导入预览/ }));
+    const review = screen.getByRole('dialog', { name: '确认导入与更新' });
+    const list = within(review).getByRole('region', { name: '导入项目列表' });
+    expect(within(list).getAllByRole('listitem')).toHaveLength(60);
+    expect(within(review).getByText('60 项')).toBeTruthy();
+    const confirm = within(review).getByRole('button', { name: '确认并执行' });
+    expect(list.contains(confirm)).toBe(false);
+    expect(api.importApply).not.toHaveBeenCalled();
+  });
   const oldGame = makeGame({
     id: 'old',
     canonical_title: 'Game',
@@ -687,7 +710,7 @@ describe('batch import flow', () => {
     aliases: ['Game'],
     save_paths: ['<GAME>/SaveData'],
   });
-  it('shows the confirmed new target folder in update plan summaries, not the old path', async () => {
+  it('shows the backend target and captured launch parameters for an update', async () => {
     const updatePlan: ImportPlan = {
       ...plan,
       items: [
@@ -698,19 +721,24 @@ describe('batch import flow', () => {
             existing_id: oldGame.id,
             target_name: '用户确认的新目录 v1.2',
           },
-          target: oldGame.install_path,
+          target: 'E:/Library/用户确认的新目录 v1.2',
+          update: {
+            old: { launch_arguments: '-dx11' },
+            old_version: 'v1.1',
+            saves: [],
+            required_bytes: 0,
+            quarantine: '',
+            rollback_available: false,
+          },
         },
       ],
     };
     vi.mocked(api.importPlans).mockResolvedValue([updatePlan]);
     render(<ImportPage {...props()} games={[oldGame]} />);
-    fireEvent.click(await screen.findByRole('tab', { name: /待确认/ }));
-    const target = await screen.findByText('用户确认的新目录 v1.2', {
-      selector: '.import-compact-facts > span',
-    });
-    expect(target.title).toBe('用户确认的新目录 v1.2');
-    expect(screen.queryByText('Game', { selector: '.import-compact-facts > span' })).toBeNull();
-    expect(api.importApply).not.toHaveBeenCalled();
+    fireEvent.click(await screen.findByRole('button', { name: /查看导入预览/ }));
+    const review = await screen.findByRole('dialog', { name: '确认导入与更新' });
+    expect(within(review).getByText('目标：E:/Library/用户确认的新目录 v1.2')).toBeTruthy();
+    expect(within(review).getByText('启动参数：-dx11')).toBeTruthy();
   });
   it('shrinks resolved issue space without resetting edits or disclosure state', async () => {
     vi.mocked(api.importMatches).mockResolvedValue({
@@ -779,7 +807,7 @@ describe('batch import flow', () => {
     expect(screen.getByText('v2.0', { selector: '.import-compact-facts > span' })).toBeTruthy();
     expect(screen.getByText('公共 MTool 启动')).toBeTruthy();
     expect(screen.queryByRole('checkbox', { name: '公共 MTool' })).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: '生成导入与更新计划（1）' }));
+    fireEvent.click(screen.getByRole('button', { name: '预览导入与更新（1）' }));
     await waitFor(() =>
       expect(api.importPlan).toHaveBeenCalledWith('analysis', [
         expect.objectContaining({
@@ -794,10 +822,6 @@ describe('batch import flow', () => {
 
   it('keeps the summary mounted and edits one settings panel at a time without losing changes', async () => {
     render(<ImportPage {...props()} />);
-    const categories = screen.getByRole('tablist', { name: '导入分类' });
-    expect(categories.closest('.import-toolbar')).toBe(
-      screen.getByRole('textbox', { name: '导入搜索' }).closest('.import-toolbar'),
-    );
     fireEvent.click(screen.getByRole('button', { name: '添加文件夹' }));
     const expand = await screen.findByRole('button', { name: '展开设置' });
     const facts = screen
@@ -932,8 +956,7 @@ describe('batch import flow', () => {
     expect(screen.getByRole('alert').textContent).toContain('请选择关联');
     expect(screen.getByText('关联待确认')).toBeTruthy();
     expect(
-      (screen.getByRole('button', { name: '生成导入与更新计划（1）' }) as HTMLButtonElement)
-        .disabled,
+      (screen.getByRole('button', { name: '预览导入与更新（1）' }) as HTMLButtonElement).disabled,
     ).toBe(true);
     await expandSettings('游戏关联');
     fireEvent.click(screen.getByRole('button', { name: '改为新游戏' }));
@@ -941,8 +964,7 @@ describe('batch import flow', () => {
     expect(screen.queryByRole('alert')).toBeNull();
     expect(screen.getByText('按新游戏导入')).toBeTruthy();
     expect(
-      (screen.getByRole('button', { name: '生成导入与更新计划（1）' }) as HTMLButtonElement)
-        .disabled,
+      (screen.getByRole('button', { name: '预览导入与更新（1）' }) as HTMLButtonElement).disabled,
     ).toBe(false);
   });
 
@@ -973,7 +995,7 @@ describe('batch import flow', () => {
     fireEvent.click(screen.getByRole('button', { name: '收起设置' }));
     expect(screen.queryByRole('alert')).toBeNull();
     expect(screen.getByText('随包 MTool：回收清理')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: '生成导入与更新计划（1）' }));
+    fireEvent.click(screen.getByRole('button', { name: '预览导入与更新（1）' }));
     await waitFor(() => expect(api.importPlan).toHaveBeenCalledOnce());
     expect(vi.mocked(api.importPlan).mock.calls[0][1][0]).toMatchObject({
       cleanup_mtool: true,
@@ -982,27 +1004,27 @@ describe('batch import flow', () => {
     });
   });
 
-  it('keeps authoritative preview blockers and errors visible after folding', async () => {
+  it('shows authoritative blockers and errors in the confirmation dialog', async () => {
     vi.mocked(api.importPlans).mockResolvedValue([
       {
         ...plan,
         items: [
           {
             ...plan.items[0],
-            blockers: ['目标目录或游戏库记录已存在；不会覆盖'],
+            selection: { ...plan.items[0].selection, existing_id: oldGame.id },
+            blockers: ['请确认已有游戏的存档范围和迁移方式'],
             error: '文件校验失败',
           },
         ],
       },
     ]);
     render(<ImportPage {...props()} />);
-    fireEvent.click(await screen.findByRole('tab', { name: /待确认/ }));
-    await screen.findByText('目标目录或游戏库记录已存在；不会覆盖');
-    fireEvent.click(screen.getByRole('button', { name: '收起设置' }));
+    fireEvent.click(await screen.findByRole('button', { name: /查看导入预览/ }));
+    await screen.findByText('请确认已有游戏的存档范围和迁移方式');
     expect(screen.getAllByRole('alert').map((alert) => alert.textContent)).toEqual(
-      expect.arrayContaining(['目标目录或游戏库记录已存在；不会覆盖', '文件校验失败']),
+      expect.arrayContaining(['请确认已有游戏的存档范围和迁移方式', '文件校验失败']),
     );
-    expect(screen.queryByRole('button', { name: '确认执行计划' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '确认并执行' })).toBeNull();
     expect(api.importApply).not.toHaveBeenCalled();
   });
 
@@ -1096,8 +1118,7 @@ describe('batch import flow', () => {
     );
     expect(screen.queryByRole('checkbox', { name: /我已确认/ })).toBeNull();
     expect(
-      (screen.getByRole('button', { name: '生成导入与更新计划（1）' }) as HTMLButtonElement)
-        .disabled,
+      (screen.getByRole('button', { name: '预览导入与更新（1）' }) as HTMLButtonElement).disabled,
     ).toBe(false);
     fireEvent.click(screen.getByRole('radio', { name: '使用新包存档' }));
     expect((screen.getByRole('radio', { name: /保留旧存档/ }) as HTMLInputElement).checked).toBe(
@@ -1111,7 +1132,7 @@ describe('batch import flow', () => {
     fireEvent.change(screen.getByRole('textbox', { name: '目标文件夹' }), {
       target: { value: '新目录 v1.2' },
     });
-    fireEvent.click(screen.getByRole('button', { name: '生成导入与更新计划（1）' }));
+    fireEvent.click(screen.getByRole('button', { name: '预览导入与更新（1）' }));
     await waitFor(() =>
       expect(api.importPlan).toHaveBeenCalledWith('analysis', [
         expect.objectContaining({
@@ -1204,7 +1225,7 @@ describe('batch import flow', () => {
         expect(working.value).toBe('manual-cwd');
         expect(loader.value).toBe('loaders/custom.dll');
       }
-      fireEvent.click(screen.getByRole('button', { name: '生成导入与更新计划（1）' }));
+      fireEvent.click(screen.getByRole('button', { name: '预览导入与更新（1）' }));
       await waitFor(() => expect(api.importPlan).toHaveBeenCalledOnce());
       const selected = vi.mocked(api.importPlan).mock.calls[0][1][0];
       expect(selected.working_directory).toBe(
@@ -1245,7 +1266,7 @@ describe('batch import flow', () => {
       expect(screen.queryByText(`${recommendation.title}（${recommendation.reason}）`)).toBeNull();
       expect(screen.queryByRole('radiogroup', { name: '存档处理' })).toBeNull();
       const generate = screen.getByRole('button', {
-        name: '生成导入与更新计划（1）',
+        name: '预览导入与更新（1）',
       }) as HTMLButtonElement;
       expect(generate.disabled).toBe(true);
       expect(screen.getByText(/还有 1 项需要确认关联/)).toBeTruthy();
@@ -1326,7 +1347,6 @@ describe('batch import flow', () => {
     ]);
     render(<ImportPage {...options} games={[oldGame]} />);
     fireEvent.click(await screen.findByRole('tab', { name: '导入记录 (3)' }));
-    expect(screen.queryByLabelText('本分类导入记录')).toBeNull();
     expect(screen.getAllByRole('article').map((row) => row.getAttribute('aria-label'))).toEqual([
       'Newest Game',
       'Second Game',
@@ -1434,12 +1454,9 @@ describe('batch import flow', () => {
     expect(screen.getByText('broken.json')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: '打开记录文件夹' }));
     await waitFor(() => expect(api.openImportRecords).toHaveBeenCalledOnce());
-    await waitFor(() =>
-      expect(screen.getByRole('tab', { name: /待确认/ }).textContent).toContain('1'),
-    );
-    fireEvent.click(screen.getByRole('tab', { name: /待确认/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /查看导入预览/ }));
     expect(
-      ((await screen.findByRole('button', { name: '确认执行计划' })) as HTMLButtonElement).disabled,
+      ((await screen.findByRole('button', { name: '确认并执行' })) as HTMLButtonElement).disabled,
     ).toBe(true);
     expect(api.importApply).not.toHaveBeenCalled();
   });
@@ -1540,7 +1557,7 @@ describe('batch import flow', () => {
       (screen.getByRole('checkbox', { name: '选择 Kept Edit' }) as HTMLInputElement).checked,
     ).toBe(false);
   });
-  it('moves drafts into pending, restores edits on return and confirms with only two buttons', async () => {
+  it('opens review directly and restores selected edits when returning to the draft', async () => {
     vi.mocked(api.discardImportPlan).mockResolvedValue(undefined);
     const options = props();
     render(<ImportPage {...options} />);
@@ -1549,56 +1566,24 @@ describe('batch import flow', () => {
     fireEvent.change(await screen.findByRole('textbox', { name: '游戏名称' }), {
       target: { value: 'Edited Game' },
     });
-    const completed = {
-      ...plan,
-      id: 'done',
-      status: 'completed',
-      items: [
-        {
-          ...plan.items[0],
-          state: 'completed',
-          selection: { ...plan.items[0].selection, title: 'Finished Game' },
-        },
-      ],
-    };
-    vi.mocked(api.importPlans).mockResolvedValue([plan, completed]);
-    vi.mocked(api.job).mockImplementation((id) =>
-      Promise.resolve(
-        id === 'plan'
-          ? {
-              ...page,
-              id,
-              kind: 'import_plan',
-              changes: [],
-              next_cursor: 0,
-              change_count: 0,
-            }
-          : page,
-      ),
+    const item = plan.items[0];
+    vi.mocked(api.importPlans).mockResolvedValue([
+      { ...plan, items: [{ ...item, selection: { ...item.selection, title: 'Edited Game' } }] },
+    ]);
+    vi.mocked(api.job).mockResolvedValue(makeJob({ id: 'plan', kind: 'import_plan' }));
+    fireEvent.click(screen.getByRole('button', { name: '预览导入与更新（1）' }));
+    const dialog = await screen.findByRole('dialog', { name: '确认导入与更新' });
+    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
+      '新的导入',
+      '导入记录',
+    ]);
+    expect(screen.getByRole('tab', { name: '新的导入' }).getAttribute('aria-selected')).toBe(
+      'true',
     );
-    fireEvent.click(screen.getByRole('button', { name: '生成导入与更新计划（1）' }));
-    await screen.findByRole('button', { name: '确认执行计划' });
-    expect(screen.getByRole('tab', { name: /待确认/ }).getAttribute('aria-selected')).toBe('true');
-    expect(document.querySelector('.toast')).toBeNull();
-    expect(screen.getByText('导入与更新计划已生成，请确认。')).toBeTruthy();
-    fireEvent.click(screen.getByRole('tab', { name: /新的导入/ }));
-    expect(screen.queryByRole('textbox', { name: '游戏名称' })).toBeNull();
-    expect(screen.queryByRole('checkbox', { name: '选择 Edited Game' })).toBeNull();
-    expect(screen.getByRole('tab', { name: '新的导入' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('tab', { name: /导入记录/ }));
-    expect(screen.getByText('Finished Game')).toBeTruthy();
-    expect(screen.queryByRole('button', { name: '确认执行计划' })).toBeNull();
-    fireEvent.click(screen.getByRole('tab', { name: /待确认/ }));
-    fireEvent.click(screen.getByRole('button', { name: '确认执行计划' }));
-    const dialog = screen.getByRole('dialog', { name: '确认导入与更新' });
-    expect(
-      within(dialog)
-        .getAllByRole('button')
-        .map((button) => button.textContent),
-    ).toEqual(['取消', '确认']);
-    fireEvent.click(within(dialog).getByRole('button', { name: '取消' }));
+    expect(within(dialog).getByText('Edited Game')).toBeTruthy();
+    expect(within(dialog).getByRole('listitem').textContent).toContain('跨盘复制');
     expect(api.importApply).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: '返回调整' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: '返回调整' }));
     await screen.findByRole('checkbox', { name: '选择 Edited Game' });
     await expandSettings();
     expect((screen.getByRole('textbox', { name: '游戏名称' }) as HTMLInputElement).value).toBe(
@@ -1662,20 +1647,15 @@ describe('batch import flow', () => {
       fireEvent.click(screen.getByRole('button', { name: '添加文件夹' }));
       const unplanned = await screen.findByRole('checkbox', { name: '选择 Other Game' });
       fireEvent.click(unplanned);
-      fireEvent.click(screen.getByRole('button', { name: '生成导入与更新计划（1）' }));
-      await screen.findByRole('button', { name: '确认执行计划' });
-      fireEvent.click(screen.getByRole('tab', { name: '新的导入 (1)' }));
+      fireEvent.click(screen.getByRole('button', { name: '预览导入与更新（1）' }));
+      const review = await screen.findByRole('dialog', { name: '确认导入与更新' });
+      expect(api.importApply).not.toHaveBeenCalled();
       expect(screen.queryByRole('checkbox', { name: '选择 Game v1.2' })).toBeNull();
       expect(
         (screen.getByRole('checkbox', { name: '选择 Other Game' }) as HTMLInputElement).checked,
       ).toBe(false);
-      fireEvent.click(screen.getByRole('tab', { name: '待确认 (1)' }));
-      fireEvent.click(screen.getByRole('button', { name: '确认执行计划' }));
-      fireEvent.click(
-        within(screen.getByRole('dialog', { name: '确认导入与更新' })).getByRole('button', {
-          name: '确认',
-        }),
-      );
+      fireEvent.click(within(review).getByRole('button', { name: '确认并执行' }));
+      await waitFor(() => expect(api.importApply).toHaveBeenCalledWith('plan', false));
       if (outcome === 'completed') {
         await waitFor(() =>
           expect(
@@ -1683,12 +1663,13 @@ describe('batch import flow', () => {
           ).toBe('true'),
         );
         expect(screen.getByRole('article', { name: 'Game v1.2' })).toBeTruthy();
-        expect(screen.getByRole('tab', { name: '待确认' })).toBeTruthy();
+        expect(screen.queryByRole('button', { name: /恢复未完成导入/ })).toBeNull();
       } else {
         await waitFor(() => expect(options.onError).toHaveBeenCalledWith('copy failed'));
-        expect(screen.getByRole('tab', { name: '待确认 (1)' }).getAttribute('aria-selected')).toBe(
-          'true',
-        );
+        const recovery = await screen.findByRole('dialog', { name: '恢复未完成导入' });
+        expect(within(recovery).getByText('copy failed')).toBeTruthy();
+        fireEvent.click(within(recovery).getByRole('button', { name: '关闭' }));
+        expect(screen.getByRole('button', { name: /恢复未完成导入/ })).toBeTruthy();
         expect(screen.getByRole('tab', { name: '导入记录' })).toBeTruthy();
       }
       fireEvent.click(screen.getByRole('tab', { name: '新的导入 (1)' }));
@@ -1704,7 +1685,7 @@ describe('batch import flow', () => {
     render(<ImportPage {...options} />);
     fireEvent.click(screen.getByRole('button', { name: '添加文件夹' }));
     await screen.findByRole('checkbox', { name: '选择 Game v1.2' });
-    fireEvent.click(screen.getByRole('button', { name: '生成导入与更新计划（1）' }));
+    fireEvent.click(screen.getByRole('button', { name: '预览导入与更新（1）' }));
     await waitFor(() => expect(options.onError).toHaveBeenCalledWith('Error: plan failed'));
     expect(
       (screen.getByRole('checkbox', { name: '选择 Game v1.2' }) as HTMLInputElement).checked,
@@ -1712,7 +1693,7 @@ describe('batch import flow', () => {
     expect(screen.getByRole('tab', { name: '新的导入 (1)' }).getAttribute('aria-selected')).toBe(
       'true',
     );
-    expect(screen.getByRole('tab', { name: '待确认' })).toBeTruthy();
+    expect(screen.queryByRole('dialog', { name: '确认导入与更新' })).toBeNull();
   });
   it('keeps ambiguous QSP files blank and submits the explicit choice without a player', async () => {
     const qsp = {
@@ -1735,14 +1716,13 @@ describe('batch import flow', () => {
     expect(screen.queryByLabelText('公共 MTool')).toBeNull();
     expect(screen.queryByRole('textbox', { name: '启动参数' })).toBeNull();
     expect(
-      (screen.getByRole('button', { name: '生成导入与更新计划（1）' }) as HTMLButtonElement)
-        .disabled,
+      (screen.getByRole('button', { name: '预览导入与更新（1）' }) as HTMLButtonElement).disabled,
     ).toBe(true);
     expect(api.importPlan).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: '更改 QSP 文件…' }));
     await waitFor(() => expect((file as HTMLInputElement).value).toBe('mod.qsp'));
     expect(api.choosePlayerFile).toHaveBeenCalledWith(candidate.install_path, 'qsp');
-    fireEvent.click(screen.getByRole('button', { name: '生成导入与更新计划（1）' }));
+    fireEvent.click(screen.getByRole('button', { name: '预览导入与更新（1）' }));
     await waitFor(() =>
       expect(api.importPlan).toHaveBeenCalledWith('analysis', [
         expect.objectContaining({
@@ -1800,35 +1780,12 @@ describe('batch import flow', () => {
     expect(screen.getByRole('textbox', { name: '目标文件夹' }).getAttribute('value')).toBe(
       'New name',
     );
-    fireEvent.click(screen.getByRole('button', { name: '生成导入与更新计划（1）' }));
+    fireEvent.click(screen.getByRole('button', { name: '预览导入与更新（1）' }));
     await waitFor(() =>
       expect(api.importPlan).toHaveBeenCalledWith('analysis', [
         expect.objectContaining({ target_name: 'New name', source: candidate.install_path }),
       ]),
     );
-    expect(api.importApply).not.toHaveBeenCalled();
-  });
-  it('requires popup confirmation before moving or resuming a reviewed plan', async () => {
-    vi.mocked(api.importPlans).mockResolvedValue([{ ...plan, status: 'interrupted' }]);
-    const options = props();
-    render(<ImportPage {...options} />);
-    fireEvent.click(await screen.findByRole('button', { name: '继续未完成项' }));
-    expect(api.importApply).not.toHaveBeenCalled();
-    const dialog = screen.getByRole('dialog', { name: '确认导入与更新' });
-    fireEvent.click(within(dialog).getByRole('button', { name: '确认' }));
-    await waitFor(() => expect(api.importApply).toHaveBeenCalledWith('plan', false));
-  });
-  it('blocks apply for an update whose save review is incomplete', async () => {
-    vi.mocked(api.importPlans).mockResolvedValue([
-      {
-        ...plan,
-        status: 'failed',
-        items: [{ ...plan.items[0], blockers: ['请确认已有游戏的存档范围和迁移方式'] }],
-      },
-    ]);
-    render(<ImportPage {...props()} />);
-    await screen.findByText('请确认已有游戏的存档范围和迁移方式');
-    expect(screen.queryByRole('button', { name: '继续未完成项' })).toBeNull();
     expect(api.importApply).not.toHaveBeenCalled();
   });
   it('keeps matched existing games checked and allows explicit new-game override', async () => {
@@ -1849,7 +1806,7 @@ describe('batch import flow', () => {
     const checkbox = screen.getByRole('checkbox', { name: '选择 Game v1.2' }) as HTMLInputElement;
     expect(checkbox.checked).toBe(true);
     fireEvent.click(screen.getByRole('button', { name: '改为新游戏' }));
-    fireEvent.click(screen.getByRole('button', { name: '生成导入与更新计划（1）' }));
+    fireEvent.click(screen.getByRole('button', { name: '预览导入与更新（1）' }));
     await waitFor(() =>
       expect(api.importPlan).toHaveBeenCalledWith('analysis', [
         expect.objectContaining({ existing_id: null }),
@@ -1885,9 +1842,12 @@ describe('batch import flow', () => {
       remaining_seconds: null,
     });
     render(<ImportPage {...props()} />);
-    fireEvent.click(await screen.findByRole('button', { name: '继续未完成项' }));
-    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '确认' }));
+    fireEvent.click(await screen.findByRole('button', { name: /恢复未完成导入/ }));
+    const review = screen.getByRole('dialog', { name: '恢复未完成导入' });
+    expect(api.importApply).not.toHaveBeenCalled();
+    fireEvent.click(within(review).getByRole('button', { name: '继续未完成项' }));
     await screen.findByText('正在导入的游戏');
+    expect(api.importApply).toHaveBeenCalledWith('plan', false);
     expect(
       screen.getByRole('progressbar', { name: '导入与更新整体进度' }).getAttribute('aria-valuenow'),
     ).toBeNull();
@@ -1944,8 +1904,8 @@ describe('update engine defaults', () => {
         fireEvent.change(screen.getByRole('combobox', { name: '引擎' }), {
           target: { value: 'Unknown' },
         });
-      await waitForEnabledButton('生成导入与更新计划（1）');
-      fireEvent.click(screen.getByRole('button', { name: '生成导入与更新计划（1）' }));
+      await waitForEnabledButton('预览导入与更新（1）');
+      fireEvent.click(screen.getByRole('button', { name: '预览导入与更新（1）' }));
       await waitFor(() => expect(api.importPlan).toHaveBeenCalledOnce());
       const selection = vi.mocked(api.importPlan).mock.calls[0][1][0];
       expect(selection.engine).toBe(explicitUnknown ? 'Unknown' : 'Unreal Engine');

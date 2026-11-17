@@ -302,8 +302,8 @@ describe('library status and preferences', () => {
     expect(renderHook(() => useSavedSort('scan', 'name-asc', allowed)).result.current[0]).toBe(
       'name-asc',
     );
-    localStorage.setItem('butter-manager.sort.import', 'invalid');
-    expect(renderHook(() => useSavedSort('import', 'name-asc', allowed)).result.current[0]).toBe(
+    localStorage.setItem('butter-manager.sort.scan', 'invalid');
+    expect(renderHook(() => useSavedSort('scan', 'name-asc', allowed)).result.current[0]).toBe(
       'name-asc',
     );
   });

@@ -74,6 +74,15 @@ fn launch_observed(
                 if let Some(running) = running {
                     running.observe(&game.id, crate::runtime::ProcessLease::from_child(child)?)?;
                 }
+            } else if file
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("bat"))
+            {
+                // Rust's Windows Command handles the batch file path and disables cmd AutoRun.
+                // The EXE argument field is never passed to the command interpreter.
+                let mut command = Command::new(file);
+                command.current_dir(working);
+                spawn_game_tree(&game.id, &mut command, running, 0)?;
             } else {
                 if file
                     .extension()
@@ -115,7 +124,7 @@ fn launch_observed(
     }
 }
 
-fn spawn_mtool(
+fn spawn_game_tree(
     id: &str,
     command: &mut Command,
     running: Option<&crate::runtime::RunningGames>,
@@ -145,7 +154,7 @@ fn launch_mtool(
     };
     // Observe the injector's tree before waiting: a failed launch can leave a live game.
     // The shared runtime is independent and must not keep this game's mutation guard active.
-    let status = spawn_mtool(id, injector, running, 0x0800_0000)?.wait()?;
+    let status = spawn_game_tree(id, injector, running, 0x0800_0000)?.wait()?;
     if !status.success() {
         return Err(Error::Validation(format!("{label} 退出状态：{status}")));
     }
@@ -479,6 +488,34 @@ mod tests {
         assert!(directory_path(&file).is_err());
         assert!(directory_path(&temp.path().join("missing")).is_err());
         assert_eq!(std::fs::read(&file).unwrap(), b"never executed");
+    }
+    #[cfg(windows)]
+    #[test]
+    fn launches_selected_batch_from_configured_directory_without_exe_arguments() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let working = root.join("工作 目录");
+        std::fs::create_dir(&working).unwrap();
+        let batch = "游戏 & [1].BAT";
+        let marker = working.join("launched.txt");
+        std::fs::write(
+            root.join(batch),
+            b"@echo off\r\nif not \"%~1\"==\"\" exit /b 1\r\n>launched.txt echo launched\r\n",
+        )
+        .unwrap();
+        let mut game = crate::maintenance::tests::fixture_game(root);
+        game.main_executable = Some(batch.into());
+        game.working_directory = "工作 目录".into();
+        game.launch_arguments = "-dx11".into();
+        let running = crate::runtime::RunningGames::default();
+        launch_with_runtime(&game, &Settings::default(), &running, || Ok(())).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while std::time::Instant::now() < deadline
+            && !std::fs::read_to_string(&marker).is_ok_and(|value| value.trim() == "launched")
+        {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert_eq!(std::fs::read_to_string(marker).unwrap().trim(), "launched");
     }
     #[cfg(windows)]
     #[test]

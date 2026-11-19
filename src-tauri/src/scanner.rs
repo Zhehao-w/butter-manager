@@ -189,6 +189,7 @@ pub(crate) fn analyze_bat(path: &Path, relative: String) -> BatAnalysis {
 pub fn pending_candidate(path: &Path) -> Result<ScanCandidate> {
     Ok(ScanCandidate {
         recommended_launch: None,
+        save_hints: vec![],
         install_path: path_text(path)?,
         directory_modified_ms: fs::symlink_metadata(path)
             .ok()
@@ -284,7 +285,7 @@ pub fn analyze_controlled(
     stop: &dyn Fn() -> bool,
     progress: &dyn Fn(&Path),
 ) -> Result<ScanCandidate> {
-    analyze_inner(path, deep, true, None, stop, progress)
+    analyze_inner(path, deep, ScanMode::Install, None, stop, progress)
 }
 
 pub fn analyze_selected_controlled(
@@ -293,7 +294,7 @@ pub fn analyze_selected_controlled(
     stop: &dyn Fn() -> bool,
     progress: &dyn Fn(&Path),
 ) -> Result<ScanCandidate> {
-    analyze_inner(path, false, true, executable, stop, progress)
+    analyze_inner(path, false, ScanMode::Install, executable, stop, progress)
 }
 
 /// Recheck an existing game's saved launcher instead of trusting a moved/misidentified path.
@@ -303,18 +304,13 @@ pub fn analyze_game_controlled(
     progress: &dyn Fn(&Path),
 ) -> Result<ScanCandidate> {
     let root = Path::new(&game.install_path);
-    let saved = if game.launch_type == "MTOOL" {
-        game.mtool_target_exe
-            .as_deref()
-            .or(game.main_executable.as_deref())
-    } else {
-        game.main_executable.as_deref()
-    };
+    let saved = game.game_executable();
     let preferred = saved.filter(|value| {
         crate::paths::launch_file(root, value).is_ok()
             && !helper(value.replace('\\', "/").rsplit('/').next().unwrap_or(value))
     });
-    let mut candidate = analyze_selected_controlled(root, preferred, stop, progress)?;
+    let mut candidate =
+        analyze_inner(root, false, ScanMode::GameDetail, preferred, stop, progress)?;
     if let Some(index) = preferred.and_then(|file| {
         candidate.executables.iter().position(|exe| {
             exe.relative_path
@@ -404,17 +400,37 @@ pub fn analyze_game_controlled(
             });
         }
     }
-    if preferred.is_some() && candidate.status == "ready" && !stop() {
-        candidate.save_paths = crate::save_detection::detect_for_engine(
-            root,
-            &game.working_directory,
-            if game.engine == "Unknown" {
-                &candidate.engine
-            } else {
-                &game.engine
-            },
-            preferred,
-        );
+    if !stop() {
+        let selected = preferred.filter(|_| candidate.status == "ready");
+        let work = selected.map_or(candidate.working_directory.as_str(), |_| {
+            game.working_directory.as_str()
+        });
+        let engine = if selected.is_some() && game.engine != "Unknown" {
+            &game.engine
+        } else {
+            &candidate.engine
+        };
+        let exe = selected
+            .or_else(|| {
+                candidate
+                    .recommended_launch
+                    .as_ref()?
+                    .main_executable
+                    .as_deref()
+            })
+            .or_else(|| {
+                candidate
+                    .executables
+                    .first()
+                    .map(|e| e.relative_path.as_str())
+            });
+        if candidate.status == "ready" {
+            (candidate.save_paths, candidate.save_hints) =
+                crate::save_detection::detect_detail(root, work, engine, exe, stop);
+        } else {
+            candidate.save_paths =
+                crate::save_detection::detect_for_engine(root, work, engine, exe);
+        }
     }
     Ok(candidate)
 }
@@ -424,17 +440,25 @@ pub fn analyze_quick_controlled(
     stop: &dyn Fn() -> bool,
     progress: &dyn Fn(&Path),
 ) -> Result<ScanCandidate> {
-    analyze_inner(path, false, false, None, stop, progress)
+    analyze_inner(path, false, ScanMode::Quick, None, stop, progress)
+}
+
+#[derive(PartialEq, Eq)]
+enum ScanMode {
+    Quick,
+    Install,
+    GameDetail,
 }
 
 fn analyze_inner(
     path: &Path,
     deep: bool,
-    inspect_files: bool,
+    mode: ScanMode,
     preferred_executable: Option<&str>,
     stop: &dyn Fn() -> bool,
     progress: &dyn Fn(&Path),
 ) -> Result<ScanCandidate> {
+    let inspect_files = mode != ScanMode::Quick;
     let started = Instant::now();
     if is_link(&fs::symlink_metadata(path)?) {
         return Err(Error::Validation("游戏目录是链接，请选择实际目录".into()));
@@ -893,7 +917,7 @@ fn analyze_inner(
         }
         candidate.working_directory = ".".into();
     }
-    if !stop() {
+    if mode != ScanMode::GameDetail && !stop() {
         candidate.save_paths = crate::save_detection::detect_for_engine(
             &root,
             &candidate.working_directory,

@@ -31,6 +31,21 @@ fn catalog_reports_detected_locations_without_associating_or_replacing_paths() {
     assert!(catalog.slots.is_empty());
     assert_eq!(game.save_paths, vec!["<GAME>/manual"]);
 }
+#[test]
+fn automatic_unity_editor_lookup_follows_the_mtool_game_target() {
+    let temp = tempfile::tempdir().unwrap();
+    fs::create_dir_all(temp.path().join("Game_Data/Saves")).unwrap();
+    let mut g = game(temp.path());
+    g.engine = "Unity".into();
+    g.launch_type = "MTOOL".into();
+    g.main_executable = Some("Wrapper.exe".into());
+    g.mtool_target_exe = Some("Game.exe".into());
+    g.save_paths.clear();
+    assert_eq!(
+        list(&g).unwrap().detected_locations,
+        ["<GAME>/Game_Data/Saves"]
+    );
+}
 fn fixtures() -> Value {
     serde_json::from_str(include_str!("fixtures/renpy.json")).unwrap()
 }

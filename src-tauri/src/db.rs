@@ -725,7 +725,7 @@ impl Database {
             // The scan's default launch candidate may not match the user's selected EXE.
             let (work, engine, executable): (String, String, Option<String>) = transaction
                 .query_row(
-                    "SELECT working_directory,engine,main_executable FROM games WHERE id=?1",
+                    "SELECT working_directory,engine,CASE WHEN launch_type='MTOOL' THEN COALESCE(mtool_target_exe, main_executable) ELSE main_executable END FROM games WHERE id=?1",
                     [&game.id],
                     |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
                 )?;
@@ -1108,6 +1108,37 @@ impl Database {
         Ok(())
     }
 
+    pub fn add_save_location(&mut self, id: &str, path: &str) -> Result<Game> {
+        let mut game = self.game(id)?;
+        let path = path.trim();
+        let key = |s: &str| {
+            s.trim()
+                .replace('\\', "/")
+                .trim_end_matches('/')
+                .to_lowercase()
+        };
+        let wanted = key(path);
+        if game.save_paths.iter().any(|p| key(p) == wanted) {
+            return Ok(game);
+        }
+        let target = crate::deletion::resolve_save(&game, path)?;
+        if !target.exists()
+            || target.parent().is_none()
+            || Path::new(&game.install_path).starts_with(&target)
+        {
+            return Err(Error::Validation("候选位置已失效，请重新查找存档".into()));
+        }
+        let tx = self.connection.transaction()?;
+        tx.execute(
+            "INSERT INTO save_paths(id,game_id,path) VALUES(?1,?2,?3)",
+            params![Uuid::new_v4().to_string(), id, path],
+        )?;
+        game.updated_at = tx.query_row("UPDATE games SET updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?1 RETURNING updated_at", [id], |r| r.get(0))?;
+        tx.commit()?;
+        game.save_paths.push(path.into());
+        Ok(game)
+    }
+
     pub fn edit_game(&mut self, mut edit: GameEdit) -> Result<Game> {
         let existing = self.game(&edit.id)?;
         let engine = edit.engine.trim();
@@ -1289,6 +1320,32 @@ mod tests {
 
     fn insert_memory_game(db: &Database, id: &str) {
         db.connection.execute("INSERT INTO games(id,canonical_title,display_title,install_path,install_path_key) VALUES(?1,'月光庭院','月光庭院',?1,?1)", [id]).unwrap();
+    }
+
+    #[test]
+    fn adding_a_found_location_persists_only_that_path_and_is_idempotent() {
+        let temp = tempfile::tempdir().unwrap();
+        let folder = temp.path().join("fixture");
+        std::fs::create_dir(&folder).unwrap();
+        std::fs::write(folder.join("game.exe"), b"fixture").unwrap();
+        let path = temp.path().join("db.sqlite");
+        let mut db = Database::open(&path).unwrap();
+        let id = db
+            .register(&[analyze_directory(&folder).unwrap()])
+            .unwrap()
+            .remove(0);
+        std::fs::create_dir(folder.join("Slots")).unwrap();
+        let before = db.game(&id).unwrap();
+        let first = db.add_save_location(&id, "<GAME>/Slots").unwrap();
+        let again = db.add_save_location(&id, r"<GAME>\Slots").unwrap();
+        assert_eq!(first.updated_at, again.updated_at);
+        assert_eq!(first.display_title, before.display_title);
+        assert!(db.add_save_location(&id, "<GAME>/Missing").is_err());
+        drop(db);
+        assert_eq!(
+            Database::open(&path).unwrap().game(&id).unwrap().save_paths,
+            ["<GAME>/Slots"]
+        );
     }
 
     #[test]

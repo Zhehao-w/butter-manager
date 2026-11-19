@@ -65,6 +65,36 @@ async function openDetail() {
   return screen.getByRole('dialog', { name: game.display_title });
 }
 
+it('quick search saves just the chosen location immediately and keeps other drafts editable', async () => {
+  const slot = '<GAME>/Save';
+  vi.mocked(api.games).mockResolvedValue([game]);
+  vi.mocked(api.findSaveLocations).mockResolvedValue([
+    { path: slot, reason: '发现槽位', files: ['slot01.sav'], can_add: true },
+  ]);
+  vi.mocked(api.addSaveLocation)
+    .mockRejectedValueOnce(new Error('位置已失效'))
+    .mockResolvedValue({ ...game, save_paths: [slot] });
+  const detail = await openDetail();
+  showDetailTab('存档位置');
+  fireEvent.click(within(detail).getByRole('button', { name: '快速查找存档' }));
+  const add = await within(detail).findByRole('button', { name: '加入位置 ' + slot });
+  const paths = within(detail).getByRole('textbox', { name: /存档位置/ }) as HTMLTextAreaElement;
+  fireEvent.change(paths, { target: { value: 'D:/草稿' } });
+  fireEvent.click(add);
+  await within(detail).findByText(/位置已失效/);
+  expect(paths.value).toBe('D:/草稿');
+  fireEvent.click(add);
+  await within(detail).findByRole('button', { name: '已加入 ' + slot });
+  expect(api.addSaveLocation).toHaveBeenLastCalledWith(game.id, slot);
+  expect(paths.value).toBe('D:/草稿\n' + slot);
+  expect(api.saveGame).not.toHaveBeenCalled();
+  expect(api.startGameAnalysis).not.toHaveBeenCalled();
+  fireEvent.change(paths, { target: { value: slot } });
+  expect(
+    (within(detail).getByRole('button', { name: '保存资料' }) as HTMLButtonElement).disabled,
+  ).toBe(true);
+});
+
 describe('library organization', () => {
   it('keeps manual organization changes when a completed scan synchronization returns later', async () => {
     const tagged = { ...game, tags: [{ id: 'tag', name: '汉化' }] };

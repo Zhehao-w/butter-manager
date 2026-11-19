@@ -12,6 +12,7 @@ use tauri::{Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
 struct AppState {
+    save_watch: Arc<Mutex<Option<crate::save_watch::Session>>>,
     #[cfg(windows)]
     _data_guard: crate::data_directory::InstanceGuard,
     db: Arc<Mutex<Database>>,
@@ -105,11 +106,10 @@ async fn apply_library_relocation(
             .remove(&token)
             .ok_or("迁移预览已失效，请重新预览")?;
         crate::library_relocation::ensure_migratable(&plan).map_err(|e| e.to_string())?;
-        let paths = plan
-            .view
-            .items
-            .iter()
-            .filter(|item| item.reason.is_none())
+        let eligible = plan.view.items.iter().filter(|item| item.reason.is_none());
+        let ids: std::collections::HashSet<_> =
+            eligible.clone().map(|item| item.id.as_str()).collect();
+        let paths = eligible
             .flat_map(|item| {
                 [
                     Some(std::path::PathBuf::from(&item.old_path)),
@@ -118,12 +118,11 @@ async fn apply_library_relocation(
             })
             .flatten()
             .collect::<Vec<_>>();
-        for game in plan.games.iter().filter(|game| {
-            plan.view
-                .items
-                .iter()
-                .any(|item| item.id == game.id && item.reason.is_none())
-        }) {
+        for game in plan
+            .games
+            .iter()
+            .filter(|game| ids.contains(game.id.as_str()))
+        {
             running
                 .ensure_tracked_idle(game)
                 .map_err(|e| e.to_string())?;
@@ -1169,17 +1168,24 @@ fn start_registration(
     });
     Ok(id)
 }
-#[tauri::command]
-fn save_game(state: State<'_, AppState>, edit: GameEdit) -> CommandResult<Game> {
+fn with_game_edit<T>(
+    state: &AppState,
+    id: &str,
+    write: impl FnOnce(&mut Database) -> crate::domain::Result<T>,
+) -> CommandResult<T> {
     let _gate = state.activity.lock().map_err(|_| "操作锁不可用")?;
     if state.tasks.active()
         || state
             .imports
-            .blocks_game(&with_db(&state, |db| db.game(&edit.id))?)
+            .blocks_game(&with_db(state, |db| db.game(id))?)
     {
         return Err("请先完成或恢复当前文件操作，再修改游戏资料".into());
     }
-    with_db(&state, |db| db.edit_game(edit))
+    with_db(state, write)
+}
+#[tauri::command]
+fn save_game(state: State<'_, AppState>, edit: GameEdit) -> CommandResult<Game> {
+    with_game_edit(&state, &edit.id.clone(), |db| db.edit_game(edit))
 }
 #[tauri::command]
 fn start_game_analysis(state: State<'_, AppState>, id: String) -> CommandResult<String> {
@@ -1496,6 +1502,101 @@ fn release_external_saves(state: State<'_, AppState>, game_id: String) -> Comman
         .map_err(|e| e.to_string())
 }
 #[tauri::command]
+async fn add_save_location(app: tauri::AppHandle, id: String, path: String) -> CommandResult<Game> {
+    tauri::async_runtime::spawn_blocking(move || {
+        with_game_edit(&app.state::<AppState>(), &id, |db| {
+            db.add_save_location(&id, &path)
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn find_save_locations(
+    state: State<'_, AppState>,
+    id: String,
+) -> CommandResult<Vec<crate::save_discovery::SaveHint>> {
+    let game = with_db(&state, |db| db.game(&id))?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let (paths, hints) = if game.engine == "Unknown" {
+            let candidate = scanner::analyze_game_controlled(&game, &|| false, &|_| {})
+                .map_err(|e| e.to_string())?;
+            (candidate.save_paths, candidate.save_hints)
+        } else {
+            crate::save_detection::detect_detail(
+                Path::new(&game.install_path),
+                &game.working_directory,
+                &game.engine,
+                game.game_executable(),
+                &|| false,
+            )
+        };
+        let mut results: Vec<_> = paths
+            .into_iter()
+            .map(|path| crate::save_discovery::SaveHint {
+                path,
+                reason: "匹配游戏的存档目录或槽位规则".into(),
+                files: vec![],
+                can_add: true,
+            })
+            .collect();
+        results.extend(hints);
+        Ok(results)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn start_save_watch(
+    state: State<'_, AppState>,
+    id: String,
+) -> CommandResult<crate::save_watch::Started> {
+    let game = with_db(&state, |db| db.game(&id))?;
+    let sessions = state.save_watch.clone();
+    let excluded = state.data.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut slot = sessions.lock().map_err(|_| "文件监测不可用")?;
+        if slot.as_ref().is_some_and(|s| !s.expired()) {
+            return Err("已有存档定位正在进行".into());
+        }
+        let (session, started) =
+            crate::save_watch::Session::start(Path::new(&game.install_path), &excluded)?;
+        *slot = Some(session);
+        Ok(started)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+async fn finish_save_watch(
+    state: State<'_, AppState>,
+    token: String,
+    cancel: bool,
+) -> CommandResult<Option<crate::save_watch::WatchReport>> {
+    let sessions = state.save_watch.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut slot = sessions.lock().map_err(|_| "文件监测不可用")?;
+        if !slot.as_ref().is_some_and(|s| s.matches(&token)) {
+            return if cancel {
+                Ok(None)
+            } else {
+                Err("本次定位已结束，请重新开始。".into())
+            };
+        }
+        let session = slot.take().ok_or("本次定位已结束")?;
+        drop(slot);
+        if cancel {
+            Ok(None)
+        } else {
+            session.report().map(Some)
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+#[tauri::command]
 async fn open_save_folder(
     state: State<'_, AppState>,
     id: String,
@@ -1650,6 +1751,7 @@ fn initialize(app: &tauri::AppHandle) -> std::result::Result<(), Box<dyn std::er
     let mut database = Database::open(&data.join(crate::data_directory::DATABASE))?;
     crate::maintenance::recover_rename(&mut database, &data)?;
     app.manage(AppState {
+        save_watch: Default::default(),
         #[cfg(windows)]
         _data_guard: data_guard,
         db: Arc::new(Mutex::new(database)),
@@ -1775,6 +1877,10 @@ pub fn run() {
             open_game_folder,
             open_directory,
             open_save_folder,
+            start_save_watch,
+            find_save_locations,
+            add_save_location,
+            finish_save_watch,
             list_editable_saves,
             read_editable_save,
             apply_save_edits,

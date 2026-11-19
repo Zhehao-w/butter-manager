@@ -195,7 +195,9 @@ fn protected(
             )));
         }
     }
-    for key in [
+    let local_low =
+        std::env::var_os("USERPROFILE").map(|p| PathBuf::from(p).join("AppData/LocalLow"));
+    for root in [
         "USERPROFILE",
         "APPDATA",
         "LOCALAPPDATA",
@@ -203,11 +205,14 @@ fn protected(
         "ProgramFiles",
         "ProgramFiles(x86)",
         "ProgramData",
-    ] {
-        if let Ok(root) = std::env::var(key) {
-            if absolute_path(Path::new(&root)).is_ok_and(|root| root.starts_with(path)) {
-                return Err(fail("不能删除用户资料或系统目录"));
-            }
+    ]
+    .into_iter()
+    .filter_map(std::env::var_os)
+    .map(PathBuf::from)
+    .chain(local_low)
+    {
+        if absolute_path(&root).is_ok_and(|root| root.starts_with(path)) {
+            return Err(fail("不能删除用户资料或系统目录"));
         }
     }
     for other in games.iter().filter(|g| g.id != id) {

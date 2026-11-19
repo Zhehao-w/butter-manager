@@ -47,22 +47,26 @@ pub fn detect(root: &Path, working_directory: &str) -> Vec<String> {
     let Ok(root) = dunce::canonicalize(root) else {
         return vec![];
     };
+    local_saves(&root, working_directory)
+}
+
+fn local_saves(root: &Path, working_directory: &str) -> Vec<String> {
     let mut bases = vec![PathBuf::new()];
     if working_directory != "." {
         if let Ok(relative) = relative_path(working_directory) {
-            if local_directory(&root, &relative) {
+            if local_directory(root, &relative) {
                 bases.push(relative);
             }
         }
     }
     let mut found = vec![];
     for base in bases {
-        let children = visible_directories(&root, &base);
+        let children = visible_directories(root, &base);
         for (name, relative) in children {
             if save_name(&name) {
                 found.push(relative);
             } else if ["www", "game"].contains(&name.as_str()) {
-                for (name, relative) in visible_directories(&root, &relative) {
+                for (name, relative) in visible_directories(root, &relative) {
                     if save_name(&name) {
                         found.push(relative);
                     }
@@ -136,6 +140,46 @@ pub fn detect_for_engine(
     })
 }
 
+pub(crate) struct UnityLayout {
+    pub data: PathBuf,
+    pub stem: String,
+    pub identity: Option<(String, String)>,
+}
+
+impl UnityLayout {
+    fn read(root: &Path, executable: Option<&str>) -> Option<Self> {
+        let exe = relative_path(executable?).ok()?;
+        if !exe.extension()?.eq_ignore_ascii_case("exe") {
+            return None;
+        }
+        let stem = exe.file_stem()?.to_str()?.to_owned();
+        let data = exe.with_file_name(format!("{stem}_Data"));
+        if !local_directory(root, &data) {
+            return None;
+        }
+        let identity = path_text(&data.join("app.info"))
+            .ok()
+            .and_then(|path| small_text(root, &path))
+            .and_then(|text| {
+                let mut lines = text.trim_start_matches('\u{feff}').lines();
+                let (company, product) = (lines.next()?, lines.next()?);
+                let valid = |s: &str| {
+                    !s.contains(['/', '\\'])
+                        && identity_path(s).is_some_and(|p| p.components().count() == 1)
+                };
+                (lines.next().is_none()
+                    && (company.eq_ignore_ascii_case("DefaultCompany") || valid(company))
+                    && valid(product))
+                .then(|| (company.to_owned(), product.to_owned()))
+            });
+        Some(Self {
+            data,
+            stem,
+            identity,
+        })
+    }
+}
+
 fn safe_file(root: &Path, relative: &Path) -> bool {
     let parent = relative.parent().unwrap_or(Path::new(""));
     local_directory(root, parent)
@@ -191,7 +235,7 @@ fn literal(value: &str) -> Option<String> {
     }
     Some(result.into())
 }
-fn identity_path(name: &str) -> Option<PathBuf> {
+pub(crate) fn identity_path(name: &str) -> Option<PathBuf> {
     if name.contains(['%', ':', '*', '?', '\0', '<', '>', '|', '"'])
         || name.chars().any(char::is_control)
     {
@@ -307,26 +351,15 @@ pub(crate) fn matching_identity(root: &Path, work: &str, executable: Option<&str
             }
         }
     }
-    if let Some(executable) = executable.and_then(|path| relative_path(path).ok()) {
-        if let Some(stem) = executable.file_stem() {
-            let info = executable
-                .parent()
-                .unwrap_or(Path::new(""))
-                .join(format!("{}_Data/app.info", stem.to_string_lossy()));
-            if let Some(text) = path_text(&info)
-                .ok()
-                .and_then(|path| small_text(&root, &path))
-            {
-                let lines: Vec<_> = text.trim_start_matches('\u{feff}').lines().collect();
-                if lines.len() == 2 && lines.iter().all(|value| identity_path(value).is_some()) {
-                    identities.push(format!(
-                        "unity:{}:{}",
-                        crate::paths::normalize_alias(lines[0]),
-                        crate::paths::normalize_alias(lines[1])
-                    ));
-                }
-            }
-        }
+    if let Some((company, product)) = UnityLayout::read(&root, executable)
+        .and_then(|layout| layout.identity)
+        .filter(|(company, _)| !company.eq_ignore_ascii_case("DefaultCompany"))
+    {
+        identities.push(format!(
+            "unity:{}:{}",
+            crate::paths::normalize_alias(&company),
+            crate::paths::normalize_alias(&product)
+        ));
     }
     identities.sort();
     identities.dedup();
@@ -387,10 +420,48 @@ fn detect_with_environment(
     executable: Option<&str>,
     environment: &dyn Fn(&str) -> Option<PathBuf>,
 ) -> Vec<String> {
-    let mut result = detect(root, work);
+    search(root, work, engine, executable, environment, None)
+}
+
+struct DetailSearch<'a> {
+    stop: &'a dyn Fn() -> bool,
+    hints: &'a mut Vec<crate::save_discovery::SaveHint>,
+}
+
+pub(crate) fn detect_detail(
+    root: &Path,
+    work: &str,
+    engine: &str,
+    exe: Option<&str>,
+    stop: &dyn Fn() -> bool,
+) -> (Vec<String>, Vec<crate::save_discovery::SaveHint>) {
+    let mut hints = vec![];
+    let paths = search(
+        root,
+        work,
+        engine,
+        exe,
+        &|name| std::env::var_os(name).map(PathBuf::from),
+        Some(DetailSearch {
+            stop,
+            hints: &mut hints,
+        }),
+    );
+    (paths, hints)
+}
+
+fn search(
+    root: &Path,
+    work: &str,
+    engine: &str,
+    executable: Option<&str>,
+    environment: &dyn Fn(&str) -> Option<PathBuf>,
+    detail: Option<DetailSearch<'_>>,
+) -> Vec<String> {
     let Ok(root) = dunce::canonicalize(root) else {
-        return result;
+        return vec![];
     };
+    let mut result = local_saves(&root, work);
     let base = if work == "." {
         PathBuf::new()
     } else {
@@ -509,46 +580,38 @@ fn detect_with_environment(
             }
         }
     } else if engine == "Unity" {
-        if let Some(executable) = executable.and_then(|file| relative_path(file).ok()) {
-            let stem = executable.file_stem().unwrap_or_default().to_string_lossy();
-            let data = executable
-                .parent()
-                .unwrap_or(Path::new(""))
-                .join(format!("{stem}_Data"));
-            if executable
-                .extension()
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("exe"))
-                && local_directory(&root, &data)
-            {
-                for (name, relative) in visible_directories(&root, &data) {
-                    if save_name(&name) {
-                        if let Ok(path) = path_text(&relative) {
-                            result.push(format!("<GAME>/{}", path.replace('\\', "/")));
-                        }
+        if let Some(layout) = UnityLayout::read(&root, executable) {
+            for (name, relative) in visible_directories(&root, &layout.data) {
+                if save_name(&name) {
+                    if let Ok(path) = path_text(&relative) {
+                        result.push(format!("<GAME>/{}", path.replace('\\', "/")));
                     }
                 }
             }
-            if let Some(text) = path_text(&data.join("app.info"))
-                .ok()
-                .and_then(|path| small_text(&root, &path))
-            {
-                let lines = text
-                    .trim_start_matches('\u{feff}')
-                    .lines()
-                    .collect::<Vec<_>>();
-                if lines.len() == 2 {
-                    if let (Some(company), Some(product)) =
-                        (identity_path(lines[0]), identity_path(lines[1]))
-                    {
-                        if company.components().count() == 1 && product.components().count() == 1 {
-                            external = external_rule(
-                                engine,
-                                false,
-                                &[("company", &company), ("product", &product)],
-                            );
-                        }
-                    }
+            external = layout.identity.as_ref().and_then(|(company, product)| {
+                if detail.is_none() && company.eq_ignore_ascii_case("DefaultCompany") {
+                    return None;
                 }
+                external_rule(
+                    engine,
+                    false,
+                    &[
+                        ("company", Path::new(company)),
+                        ("product", Path::new(product)),
+                    ],
+                )
+            });
+            if let (Some(detail), Some(profile)) = (detail, environment("USERPROFILE")) {
+                let product = external.take().and_then(|(_, relative)| {
+                    existing_external(&profile, &relative).then(|| profile.join(relative))
+                });
+                *detail.hints = crate::save_discovery::unity(
+                    &root,
+                    &layout,
+                    &profile.join("AppData/LocalLow"),
+                    product.as_deref(),
+                    detail.stop,
+                );
             }
         }
     }
@@ -567,6 +630,63 @@ fn detect_with_environment(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn separates_save_evidence_from_logs_and_uses_the_selected_install_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        let game = tmp.path().join("汉化版");
+        let data = game.join("bin/Game_Data");
+        let low = tmp.path().join("AppData/LocalLow");
+        let exact = low.join("DefaultCompany/ProjectMoon");
+        let from_log = low.join("古い名前/Project42");
+        let other = low.join("Other/Project42");
+        for d in [&data, &exact, &from_log, &other] {
+            fs::create_dir_all(d).unwrap();
+        }
+        fs::write(data.join("app.info"), "DefaultCompany\nProjectMoon\n").unwrap();
+        fs::write(exact.join("Player.log"), "Unity").unwrap();
+        let mono = format!("Mono path[0] = '{}/Managed'", data.display());
+        fs::write(from_log.join("Player.log"), &mono).unwrap();
+        fs::write(other.join("Player.log"), mono.replace("_Data", "_Data2")).unwrap();
+        fs::create_dir(from_log.join("Slots")).unwrap();
+        fs::write(from_log.join("Slots/slot01.es3"), b"fixture").unwrap();
+        let analyze = || {
+            let mut hints = Vec::new();
+            let paths = search(
+                &game,
+                ".",
+                "Unity",
+                Some("bin/Game.exe"),
+                &|_| Some(tmp.path().into()),
+                Some(DetailSearch {
+                    stop: &|| false,
+                    hints: &mut hints,
+                }),
+            );
+            (paths, hints)
+        };
+        let (paths, hints) = analyze();
+        assert!(paths.is_empty());
+        assert!(hints
+            .iter()
+            .any(|h| h.path.ends_with("ProjectMoon") && !h.can_add));
+        assert!(hints.iter().any(|h| h.path.ends_with("Project42/Slots")
+            && h.files == ["slot01.es3"]
+            && h.can_add));
+        assert!(!hints.iter().any(|h| h.path.contains("Other")));
+        fs::write(exact.join("save.nson"), b"fixture").unwrap();
+        for name in ["Custom", "Save"] {
+            fs::create_dir(exact.join(name)).unwrap();
+            fs::write(exact.join(name).join("Common.es3"), b"fixture").unwrap();
+        }
+        let exact_hints = analyze().1;
+        assert!(exact_hints.first().unwrap().path.ends_with("/Save"));
+        assert!(!exact_hints
+            .iter()
+            .any(|h| h.path.ends_with("Project42/Slots")));
+        assert!(exact_hints
+            .iter()
+            .any(|h| h.path.ends_with("ProjectMoon") && h.can_add));
+    }
     #[test]
     fn engine_dictionary_identifies_save_files_and_does_not_mark_runtime_assets() {
         let temp = tempfile::tempdir().unwrap();

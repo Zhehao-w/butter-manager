@@ -21,3 +21,5 @@ Save Editor Lite 新增 Rust 依赖 `lz-str`（MIT）、`zip`（MIT）、`flate2
 Unity 文件编辑新增 RustCrypto `aes` / `cbc` / `pbkdf2`（MIT OR Apache-2.0），以及 `rand_core`（MIT OR Apache-2.0）与 `zeroize`（Apache-2.0 OR MIT），对应版本和传递依赖见锁文件。参考公开 ES3 容器参数、Naninovel 状态格式及 raw DEFLATE 封装，编解码和字段补丁自行实现；未纳入上游编辑器、商业 SDK 源码、游戏程序集或真实存档。新夹具由本仓库 Node 脚本生成人工数据与测试密码。
 
 新增 Unity 编解码及相关依赖的 MIT 许可原文保存在 [unity-save-LICENSES.txt](src/assets/third-party/unity-save-LICENSES.txt)，并随应用嵌入“设置 → 依赖组件 · 许可说明”。
+
+1.6.0 的文件写入监测使用 Rust 库 `notify` 8.2.2（CC0-1.0）。具体版本和传递依赖见 [Cargo.lock](src-tauri/Cargo.lock)。

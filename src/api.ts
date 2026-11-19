@@ -2,6 +2,8 @@ import { Channel, invoke } from '@tauri-apps/api/core';
 import type { SaveCatalog, SaveDocument, SaveChange } from './saveEditorTypes';
 import type {
   Game,
+  SaveWatchReport,
+  SaveHint,
   MToolStrategy,
   LibraryTag,
   PlayStatus,
@@ -170,6 +172,12 @@ export const api = {
   openFolder: (id: string) => invoke<void>('open_game_folder', { id }),
   openDirectory: (path: string) => invoke<void>('open_directory', { path }),
   openSaveFolder: (id: string, path: string) => invoke<void>('open_save_folder', { id, path }),
+  findSaveLocations: (id: string) => invoke<SaveHint[]>('find_save_locations', { id }),
+  addSaveLocation: (id: string, path: string) => invoke<Game>('add_save_location', { id, path }),
+  startSaveWatch: (id: string) =>
+    invoke<{ token: string; roots: string[] }>('start_save_watch', { id }),
+  finishSaveWatch: (token: string, cancel: boolean) =>
+    invoke<SaveWatchReport | null>('finish_save_watch', { token, cancel }),
   chooseSaveDirectory: (id: string, path: string | null) =>
     invoke<string | null>('choose_save_directory', { id, path }),
   debugBat: (id: string) => invoke<string>('preview_mtool_bat', { id }),

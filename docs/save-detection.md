@@ -21,6 +21,14 @@ Unity 还会根据所选 EXE 精确检查同目录下的 `EXE名_Data/SaveData`�
 
 只认实际存在的路径；不全盘查找，不执行游戏，不读取存档内容，不解析 `.rpyc` / `.pck`，不处理注册表 PlayerPrefs、Steam Cloud 或浏览器 IndexedDB。只读配置文本上限 256 KiB；跳过链接 / junction，外部路径须由明确元数据组成。Unity app.info 是分发包线索，不等于所有 Unity 游戏都采用该默认目录；定制游戏仍可手工修改。
 
+### 在详情中查找已游玩游戏的存档
+
+「存档位置 → 快速查找存档」与「分析游戏配置」共用检测规则。快速查找读取游戏已保存的配置，返回引擎匹配的目录或槽位。「加入位置」会立即保存该候选，详情里其他手动修改仍可继续编辑。手工选择目录和逐行编辑路径沿用「保存资料」流程。
+
+Unity 优先核对与所选 EXE 匹配的 LocalLow 产品目录，包括 DefaultCompany 下有明确产品名的目录。精确目录缺少存档文件时，再限量读取其他产品目录的 Player.log 开头并核对安装路径。同等匹配依据下优先展示 Save、SaveData 等目录。只有日志的目录与 PlayerPrefs 注册表项会列出线索。
+
+自定义路径可用「存档位置 → 通过一次存档定位」。先在游戏内准备好保存，开始定位后保存一次，再点「完成定位」。管理器使用系统文件通知记录游戏目录、LocalLow、Local 和 Roaming 的同期变化，过滤常见日志及缓存。界面显示实际已监听的范围。换槽后再定位一次，两次均有写入的位置优先。监测在三分钟后自动结束，取消或关闭详情也会释放监听。文件通知无法识别写入进程，选择前可核对路径和文件名。
+
 来源（2026-10-07 查阅）：
 
 - [RPG Maker MV 官方 CoreScript：StorageManager](https://github.com/rpgtkoolmv/corescript/blob/master/js/rpg_managers/StorageManager.js)：本地 save 目录、rpgsave 文件与 www 目录限制回退。

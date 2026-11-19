@@ -39,6 +39,7 @@ import type {
   LaunchConfiguration,
   JobPage,
   ScanCandidate,
+  SaveHint,
   Settings,
   LibraryPathCheck,
   ToolCheck,
@@ -54,6 +55,7 @@ import { QspConfiguration } from './QspConfiguration';
 import { EngineSelect } from './EngineSelect';
 import { FolderErrorDialog } from './FolderErrorDialog';
 import { SaveEditor } from './SaveEditor';
+import { SaveDiscovery, pathKey } from './SaveDiscovery';
 import { WindowTitleBar } from './WindowTitleBar';
 import { RenpyAppdataCleanup } from './RenpyAppdataCleanup';
 import { LibraryRelocation } from './LibraryRelocation';
@@ -1951,6 +1953,15 @@ export default function App() {
           onPlay={(configuration) => playGame(game.id, configuration)}
           statusLocked={taskActive || playStatusSaving || launchingIds.size > 0}
           onStatusChange={(status) => savePlayStatus(game.id, status)}
+          onSavePathsChanged={(saved) =>
+            setGames((current) =>
+              current.map((g) =>
+                g.id === saved.id
+                  ? { ...g, save_paths: saved.save_paths, updated_at: saved.updated_at }
+                  : g,
+              ),
+            )
+          }
           onSaved={(saved) => {
             setLibraryTags((current) => [
               ...new Map([...current, ...saved.tags].map((tag) => [tag.id, tag])).values(),
@@ -2783,6 +2794,7 @@ function GameDetail({
   onPlay,
   statusLocked,
   onStatusChange,
+  onSavePathsChanged,
   onSaved,
   onClose,
 }: {
@@ -2806,6 +2818,7 @@ function GameDetail({
   onPlay: (configuration: LaunchConfiguration) => Promise<void>;
   statusLocked: boolean;
   onStatusChange: (status: PlayStatus) => Promise<PlayStatus>;
+  onSavePathsChanged: (game: Game) => void;
   onSaved: (game: Game) => void;
   onClose: () => void;
 }) {
@@ -2883,6 +2896,51 @@ function GameDetail({
     }
   }
   const saveLocations = lines(saves);
+  const searchScope = JSON.stringify([
+    game.install_path,
+    game.engine,
+    game.working_directory,
+    game.launch_type,
+    game.main_executable,
+    game.mtool_target_exe,
+  ]);
+  const [quickResult, setQuickResult] = useState<{
+    scope: string;
+    analysis: ScanCandidate | null;
+    hints: SaveHint[];
+  } | null>(null);
+  const [searchingSaves, setSearchingSaves] = useState(false);
+  const quick =
+    quickResult?.scope === searchScope && quickResult.analysis === analysis ? quickResult : null;
+  async function findSaveLocations() {
+    setSearchingSaves(true);
+    await run(async () => {
+      const hints = await api.findSaveLocations(game.id);
+      setQuickResult({ scope: searchScope, analysis, hints });
+      setMessage(
+        hints.length
+          ? '快速查找完成，请核对候选位置。'
+          : '未找到存档位置，可通过一次游戏内存档定位。',
+      );
+    });
+    setSearchingSaves(false);
+  }
+  function appendSaveDraft(path: string) {
+    setSaves((current) => {
+      const paths = lines(current);
+      return paths.some((p) => pathKey(p) === pathKey(path))
+        ? current
+        : [...paths, path].join('\n');
+    });
+  }
+  function persistCandidate(path: string) {
+    void run(async () => {
+      const saved = await api.addSaveLocation(game.id, path);
+      appendSaveDraft(path);
+      onSavePathsChanged(saved);
+      setMessage('存档位置已自动保存。');
+    }, '正在保存存档位置…');
+  }
   const selectedSave = saveLocations.includes(saveToOpen) ? saveToOpen : saveLocations[0];
   const previousSaves = useRef(game.save_paths.join('\n'));
   useEffect(() => {
@@ -3060,6 +3118,9 @@ function GameDetail({
       setMessage('已填入分析结果，请检查后保存资料。');
     } else if (fillSaves) {
       setMessage('已识别存档位置，请检查后保存资料。');
+    }
+    if (analysis.save_hints?.length) {
+      setMessage('分析完成，可在「存档位置」查看匹配依据并选择位置。');
     }
   }, [analysis]);
   const launchChanged = Object.keys(configuration).some(
@@ -3771,11 +3832,21 @@ function GameDetail({
                   </BrowseButton>
                   <button
                     type="button"
+                    disabled={analysisLocked || searchingSaves}
+                    onClick={() => void findSaveLocations()}
+                  >
+                    <Icon name="scan" size={16} />
+                    {searchingSaves ? '正在查找…' : '快速查找存档'}
+                  </button>
+                  <button
+                    type="button"
                     onClick={() =>
                       void run(async () => {
                         const path = await api.chooseSaveDirectory(game.id, selectedSave ?? null);
-                        if (path)
-                          setSaves((current) => [...new Set([...lines(current), path])].join('\n'));
+                        if (path) {
+                          appendSaveDraft(path);
+                          setMessage('已加入存档位置，点击「保存资料」后生效。');
+                        }
                       })
                     }
                   >
@@ -3790,6 +3861,24 @@ function GameDetail({
                     />
                   )}
                 </div>
+                <SaveDiscovery
+                  key={game.install_path}
+                  gameId={game.id}
+                  hints={
+                    quick?.hints ?? [
+                      ...(analysis?.save_paths ?? []).map((path) => ({
+                        path,
+                        reason: '匹配游戏的存档目录或槽位规则',
+                        files: [],
+                        can_add: true,
+                      })),
+                      ...(analysis?.save_hints ?? []),
+                    ]
+                  }
+                  locations={game.save_paths}
+                  unity={game.engine === 'Unity' || analysis?.engine === 'Unity'}
+                  onAdd={persistCandidate}
+                />
               </div>
             </section>
           </div>

@@ -451,14 +451,14 @@ pub(crate) fn detect_detail(
 }
 
 fn search(
-    root: &Path,
+    install_path: &Path,
     work: &str,
     engine: &str,
     executable: Option<&str>,
     environment: &dyn Fn(&str) -> Option<PathBuf>,
     detail: Option<DetailSearch<'_>>,
 ) -> Vec<String> {
-    let Ok(root) = dunce::canonicalize(root) else {
+    let Ok(root) = dunce::canonicalize(install_path) else {
         return vec![];
     };
     let mut result = local_saves(&root, work);
@@ -607,6 +607,7 @@ fn search(
                 });
                 *detail.hints = crate::save_discovery::unity(
                     &root,
+                    install_path,
                     &layout,
                     &profile.join("AppData/LocalLow"),
                     product.as_deref(),
@@ -633,7 +634,7 @@ mod tests {
     #[test]
     fn separates_save_evidence_from_logs_and_uses_the_selected_install_path() {
         let tmp = tempfile::tempdir().unwrap();
-        let game = tmp.path().join("汉化版");
+        let game = tmp.path().join(".").join("汉化版");
         let data = game.join("bin/Game_Data");
         let low = tmp.path().join("AppData/LocalLow");
         let exact = low.join("DefaultCompany/ProjectMoon");
@@ -673,6 +674,16 @@ mod tests {
             && h.files == ["slot01.es3"]
             && h.can_add));
         assert!(!hints.iter().any(|h| h.path.contains("Other")));
+        let canonical_data = dunce::canonicalize(&data).unwrap();
+        fs::write(
+            from_log.join("Player.log"),
+            format!("Mono path[0] = '{}/Managed'", canonical_data.display()),
+        )
+        .unwrap();
+        assert!(analyze()
+            .1
+            .iter()
+            .any(|h| h.path.ends_with("Project42/Slots") && h.can_add));
         fs::write(exact.join("save.nson"), b"fixture").unwrap();
         for name in ["Custom", "Save"] {
             fs::create_dir(exact.join(name)).unwrap();

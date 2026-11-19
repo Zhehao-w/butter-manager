@@ -109,7 +109,6 @@ fn evidence(product: &Path, stop: &dyn Fn() -> bool) -> BTreeMap<PathBuf, Vec<St
 }
 
 fn log_matches(log: &str, needle: &str) -> bool {
-    let log = log.replace('\\', "/").to_lowercase();
     log.match_indices(needle).any(|(index, matched)| {
         let left = log[..index].chars().next_back();
         let right = log[index + matched.len()..].chars().next();
@@ -130,16 +129,24 @@ fn display(anchor: &Path, path: &Path) -> String {
 
 pub(crate) fn unity(
     root: &Path,
+    install_path: &Path,
     layout: &UnityLayout,
     low: &Path,
     product: Option<&Path>,
     stop: &dyn Fn() -> bool,
 ) -> Vec<SaveHint> {
-    let data = root
-        .join(&layout.data)
-        .to_string_lossy()
-        .replace('\\', "/")
-        .to_lowercase();
+    // Unity may log the launcher's path spelling, including a Windows short directory name.
+    let mut log_paths = [root, install_path]
+        .into_iter()
+        .filter(|path| path.is_absolute())
+        .map(|path| {
+            path.join(&layout.data)
+                .to_string_lossy()
+                .replace('\\', "/")
+                .to_lowercase()
+        })
+        .collect::<Vec<_>>();
+    log_paths.dedup();
     let stem = std::ffi::OsStr::new(&layout.stem);
     let distinctive_stem = crate::save_detection::identity_path(&layout.stem).is_some();
     let identity = &layout.identity;
@@ -206,9 +213,10 @@ pub(crate) fn unity(
                 {
                     continue;
                 }
-                if prefix(&dir.join("Player.log"), 32 * 1024)
-                    .is_some_and(|s| log_matches(&s, &data))
-                {
+                if prefix(&dir.join("Player.log"), 32 * 1024).is_some_and(|text| {
+                    let log = text.replace('\\', "/").to_lowercase();
+                    log_paths.iter().any(|path| log_matches(&log, path))
+                }) {
                     matches.insert(dir, "Player.log 指向当前游戏的安装目录");
                 } else if distinctive_stem && entry.file_name().eq_ignore_ascii_case(stem) {
                     matches.insert(dir, "目录名与启动文件同名，请核对");

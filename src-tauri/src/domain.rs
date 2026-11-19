@@ -166,6 +166,18 @@ pub struct Game {
     pub save_paths: Vec<String>,
 }
 
+impl Game {
+    pub fn game_executable(&self) -> Option<&str> {
+        if self.launch_type == "MTOOL" {
+            self.mtool_target_exe
+                .as_deref()
+                .or(self.main_executable.as_deref())
+        } else {
+            self.main_executable.as_deref()
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LaunchConfiguration {
     #[serde(default)]
@@ -280,6 +292,8 @@ pub struct BatAnalysis {
 pub struct ScanCandidate {
     #[serde(default)]
     pub recommended_launch: Option<LaunchConfiguration>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub save_hints: Vec<crate::save_discovery::SaveHint>,
     pub install_path: String,
     #[serde(default)]
     pub directory_modified_ms: Option<u128>,

@@ -366,13 +366,7 @@ pub fn check_game(game: &Game) -> LibraryPathCheck {
         }
         Err(error) => ("unreadable", format!("无法检查游戏目录：{error}")),
         Ok(metadata) if !metadata.is_dir() => ("missing_directory", "原路径已不是游戏目录".into()),
-        Ok(_) => match if game.launch_type == "MTOOL" {
-            game.mtool_target_exe
-                .as_deref()
-                .or(game.main_executable.as_deref())
-        } else {
-            game.main_executable.as_deref()
-        } {
+        Ok(_) => match game.game_executable() {
             None => ("unconfigured", "尚未配置启动文件".into()),
             Some(file) => match if game.launch_type == "MTOOL" {
                 contained_file(root, file, "exe")

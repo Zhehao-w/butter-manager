@@ -197,7 +197,7 @@ fn discover_with(
             Path::new(&game.install_path),
             &game.working_directory,
             &game.engine,
-            game.main_executable.as_deref(),
+            game.game_executable(),
         )
     } else {
         game.save_paths.clone()

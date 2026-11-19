@@ -190,7 +190,18 @@ export interface BatAnalysis {
   messages: string[];
 }
 
+export interface SaveHint {
+  path: string;
+  reason: string;
+  files: string[];
+  can_add: boolean;
+}
+export interface SaveWatchReport {
+  candidates: SaveHint[];
+  partial: boolean;
+}
 export interface ScanCandidate {
+  save_hints?: SaveHint[];
   recommended_launch?: LaunchConfiguration | null;
   bundled_mtool?: MtoolBundle[];
   save_paths?: string[];

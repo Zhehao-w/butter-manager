@@ -6,7 +6,7 @@ use crate::{jobs::Job, paths, scanner};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
-use std::io::{BufReader, Read, Write};
+use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::UNIX_EPOCH;
@@ -36,6 +36,14 @@ thread_local! { static FAIL_CHECKPOINT: std::cell::RefCell<Option<String>> = con
 
 fn invalid(message: impl Into<String>) -> Error {
     Error::Validation(message.into())
+}
+
+fn write_synced_json(path: &Path, value: &impl Serialize) -> Result<()> {
+    let mut writer = BufWriter::with_capacity(64 * 1024, File::create(path)?);
+    serde_json::to_writer(&mut writer, value).map_err(|e| invalid(e.to_string()))?;
+    writer.flush()?;
+    writer.get_ref().sync_all()?;
+    Ok(())
 }
 fn stopped(job: &Job) -> Result<()> {
     if job.stop() {
@@ -595,18 +603,11 @@ impl ImportStore {
                     || !matches!(item.state.as_str(), "completed" | "withdrawn"))
             {
                 let temp = path.with_extension("manifest.tmp");
-                let mut file = File::create(&temp)?;
-                serde_json::to_writer(&mut file, &item.manifest)
-                    .map_err(|e| invalid(e.to_string()))?;
-                file.sync_all()?;
-                drop(file);
+                write_synced_json(&temp, &item.manifest)?;
                 fs::rename(temp, path)?;
             }
         }
-        let mut file = File::create(&temp)?;
-        serde_json::to_writer(&mut file, plan).map_err(|e| invalid(e.to_string()))?;
-        file.sync_all()?;
-        drop(file);
+        write_synced_json(&temp, plan)?;
         fs::rename(temp, target)?;
         let mut saved = plan.clone();
         for (index, item) in saved.items.iter_mut().enumerate() {

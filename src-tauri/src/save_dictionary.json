@@ -33,7 +33,7 @@
     {
       "engine": "Ren'Py",
       "preferred_local": "game/saves",
-      "note": "Existing local game/saves is authoritative; do not also associate the AppData copy.",
+      "note": "Detect both existing locations. Prefer local slots when opening the editor.",
       "external": "%APPDATA%/RenPy/{save_directory}",
       "identity": "config.save_directory literal in game/options.rpy",
       "source": "https://www.renpy.org/doc/html/config.html#var-config.save_directory"

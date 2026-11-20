@@ -84,7 +84,6 @@ export function RenpyAppdataCleanup({
       >
         清理 AppData 存档
       </button>
-      {preview?.reason && <p className="muted">{preview.reason}</p>}
       {notice && <p role="status">{notice}</p>}
       {error && (
         <p className="error" role="alert">

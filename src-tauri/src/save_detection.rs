@@ -103,17 +103,41 @@ fn visible_directories(root: &Path, base: &Path) -> Vec<(String, PathBuf)> {
 }
 
 fn local_directory(root: &Path, relative: &Path) -> bool {
+    checked_local_directory(root, relative).is_some()
+}
+
+fn checked_local_directory(root: &Path, relative: &Path) -> Option<PathBuf> {
     let mut current = root.to_path_buf();
     for component in relative.components() {
         current.push(component);
-        let Ok(metadata) = fs::symlink_metadata(&current) else {
-            return false;
-        };
+        let metadata = fs::symlink_metadata(&current).ok()?;
         if !metadata.is_dir() || is_link(&metadata) || hidden_or_system(&metadata) {
-            return false;
+            return None;
         }
     }
-    dunce::canonicalize(current).is_ok_and(|path| path.starts_with(root))
+    dunce::canonicalize(current)
+        .ok()
+        .filter(|path| path.starts_with(root))
+}
+
+/// Probe only the standard directory. Used on the editor's slot-open path as well as in scans.
+pub(crate) fn preferred_local_save(root: &Path, work: &str, engine: &str) -> Option<String> {
+    let preferred = dictionary()
+        .engines
+        .iter()
+        .find(|rule| rule.engine == engine)?
+        .preferred_local
+        .as_deref()?;
+    std::iter::once(PathBuf::new())
+        .chain(relative_path(work).ok())
+        .find_map(|base| {
+            let path = checked_local_directory(root, &base.join(preferred))?;
+            let relative = path.strip_prefix(root).ok()?;
+            Some(format!(
+                "<GAME>/{}",
+                path_text(relative).ok()?.replace('\\', "/")
+            ))
+        })
 }
 
 pub fn valid_detected_path(root: &Path, value: &str) -> bool {
@@ -279,7 +303,9 @@ pub(crate) fn renpy_save_directory(root: &Path, work: &str) -> Option<PathBuf> {
     if text.contains("config.savedir") {
         return None;
     }
-    let value = assignment(&text, "config.save_directory")?;
+    let value = assignment(text.trim_start_matches('\u{feff}'), "config.save_directory")?;
+    // Older Ren'Py projects often declare the identifier as a Python 2 Unicode literal.
+    let value = value.strip_prefix(['u', 'U']).unwrap_or(value);
     let name = literal(value)?;
     // In Python a semicolon starts another statement, not a comment.
     // Do not treat a compound assignment line as an unambiguous save identity.
@@ -291,7 +317,11 @@ pub(crate) fn renpy_save_directory(root: &Path, work: &str) -> Option<PathBuf> {
     {
         return None;
     }
-    identity_path(&name)
+    identity_path(&name).filter(|path| {
+        !path
+            .components()
+            .any(|part| part.as_os_str().eq_ignore_ascii_case("tokens"))
+    })
 }
 
 /// Batch matching reads only conventional, bounded static config; it never opens saves.
@@ -461,7 +491,9 @@ fn search(
     let Ok(root) = dunce::canonicalize(install_path) else {
         return vec![];
     };
-    let mut result = local_saves(&root, work);
+    let mut result = preferred_local_save(&root, work, engine)
+        .map(|local| vec![local])
+        .unwrap_or_else(|| local_saves(&root, work));
     let base = if work == "." {
         PathBuf::new()
     } else {
@@ -474,8 +506,7 @@ fn search(
         .and_then(|rule| rule.preferred_local.as_deref())
         .and_then(|value| relative_path(value).ok())
     {
-        // The bundled game/saves directory is the authoritative copy when present.
-        // Prefer the install root, then a wrapper's game directory; never add AppData duplicates.
+        // Prefer game/saves over generic local folders, then check the external copy.
         for relative in [preferred.clone(), base.join(&preferred)] {
             if let Ok(path) = path_text(&relative) {
                 let expected = format!("<GAME>/{}", path.replace('\\', "/"));
@@ -483,7 +514,8 @@ fn search(
                     .iter()
                     .find(|value| value.eq_ignore_ascii_case(&expected))
                 {
-                    return vec![local.clone()];
+                    result = vec![local.clone()];
+                    break;
                 }
             }
         }
@@ -534,6 +566,19 @@ fn search(
     if engine == "Ren'Py" {
         if let Some(name) = renpy_save_directory(&root, work) {
             external = external_rule(engine, false, &[("save_directory", &name)]);
+        } else if let (Some(detail), Some(roaming), Some(local)) =
+            (detail, environment("APPDATA"), result.first())
+        {
+            if let Some(relative) = local
+                .strip_prefix("<GAME>/")
+                .filter(|p| p.to_ascii_lowercase().ends_with("game/saves"))
+            {
+                *detail.hints = crate::save_discovery::renpy_mirrors(
+                    &root.join(relative),
+                    &roaming,
+                    detail.stop,
+                );
+            }
         }
     } else if engine == "Godot" {
         if let Some(text) = config_path("project.godot").and_then(|p| small_text(&root, &p)) {
@@ -623,7 +668,10 @@ fn search(
             }
         }
     }
-    result.sort();
+    result.sort_by(|a, b| {
+        let external = |path: &str| engine == "Ren'Py" && !path.starts_with("<GAME>/");
+        external(a).cmp(&external(b)).then(a.cmp(b))
+    });
     result.dedup();
     result
 }
@@ -699,6 +747,42 @@ mod tests {
             .any(|h| h.path.ends_with("ProjectMoon") && h.can_add));
     }
     #[test]
+    fn renpy_mirrored_slots_are_detail_candidates_only() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("install");
+        let local = root.join("game/saves");
+        let roaming = temp.path().join("AppData");
+        fs::create_dir_all(&local).unwrap();
+        fs::write(local.join("1-1.save"), b"mirrored").unwrap();
+        for (name, bytes) in [
+            ("Title-123", "mirrored"),
+            ("Unrelated", "other"),
+            ("tokens", "mirrored"),
+        ] {
+            let dir = roaming.join("RenPy").join(name);
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(dir.join("1-1.save"), bytes).unwrap();
+        }
+        let mut hints = Vec::new();
+        let found = search(
+            &root,
+            ".",
+            "Ren'Py",
+            None,
+            &|_| Some(roaming.clone()),
+            Some(DetailSearch {
+                stop: &|| false,
+                hints: &mut hints,
+            }),
+        );
+        assert_eq!(found, ["<GAME>/game/saves"]);
+        assert_eq!(hints.len(), 1);
+        assert_eq!(hints[0].path, "%APPDATA%/RenPy/Title-123");
+        assert_eq!(hints[0].files, ["1-1.save"]);
+        assert!(hints[0].can_add);
+    }
+
+    #[test]
     fn engine_dictionary_identifies_save_files_and_does_not_mark_runtime_assets() {
         let temp = tempfile::tempdir().unwrap();
         for file in [
@@ -763,7 +847,7 @@ mod tests {
         let environment = &|_: &str| Some(profile.clone());
         fs::write(
             root.join("game/options.rpy"),
-            "define config.save_directory = \"彼女-1234\"\n",
+            "\u{feff}define config.save_directory = u\"彼女-1234\"\n",
         )
         .unwrap();
         assert_eq!(
@@ -774,7 +858,7 @@ mod tests {
         fs::create_dir_all(root.join("save")).unwrap();
         assert_eq!(
             detect_with_environment(&root, ".", "Ren'Py", None, environment),
-            vec!["<GAME>/game/saves"]
+            vec!["<GAME>/game/saves", "%APPDATA%/RenPy/彼女-1234"]
         );
         fs::remove_dir(root.join("game/saves")).unwrap();
         fs::remove_dir(root.join("save")).unwrap();

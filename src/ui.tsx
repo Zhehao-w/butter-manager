@@ -92,6 +92,7 @@ export function SearchField({
         id={inputId}
         ref={input}
         placeholder={placeholder}
+        autoComplete="off"
         value={value}
         onChange={(event) => onChange(event.target.value)}
       />

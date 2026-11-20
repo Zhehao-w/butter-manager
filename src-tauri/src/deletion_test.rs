@@ -26,6 +26,53 @@ fn fake_recycle(trash: &Path) -> impl FnMut(&Path) -> Result<()> + '_ {
         Ok(())
     }
 }
+
+#[test]
+fn renpy_delete_includes_the_unassociated_appdata_copy_once_and_checks_ownership() {
+    let (temp, mut game, settings, data) = fixture();
+    let appdata = temp.path().join("AppData");
+    let target = appdata.join("RenPy/Fixture-123");
+    let root = Path::new(&game.install_path);
+    fs::create_dir_all(root.join("game")).unwrap();
+    fs::write(
+        root.join("game/options.rpy"),
+        "define config.save_directory = 'Fixture-123'",
+    )
+    .unwrap();
+    fs::create_dir_all(&target).unwrap();
+    game.engine = "Ren'Py".into();
+    let preview = |game: &Game, games: &[Game]| {
+        preview_with_appdata(game, games, &settings, &data, "test", Some(&appdata))
+    };
+    let plan = preview(&game, &[]);
+    assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+    let expected = dunce::canonicalize(&target).unwrap();
+    assert_eq!(
+        plan.saves
+            .iter()
+            .filter(|s| s.action == "recycle" && Path::new(&s.path) == expected)
+            .count(),
+        1
+    );
+    game.save_paths.push(target.display().to_string());
+    assert_eq!(preview(&game, &[]), plan);
+    let other = temp.path().join("other");
+    fs::create_dir_all(other.join("game")).unwrap();
+    fs::copy(
+        root.join("game/options.rpy"),
+        other.join("game/options.rpy"),
+    )
+    .unwrap();
+    let mut shared = fixture_game(&other);
+    shared.id = "other".into();
+    assert!(!preview(&game, &[shared]).blockers.is_empty());
+    assert!(apply_files(&plan, fake_recycle(&temp.path().join("trash")))
+        .error
+        .is_none());
+    assert!(!target.exists());
+    assert!(!root.exists());
+    assert!(other.is_dir());
+}
 #[cfg(windows)]
 #[test]
 fn offline_volume_keeps_an_absolute_protected_namespace() {

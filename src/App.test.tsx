@@ -1923,7 +1923,8 @@ describe('iteration interactions', () => {
     vi.mocked(api.games).mockResolvedValue([{ ...game, engine: "Ren'Py" }]);
     const detail = await openDetail();
     showDetailTab('存档位置');
-    await within(detail).findByText('对应 AppData 存档目录不存在');
+    await within(detail).findByTitle('对应 AppData 存档目录不存在');
+    expect(within(detail).queryByText('对应 AppData 存档目录不存在')).toBeNull();
     expect(
       (within(detail).getByRole('button', { name: '清理 AppData 存档' }) as HTMLButtonElement)
         .disabled,
@@ -1996,6 +1997,7 @@ describe('iteration interactions', () => {
     await screen.findByRole('button', { name: game.display_title });
     const search = screen.getByRole('textbox', { name: '搜索游戏或别名' });
     fireEvent.change(search, { target: { value: game.install_path } });
+    expect(search.getAttribute('autocomplete')).toBe('off');
     fireEvent.scroll(screen.getByLabelText('游戏列表'), { target: { scrollTop: 420 } });
     fireEvent.click(screen.getByRole('button', { name: '卡片视图' }));
     expect(screen.getByLabelText('游戏列表').scrollTop).toBe(420);
@@ -3007,6 +3009,27 @@ describe('iteration interactions', () => {
       expect(api.saveGame).not.toHaveBeenCalled();
     },
   );
+
+  it('adds the detected RenPy roaming location to an existing local save draft once', async () => {
+    const local = '<GAME>/game/saves';
+    const roaming = '%APPDATA%/RenPy/Title-123';
+    vi.mocked(api.games).mockResolvedValue([{ ...game, engine: "Ren'Py", save_paths: [local] }]);
+    vi.mocked(api.startGameAnalysis).mockResolvedValue('renpy-saves');
+    vi.mocked(api.job).mockResolvedValue({
+      ...job,
+      id: 'renpy-saves',
+      kind: 'analysis',
+      changes: [
+        { ...candidate, registered_id: game.id, engine: "Ren'Py", save_paths: [local, roaming] },
+      ],
+    });
+    const modal = await openDetail();
+    showDetailTab('存档位置');
+    fireEvent.click(within(modal).getByRole('button', { name: '分析游戏配置' }));
+    const paths = within(modal).getByRole('textbox', { name: /存档位置/ }) as HTMLTextAreaElement;
+    await waitFor(() => expect(paths.value).toBe([local, roaming].join('\n')));
+    expect(api.saveGame).not.toHaveBeenCalled();
+  });
 
   it('fills analyzed saves without a launch recommendation and stays on the selected tab', async () => {
     vi.mocked(api.startGameAnalysis).mockResolvedValue('saves-analysis');

@@ -239,6 +239,18 @@ pub fn preview(
     data: &Path,
     token: &str,
 ) -> DeletePlan {
+    let appdata = std::env::var_os("APPDATA").map(PathBuf::from);
+    preview_with_appdata(game, games, settings, data, token, appdata.as_deref())
+}
+
+fn preview_with_appdata(
+    game: &Game,
+    games: &[Game],
+    settings: &Settings,
+    data: &Path,
+    token: &str,
+    appdata: Option<&Path>,
+) -> DeletePlan {
     let mut plan = DeletePlan {
         token: token.into(),
         id: game.id.clone(),
@@ -259,11 +271,32 @@ pub fn preview(
         plan.bind_recycle_path(&root)?;
         protected(&root, settings, data, games, &game.id)?;
         check_tree(&root, &mut 1_000_000)?;
+        let mut targets = game
+            .save_paths
+            .iter()
+            .map(|value| resolve_save(game, value))
+            .collect::<Result<Vec<_>>>()?;
+        let renpy = appdata
+            .filter(|_| game.engine == "Ren'Py")
+            .map(|path| path.join("RenPy"));
+        if let Some(namespace) = &renpy {
+            if let Some(name) = crate::maintenance::renpy_appdata_name(game)? {
+                let raw = namespace.join(name);
+                plain_path(&raw)?;
+                if raw.try_exists()? {
+                    let path = dunce::canonicalize(raw)?;
+                    if !path.is_dir() || overlaps(&root, &path) {
+                        return Err(fail("Ren'Py AppData 存档不是独立的游戏存档目录"));
+                    }
+                    targets.push(path);
+                }
+            }
+        }
+        let renpy = renpy.as_deref().map(absolute_path).transpose()?;
+        targets.sort();
+        targets.dedup();
         let mut saves = Vec::new();
-        for configured in &game.save_paths {
-            let save = resolve_save(game, configured)?;
-            plain_path(Path::new(&configured.replace("<GAME>", &game.install_path)))?;
-            plain_path(&save)?;
+        for save in targets {
             if save == root || root.starts_with(&save) {
                 return Err(fail(
                     "存档位置不能是游戏目录本身或其父目录，请指定实际存档子目录或文件",
@@ -277,11 +310,12 @@ pub fn preview(
                 continue;
             }
             protected(&save, settings, data, games, &game.id)?;
+            if let Some(namespace) = &renpy {
+                crate::maintenance::check_renpy_save_owner(&save, namespace, game, games)?;
+            }
             check_tree(&save, &mut 1_000_000)?;
             saves.push(save);
         }
-        saves.sort();
-        saves.dedup();
         let selected = saves
             .iter()
             .filter(|s| !saves.iter().any(|p| p != *s && s.starts_with(p)))

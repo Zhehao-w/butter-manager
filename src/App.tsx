@@ -3110,9 +3110,16 @@ function GameDetail({
       return;
     }
     const detectedPaths = analysis.save_paths ?? [];
+    const existing = lines(baseline.saves);
+    const keys = new Set(existing.map(pathKey));
+    const additions = detectedPaths.filter((p) => !keys.has(pathKey(p)));
     const fillSaves =
-      !lines(baseline.saves).length && saves === baseline.saves && !!detectedPaths.length;
-    if (fillSaves) setSaves(detectedPaths.join('\n'));
+      saves === baseline.saves &&
+      additions.length > 0 &&
+      (!existing.length ||
+        ((draft.engine === "Ren'Py" || analysis.engine === "Ren'Py") &&
+          baseline.saves === game.save_paths.join('\n')));
+    if (fillSaves) setSaves([...existing, ...additions].join('\n'));
     if (analysisConfiguration()) {
       useAnalysisConfiguration();
       setMessage('已填入分析结果，请检查后保存资料。');

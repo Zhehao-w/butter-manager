@@ -28,32 +28,17 @@ pub(crate) fn ensure_appdata_cleanup_idle(
     Ok(())
 }
 
-pub fn preview_renpy_appdata(
-    game: &Game,
-    games: &[Game],
-    settings: &Settings,
-    data: &Path,
-    appdata: &Path,
-) -> Result<RenpyAppdataPlan> {
+pub(crate) fn renpy_appdata_name(game: &Game) -> Result<Option<std::path::PathBuf>> {
     if game.engine != "Ren'Py" {
-        return Err(invalid_cleanup("仅 Ren'Py 游戏支持清理 AppData 存档"));
+        return Ok(None);
     }
-    let raw_root = Path::new(&game.install_path);
-    crate::deletion::plain_path(raw_root)?;
-    crate::deletion::plain_path(appdata)?;
-    let root = dunce::canonicalize(raw_root)?;
-    let anchor = dunce::canonicalize(appdata)?;
-    let name = crate::save_detection::renpy_save_directory(&root, &game.working_directory)
-        .ok_or_else(|| invalid_cleanup("未识别到明确的 config.save_directory，不能清理"))?;
-    // tokens is Ren'Py's shared signing data, never a game's disposable save identity.
-    if name
-        .components()
-        .any(|part| part.as_os_str().eq_ignore_ascii_case("tokens"))
-    {
-        return Err(invalid_cleanup("不能清理公共 tokens 目录"));
-    }
+    let root = Path::new(&game.install_path);
+    let Some(name) = crate::save_detection::renpy_save_directory(root, &game.working_directory)
+    else {
+        return Ok(None);
+    };
     if game.working_directory != "." {
-        if let Some(other) = crate::save_detection::renpy_save_directory(&root, ".") {
+        if let Some(other) = crate::save_detection::renpy_save_directory(root, ".") {
             if other != name {
                 return Err(invalid_cleanup(
                     "游戏目录内的 Ren'Py 存档身份冲突，不能清理",
@@ -61,10 +46,62 @@ pub fn preview_renpy_appdata(
             }
         }
     }
-    let renpy = anchor.join("RenPy");
-    let raw = renpy.join(&name);
+    Ok(Some(name))
+}
+
+pub(crate) fn check_renpy_save_owner(
+    path: &Path,
+    renpy: &Path,
+    game: &Game,
+    games: &[Game],
+) -> Result<()> {
+    let key = std::path::PathBuf::from(crate::paths::path_key(path)?);
+    let namespace = std::path::PathBuf::from(crate::paths::path_key(renpy)?);
+    if namespace.starts_with(&key) || key.starts_with(namespace.join("tokens")) {
+        return Err(invalid_cleanup("不能清理 Ren'Py 公共目录或签名数据"));
+    }
+    if !key.starts_with(&namespace) {
+        return Ok(());
+    }
+    for other in games.iter().filter(|other| other.id != game.id) {
+        // Check declared identities even when the other game maintains only game/saves.
+        let work = other.working_directory.as_str();
+        for work in std::iter::once(work).chain((work != ".").then_some(".")) {
+            if let Some(other_name) =
+                crate::save_detection::renpy_save_directory(Path::new(&other.install_path), work)
+            {
+                let other_raw = renpy.join(other_name);
+                let other_path = std::path::PathBuf::from(crate::paths::path_key(
+                    &dunce::canonicalize(&other_raw).unwrap_or(other_raw),
+                )?);
+                if other_path.starts_with(&key) || key.starts_with(&other_path) {
+                    return Err(invalid_cleanup(
+                        "此 AppData 存档目录被多个库内游戏使用，不能清理",
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+pub fn preview_renpy_appdata(
+    game: &Game,
+    games: &[Game],
+    settings: &Settings,
+    data: &Path,
+    appdata: &Path,
+) -> Result<RenpyAppdataPlan> {
+    let raw_root = Path::new(&game.install_path);
+    crate::deletion::plain_path(raw_root)?;
+    crate::deletion::plain_path(appdata)?;
+    let root = dunce::canonicalize(raw_root)?;
+    let anchor = dunce::canonicalize(appdata)?;
+    let name = renpy_appdata_name(game)?
+        .ok_or_else(|| invalid_cleanup("未识别到明确的 config.save_directory，不能清理"))?;
+    let raw = anchor.join("RenPy").join(&name);
     crate::deletion::plain_path(&raw)?;
-    let renpy = dunce::canonicalize(&renpy)?;
+    let renpy = dunce::canonicalize(anchor.join("RenPy"))?;
     let path = dunce::canonicalize(&raw).map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
             invalid_cleanup("对应 AppData 存档目录不存在")
@@ -75,25 +112,7 @@ pub fn preview_renpy_appdata(
     if !path.is_dir() || path == renpy || !path.starts_with(&renpy) {
         return Err(invalid_cleanup("AppData 存档目录无效或越界"));
     }
-    for other in games.iter().filter(|other| other.id != game.id) {
-        // Check declared identities even when the other game maintains only game/saves.
-        for work in [other.working_directory.as_str(), "."] {
-            if let Some(other_name) =
-                crate::save_detection::renpy_save_directory(Path::new(&other.install_path), work)
-            {
-                let other_raw = renpy.join(other_name);
-                let other_path = std::path::PathBuf::from(crate::paths::path_key(
-                    &dunce::canonicalize(&other_raw).unwrap_or(other_raw),
-                )?);
-                let key = std::path::PathBuf::from(crate::paths::path_key(&path)?);
-                if other_path.starts_with(&key) || key.starts_with(&other_path) {
-                    return Err(invalid_cleanup(
-                        "此 AppData 存档目录被多个库内游戏使用，不能清理",
-                    ));
-                }
-            }
-        }
-    }
+    check_renpy_save_owner(&path, &renpy, game, games)?;
     crate::deletion::validate_save_cleanup(&path, game, games, settings, data)?;
     let mut directories = vec![root, anchor.clone(), renpy.clone()];
     let mut current = renpy;
@@ -552,13 +571,8 @@ pub(crate) mod tests {
         let settings = Settings::default();
         let plan = preview_renpy_appdata(&game, &games, &settings, &data, &appdata).unwrap();
         assert_eq!(
-            crate::save_detection::detect_for_engine(
-                Path::new(&game.install_path),
-                ".",
-                "Ren'Py",
-                None
-            ),
-            vec!["<GAME>/game/saves"]
+            Path::new(&plan.path),
+            dunce::canonicalize(appdata.join("RenPy/彼女-1234")).unwrap()
         );
         assert!(recycle_renpy_appdata(&plan, &plan, |_| Err(invalid_cleanup(
             "fixture recycle failure"

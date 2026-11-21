@@ -125,6 +125,7 @@ export default function App() {
     if (favicon) favicon.href = appIcon;
   }, [appIcon]);
   const [games, setGames] = useState<Game[]>([]);
+  const gamesById = useMemo(() => new Map(games.map((game) => [game.id, game])), [games]);
   const [libraryTags, setLibraryTags] = useState<LibraryTag[]>([]);
   const [tagManagerOpen, setTagManagerOpen] = useState(false);
   const [organizationBusy, setOrganizationBusy] = useState(false);
@@ -360,11 +361,11 @@ export default function App() {
     });
   }
   function acceptPathChecks(checks: LibraryPathCheck[]) {
+    if (!checks.length) return;
     setPathChecks((current) => {
       const next = { ...current };
       for (const check of checks)
-        if (games.some((game) => game.id === check.id && game.install_path === check.install_path))
-          next[check.id] = check;
+        if (gamesById.get(check.id)?.install_path === check.install_path) next[check.id] = check;
       return next;
     });
   }
@@ -818,7 +819,6 @@ export default function App() {
       ),
     [preview, scanSearch, scanSort, choices, scanUnregisteredOnly],
   );
-  const registeredGames = useMemo(() => new Map(games.map((game) => [game.id, game])), [games]);
   const visibleSelections = scanFiltered.filter((candidate) =>
     selected.has(candidate.install_path),
   ).length;
@@ -1677,7 +1677,7 @@ export default function App() {
                         }}
                         registeredGame={
                           candidate.registered_id
-                            ? registeredGames.get(candidate.registered_id)
+                            ? gamesById.get(candidate.registered_id)
                             : undefined
                         }
                         expanded={expandedCandidates.has(candidate.install_path)}
@@ -1775,7 +1775,7 @@ export default function App() {
               navigationGuard={settingsGuard}
               locked={taskActive || launchingIds.size > 0}
               onMigrated={(report) => {
-                refreshLibraryAfterMaintenance();
+                libraryEpoch.current++;
                 setGames(report.games);
                 setSettings(report.settings);
                 setPathChecks({});

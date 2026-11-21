@@ -1847,7 +1847,7 @@ describe('iteration interactions', () => {
     expect(api.saveGame).not.toHaveBeenCalled();
     expect((paths as HTMLTextAreaElement).value).toBe('<GAME>/www/save\n%APPDATA%/RenPy/彼女');
   });
-  it('integrates bulk path relocation in advanced settings and refreshes the existing library', async () => {
+  it('integrates bulk path relocation using the library returned by the commit', async () => {
     const migrated = { ...game, install_path: 'D:/Games/已登记游戏' };
     const savedSettings = { ...config, game_root: 'D:/Games' };
     vi.mocked(api.chooseDirectory).mockResolvedValue('D:/Games');
@@ -1893,7 +1893,6 @@ describe('iteration interactions', () => {
     await waitForEnabledButton('预览迁移', within(editor));
     fireEvent.click(within(editor).getByRole('button', { name: '预览迁移' }));
     await within(editor).findByText('可迁移 1 个游戏，无法迁移 0 个游戏。');
-    vi.mocked(api.games).mockResolvedValue([migrated]);
     fireEvent.click(within(editor).getByRole('button', { name: '确认迁移' }));
     const modal = screen.getByRole('dialog', { name: '确认迁移游戏库路径？' });
     fireEvent.click(within(modal).getByRole('button', { name: '确认迁移' }));
@@ -1908,6 +1907,7 @@ describe('iteration interactions', () => {
     const search = screen.getByRole('textbox', { name: '搜索游戏或别名' });
     fireEvent.change(search, { target: { value: migrated.install_path } });
     expect(screen.getByRole('button', { name: game.display_title })).toBeTruthy();
+    expect(api.games).toHaveBeenCalledTimes(1);
     expect(api.startLibraryCheck).toHaveBeenCalled();
     expect(api.startScan).not.toHaveBeenCalled();
     expect(api.register).not.toHaveBeenCalled();

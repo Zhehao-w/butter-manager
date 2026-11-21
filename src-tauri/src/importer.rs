@@ -980,11 +980,7 @@ impl ImportStore {
                 let entries = inventory(Path::new(&plan.items[index].selection.source), job)?;
                 let path = self.directory.join(format!("{}-{index}.manifest", plan.id));
                 let temporary = path.with_extension("manifest.tmp");
-                let mut file = File::create(&temporary)?;
-                serde_json::to_writer(&mut file, &entries)
-                    .map_err(|error| invalid(error.to_string()))?;
-                file.sync_all()?;
-                drop(file);
+                write_synced_json(&temporary, &entries)?;
                 fs::rename(temporary, path)?;
                 plan.items[index].bytes = entries.iter().map(|entry| entry.bytes).sum();
                 plan.items[index].files = entries.iter().filter(|entry| !entry.directory).count();

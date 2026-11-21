@@ -825,12 +825,12 @@ fn remove_game(state: State<'_, AppState>, id: String, confirmation: String) -> 
     if confirmation != id {
         return Err("请先确认移除这条游戏记录".into());
     }
-    if state.imports.has_pending_files() {
-        return Err("请先在导入页继续或撤回未完成的文件操作".into());
-    }
     let count = state.activity.lock().map_err(|_| "操作锁不可用")?;
     if *count > 0 || state.tasks.active() {
         return Err("请先结束当前任务或启动请求".into());
+    }
+    if state.imports.has_pending_files() {
+        return Err("请先在导入页继续或撤回未完成的文件操作".into());
     }
     let removed = with_db(&state, |db| db.remove_game(&id))?;
     state.tasks.update_registration(&removed.install_path, None);
@@ -1315,16 +1315,21 @@ async fn clear_library(
     if confirmation != "清空数据库" {
         return Err("请输入清空数据库以确认".into());
     }
-    if state.imports.has_pending_files() {
-        return Err("仍有未完成导入，不能清空数据库；请先继续或撤回".into());
-    }
     let activity = state.activity.clone();
     let tasks = state.tasks.clone();
+    let imports = state.imports.clone();
     let db = state.db.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let count = activity.lock().map_err(|_| "操作锁不可用")?;
         if *count > 0 {
             return Err("启动请求尚未结束，请稍后重试".into());
+        }
+        // A worker can leave a recovery record just before it stops being active.
+        if tasks.active() {
+            return Err("已有扫描或登记任务，请先等待完成或取消".into());
+        }
+        if imports.has_pending_files() {
+            return Err("仍有未完成导入，不能清空数据库；请先继续或撤回".into());
         }
         let job = tasks
             .begin("reset", String::new())

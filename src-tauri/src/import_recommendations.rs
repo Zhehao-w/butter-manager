@@ -12,6 +12,7 @@ use std::{
 struct Prepared<'a> {
     game: &'a Game,
     names: Vec<Name>,
+    evidence: MatchEvidence,
 }
 
 pub struct MatchIndex<'a> {
@@ -101,38 +102,25 @@ fn external_saves(paths: &[String]) -> HashSet<String> {
         .collect()
 }
 
-fn auxiliary_score(
-    score: &mut u8,
-    reason: &mut String,
-    exe: Option<&str>,
-    saves: &[String],
-    old: &Game,
-) {
-    let (same_exe, same_saves) = auxiliary_evidence(exe, saves, old);
-    if same_exe {
-        *score += 10;
-        reason.push_str(" · 特色启动文件一致");
-    }
-    if same_saves {
-        *score += 12;
-        reason.push_str(" · 游戏外部存档路径一致");
-    }
-    *score = (*score).min(94);
+struct MatchEvidence {
+    exe: Option<String>,
+    saves: HashSet<String>,
 }
 
-fn auxiliary_evidence(exe: Option<&str>, saves: &[String], old: &Game) -> (bool, bool) {
-    let old_exe = old
-        .mtool_target_exe
-        .as_deref()
-        .or(old.main_executable.as_deref());
-    let same_exe = exe
-        .and_then(distinctive_exe)
-        .zip(old_exe.and_then(distinctive_exe))
-        .is_some_and(|(a, b)| a == b);
-    (
-        same_exe,
-        !external_saves(saves).is_disjoint(&external_saves(&old.save_paths)),
-    )
+impl MatchEvidence {
+    fn new(exe: Option<&str>, saves: &[String]) -> Self {
+        Self {
+            exe: exe.and_then(distinctive_exe),
+            saves: external_saves(saves),
+        }
+    }
+
+    fn compare(&self, other: &Self) -> (bool, bool) {
+        (
+            self.exe.is_some() && self.exe == other.exe,
+            !self.saves.is_disjoint(&other.saves),
+        )
+    }
 }
 
 impl<'a> MatchIndex<'a> {
@@ -169,7 +157,17 @@ impl<'a> MatchIndex<'a> {
             for word in words {
                 *index.word_frequency.entry(word).or_default() += 1;
             }
-            index.games.push(Prepared { game, names });
+            let evidence = MatchEvidence::new(
+                game.mtool_target_exe
+                    .as_deref()
+                    .or(game.main_executable.as_deref()),
+                &game.save_paths,
+            );
+            index.games.push(Prepared {
+                game,
+                names,
+                evidence,
+            });
         }
         index
     }
@@ -198,6 +196,31 @@ impl<'a> MatchIndex<'a> {
         })
     }
 
+    fn score_evidence(
+        &self,
+        score: &mut u8,
+        reason: &mut String,
+        names: &[Name],
+        (same_exe, same_saves): (bool, bool),
+    ) {
+        if *score >= 95 {
+            return;
+        }
+        // Distinctive words help ranking, but can't establish a match by themselves.
+        if names.iter().any(|name| self.distinctive_word(name)) {
+            *score += 3;
+        }
+        if same_exe {
+            *score += 10;
+            reason.push_str(" · 特色启动文件一致");
+        }
+        if same_saves {
+            *score += 12;
+            reason.push_str(" · 游戏外部存档路径一致");
+        }
+        *score = (*score).min(94);
+    }
+
     /// Uses the same prepared names, postings and auxiliary metadata as Import, without
     /// local identity enrichment, the five-result limit, or automatic association.
     pub fn library_pairs(
@@ -221,13 +244,7 @@ impl<'a> MatchIndex<'a> {
                     return Err(crate::domain::Error::Validation("重复检查已取消".into()));
                 }
                 let old = &self.games[position];
-                let exe = incoming
-                    .game
-                    .mtool_target_exe
-                    .as_deref()
-                    .or(incoming.game.main_executable.as_deref());
-                let (same_exe, same_saves) =
-                    auxiliary_evidence(exe, &incoming.game.save_paths, old.game);
+                let (same_exe, same_saves) = incoming.evidence.compare(&old.evidence);
                 let supported = same_exe || same_saves;
                 if incoming.game.id == old.game.id
                     || incoming
@@ -261,26 +278,12 @@ impl<'a> MatchIndex<'a> {
                 else {
                     continue;
                 };
-                if score < 95 {
-                    if incoming
-                        .names
-                        .iter()
-                        .any(|name| self.distinctive_word(name))
-                    {
-                        score += 3;
-                    }
-                    auxiliary_score(
-                        &mut score,
-                        &mut reason,
-                        incoming
-                            .game
-                            .mtool_target_exe
-                            .as_deref()
-                            .or(incoming.game.main_executable.as_deref()),
-                        &incoming.game.save_paths,
-                        old.game,
-                    );
-                }
+                self.score_evidence(
+                    &mut score,
+                    &mut reason,
+                    &incoming.names,
+                    (same_exe, same_saves),
+                );
                 if score < 68 {
                     continue;
                 }
@@ -323,20 +326,17 @@ impl<'a> MatchIndex<'a> {
         candidate: &ScanCandidate,
         cancelled: &impl Fn() -> bool,
     ) -> Vec<Match> {
-        let mut normal = self.name_matches(candidate, cancelled);
+        let incoming = Name::new(&candidate.suggested_title);
+        let exe = candidate_exe(candidate);
+        let mut normal = self.name_matches(candidate, &incoming, exe, cancelled);
         if cancelled() {
             return vec![];
         }
         let identities = if self.memories.needs_identity() {
-            self.identity(
-                &candidate.install_path,
-                &candidate.working_directory,
-                candidate_exe(candidate),
-            )
+            self.identity(&candidate.install_path, &candidate.working_directory, exe)
         } else {
             vec![]
         };
-        let incoming = Name::new(&candidate.suggested_title);
         let mut remembered: Vec<_> = self
             .memories
             .matches(&candidate.suggested_title, &identities)
@@ -385,9 +385,10 @@ impl<'a> MatchIndex<'a> {
     fn name_matches(
         &mut self,
         candidate: &ScanCandidate,
+        incoming: &Name,
+        exe: Option<&str>,
         cancelled: &impl Fn() -> bool,
     ) -> Vec<Match> {
-        let incoming = Name::new(&candidate.suggested_title);
         let positions: HashSet<_> = incoming
             .keys()
             .iter()
@@ -395,17 +396,17 @@ impl<'a> MatchIndex<'a> {
             .flatten()
             .copied()
             .collect();
+        if positions.is_empty() {
+            return vec![];
+        }
+        let evidence = MatchEvidence::new(exe, &candidate.save_paths);
         let mut scores = Vec::new();
         for position in positions {
             if cancelled() {
                 return vec![];
             }
             let prepared = &self.games[position];
-            let (same_exe, same_saves) = auxiliary_evidence(
-                candidate_exe(candidate),
-                &candidate.save_paths,
-                prepared.game,
-            );
+            let (same_exe, same_saves) = evidence.compare(&prepared.evidence);
             let supported = same_exe || same_saves;
             let Some((mut score, mut reason)) = prepared
                 .names
@@ -425,19 +426,12 @@ impl<'a> MatchIndex<'a> {
             else {
                 continue;
             };
-            if score < 95 {
-                // Distinctive words help ranking, but can't establish a match by themselves.
-                if self.distinctive_word(&incoming) {
-                    score += 3;
-                }
-                auxiliary_score(
-                    &mut score,
-                    &mut reason,
-                    candidate_exe(candidate),
-                    &candidate.save_paths,
-                    prepared.game,
-                );
-            }
+            self.score_evidence(
+                &mut score,
+                &mut reason,
+                std::slice::from_ref(incoming),
+                (same_exe, same_saves),
+            );
             scores.push((position, score, reason));
         }
         scores.sort_by(|a, b| {
@@ -452,11 +446,8 @@ impl<'a> MatchIndex<'a> {
             .map(|(position, _, _)| *position)
             .collect();
         if !relaxed.is_empty() && !cancelled() {
-            let identity = self.identity(
-                &candidate.install_path,
-                &candidate.working_directory,
-                candidate_exe(candidate),
-            );
+            let identity =
+                self.identity(&candidate.install_path, &candidate.working_directory, exe);
             if !identity.is_empty() {
                 for position in relaxed {
                     if cancelled() {

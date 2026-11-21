@@ -378,6 +378,7 @@ describe('batch import flow', () => {
     const selection = vi.mocked(api.importPlan).mock.calls.at(-1)![1][0];
     expect(selection.existing_id).toBeNull();
     expect(selection.remember_association).toBe(false);
+    expect(selection.new_override).toBe(true);
   });
 
   it.each(['unassociated', 'associated', 'failure'] as const)(
@@ -530,66 +531,46 @@ describe('batch import flow', () => {
     const withdraw = within(review).queryByRole('button', { name: '撤回未完成项' });
     expect(Boolean(withdraw)).toBe(canWithdraw);
   });
-  it.each([
-    [
-      '妹系罗盘～在无人岛的悠闲慢活～シスターズコンパス～妹たちと無人島でラブラブスローライフ',
-      '姊妹指南针～与姊妹们在无人岛上的甜蜜慢生活～シスターズコンパス～ AI汉化 Ver1.02',
-      '日文主标题一致，一方缺少副标题；请确认',
-    ],
-    ['鸣人的假期 v1.0 内部赞助付费完结版', '鸣人的假期 v1.0', '中文标题一致，附加描述不同；请确认'],
-    ['My Best Deal v4.8 女神的最佳交易', 'My_Best_Deal-4.3.5-pc', '英文标题词组一致；请确认'],
-    [
-      'ReSister ― 与妹妹两人的秘密同居生活 ― v1.1.0 DLC',
-      'ReSister-与妹妹的秘密同居生活 v1.03',
-      '中文标题相近；请确认 · DLC 标记不同，请确认是否为完整更新包',
-    ],
-  ])(
-    'confirms the recommended existing game for %s before creating an update plan',
-    async (title, oldTitle, reason) => {
-      const incoming = {
-        ...candidate,
-        install_path: `D:/Incoming/${title}`,
-        suggested_title: title,
-      };
-      const existing = { ...oldGame, canonical_title: oldTitle, display_title: oldTitle };
-      vi.mocked(api.chooseImportSources).mockResolvedValue([incoming.install_path]);
-      vi.mocked(api.job).mockResolvedValue({ ...page, changes: [incoming] });
-      vi.mocked(api.importMatches).mockResolvedValue({
-        [incoming.install_path]: [
-          {
-            id: 'old',
-            title: oldTitle,
-            version: 'v1.0',
-            path: existing.install_path,
-            reason,
-            auto_associate: false,
-          },
-        ],
-      });
-      renderNewImport({ games: [existing] });
-      const associate = await screen.findByRole('button', { name: `关联：${oldTitle}` });
-      expect(screen.getByText(reason)).toBeTruthy();
-      expect(screen.queryByText('已关联库中游戏')).toBeNull();
-      expect(
-        (screen.getByRole('checkbox', { name: `选择 ${title}` }) as HTMLInputElement).checked,
-      ).toBe(true);
-      const generate = screen.getByRole('button', {
-        name: '预览导入与更新（1）',
-      }) as HTMLButtonElement;
-      expect(generate.disabled).toBe(true);
-      fireEvent.click(associate);
-      await expandSettings('游戏关联');
-      await screen.findByRole('radiogroup', { name: '存档处理' });
-      expect(generate.disabled).toBe(false);
-      fireEvent.click(generate);
-      await waitFor(() =>
-        expect(api.importPlan).toHaveBeenCalledWith('analysis', [
-          expect.objectContaining({ existing_id: 'old', source: incoming.install_path }),
-        ]),
-      );
-      expect(api.importApply).not.toHaveBeenCalled();
-    },
-  );
+  it('shows the DLC recommendation and requires confirmation before creating an update plan', async () => {
+    const reason = '中文标题相近；请确认 · DLC 标记不同，请确认是否为完整更新包';
+    const existing = { ...oldGame, display_title: 'ReSister-与妹妹的秘密同居生活 v1.03' };
+    vi.mocked(api.importMatches).mockResolvedValue({
+      [candidate.install_path]: [
+        {
+          id: existing.id,
+          title: existing.display_title,
+          version: existing.current_version,
+          path: existing.install_path,
+          reason,
+          auto_associate: false,
+        },
+      ],
+    });
+    renderNewImport({ games: [existing] });
+    const associate = await screen.findByRole('button', {
+      name: `关联：${existing.display_title}`,
+    });
+    expect(screen.getByText(reason)).toBeTruthy();
+    expect(screen.queryByText('已关联库中游戏')).toBeNull();
+    expect(
+      (screen.getByRole('checkbox', { name: '选择 Game v1.2' }) as HTMLInputElement).checked,
+    ).toBe(true);
+    const generate = screen.getByRole('button', {
+      name: '预览导入与更新（1）',
+    }) as HTMLButtonElement;
+    expect(generate.disabled).toBe(true);
+    fireEvent.click(associate);
+    await expandSettings('游戏关联');
+    await screen.findByRole('radiogroup', { name: '存档处理' });
+    expect(generate.disabled).toBe(false);
+    fireEvent.click(generate);
+    await waitFor(() =>
+      expect(api.importPlan).toHaveBeenCalledWith('analysis', [
+        expect.objectContaining({ existing_id: existing.id, source: candidate.install_path }),
+      ]),
+    );
+    expect(api.importApply).not.toHaveBeenCalled();
+  });
   it('searches and explicitly links an existing game with a long multilingual title', async () => {
     const title = '阿克梅西亚～后宫怀孕猎人生活～ アクメシア〜ハーレム孕ませ狩人生活〜';
     const existing = {
@@ -1787,31 +1768,6 @@ describe('batch import flow', () => {
       ]),
     );
     expect(api.importApply).not.toHaveBeenCalled();
-  });
-  it('keeps matched existing games checked and allows explicit new-game override', async () => {
-    vi.mocked(api.importMatches).mockResolvedValue({
-      [candidate.install_path]: [
-        {
-          id: 'old',
-          title: 'Game',
-          version: 'v1.1',
-          path: 'E:/Library/Game',
-          reason: '去除明确版本后名称一致',
-        },
-      ],
-    });
-    renderNewImport();
-    await expandSettings('游戏关联');
-    await screen.findByRole('button', { name: '已关联：Game' });
-    const checkbox = screen.getByRole('checkbox', { name: '选择 Game v1.2' }) as HTMLInputElement;
-    expect(checkbox.checked).toBe(true);
-    fireEvent.click(screen.getByRole('button', { name: '改为新游戏' }));
-    fireEvent.click(screen.getByRole('button', { name: '预览导入与更新（1）' }));
-    await waitFor(() =>
-      expect(api.importPlan).toHaveBeenCalledWith('analysis', [
-        expect.objectContaining({ existing_id: null }),
-      ]),
-    );
   });
   it('cancels an active copy and disables repeated cancellation', async () => {
     vi.mocked(api.importPlans).mockResolvedValue([{ ...plan, status: 'interrupted' }]);

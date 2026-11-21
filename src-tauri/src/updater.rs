@@ -1410,10 +1410,7 @@ impl ImportStore {
                         .map_err(|e| invalid(e.to_string()))?
                     } else {
                         let entries = self.owned_cleanup_entries(plan, index, job)?;
-                        let mut file = File::create(&manifest)?;
-                        serde_json::to_writer(&mut file, &entries)
-                            .map_err(|e| invalid(e.to_string()))?;
-                        file.sync_all()?;
+                        write_synced_json(&manifest, &entries)?;
                         plan.items[index].update.as_mut().unwrap().cleanup_ready = true;
                         self.save(plan)?;
                         entries

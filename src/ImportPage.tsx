@@ -263,6 +263,7 @@ export function ImportPage({
   onOpenGame: (id: string) => void;
   recoveryIssues?: ImportRecoveryIssue[];
 }) {
+  const gamesById = useMemo(() => new Map(games.map((game) => [game.id, game])), [games]);
   const [candidates, setCandidates] = useState<ScanCandidate[]>([]);
   const [choices, setChoices] = useState<Record<string, ImportSelection>>({});
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -315,6 +316,17 @@ export function ImportPage({
     if (visible && scroll.current)
       scroll.current.scrollTop = scrollPositions.current[scrollScope] ?? 0;
   }, [scrollScope, visible, search]);
+  function removeSources(sources: Set<string>) {
+    if (!sources.size) return;
+    const keep = (source: string) => !sources.has(source);
+    function keepEntries<T>(entries: Record<string, T>) {
+      return Object.fromEntries(Object.entries(entries).filter(([source]) => keep(source)));
+    }
+    setCandidates((current) => current.filter((candidate) => keep(candidate.install_path)));
+    setChoices(keepEntries);
+    setMatches(keepEntries);
+    setSelected((current) => new Set([...current].filter(keep)));
+  }
   const job = useJob(
     jobId,
     (changes) => {
@@ -384,7 +396,7 @@ export function ImportPage({
                     existing_id: suggestions[0].id,
                     engine:
                       next[source].engine === 'Unknown' && !next[source].engine_override
-                        ? (games.find((game) => game.id === suggestions[0].id)?.engine ?? 'Unknown')
+                        ? (gamesById.get(suggestions[0].id)?.engine ?? 'Unknown')
                         : next[source].engine,
                     mtool_strategy: undefined,
                     remember_association: true,
@@ -411,30 +423,13 @@ export function ImportPage({
             } else if (result.kind === 'import_apply' || result.kind === 'import_rollback') {
               const applied = values.find((p) => p.id === planId);
               if (result.kind === 'import_apply' && applied) {
-                const completedSources = new Set(
-                  applied.items
-                    .filter((item) => item.state === 'completed')
-                    .map((item) => item.selection.source),
+                removeSources(
+                  new Set(
+                    applied.items
+                      .filter((item) => item.state === 'completed')
+                      .map((item) => item.selection.source),
+                  ),
                 );
-                if (completedSources.size) {
-                  setCandidates((current) =>
-                    current.filter((c) => !completedSources.has(c.install_path)),
-                  );
-                  setChoices((current) =>
-                    Object.fromEntries(
-                      Object.entries(current).filter(([source]) => !completedSources.has(source)),
-                    ),
-                  );
-                  setMatches((current) =>
-                    Object.fromEntries(
-                      Object.entries(current).filter(([source]) => !completedSources.has(source)),
-                    ),
-                  );
-                  setSelected(
-                    (current) =>
-                      new Set([...current].filter((source) => !completedSources.has(source))),
-                  );
-                }
               }
               if (applied && ['completed', 'withdrawn'].includes(applied.status)) {
                 switchView('completed');
@@ -564,7 +559,7 @@ export function ImportPage({
                 !current[source].engine_override &&
                 candidates.find((candidate) => candidate.install_path === source)?.engine ===
                   'Unknown'
-                  ? (games.find((game) => game.id === change.existing_id)?.engine ?? 'Unknown')
+                  ? (gamesById.get(change.existing_id ?? '')?.engine ?? 'Unknown')
                   : current[source].engine,
               working_directory: undefined,
               launch_arguments: undefined,
@@ -666,7 +661,7 @@ export function ImportPage({
     .map((selection) =>
       launchArgumentsError(
         selection.launch_arguments ??
-          games.find((game) => game.id === selection.existing_id)?.launch_arguments ??
+          gamesById.get(selection.existing_id ?? '')?.launch_arguments ??
           '',
       ),
     )
@@ -676,21 +671,24 @@ export function ImportPage({
     : missingLaunchFiles
       ? `还有 ${missingLaunchFiles} 项需要选择启动文件。`
       : invalidArguments || '';
-  const manualGames = games
-    .filter((g) =>
-      [g.display_title, g.canonical_title, g.install_path, ...g.aliases].some((v) =>
-        v.toLocaleLowerCase().includes(linkSearch.toLocaleLowerCase()),
-      ),
-    )
-    .sort((a, b) => {
-      const recommendations = linkSource ? matches[linkSource] || [] : [];
-      const rank = (id: string) => {
-        const index = recommendations.findIndex((match) => match.id === id);
-        return index < 0 ? recommendations.length : index;
-      };
-      return rank(a.id) - rank(b.id);
-    })
-    .slice(0, 50);
+  const linkRecommendations = linkSource ? matches[linkSource] : undefined;
+  const manualGames = useMemo(() => {
+    if (!linkSource) return [];
+    const needle = linkSearch.toLocaleLowerCase();
+    const recommendations = linkRecommendations ?? [];
+    const rank = (id: string) => {
+      const index = recommendations.findIndex((match) => match.id === id);
+      return index < 0 ? recommendations.length : index;
+    };
+    return games
+      .filter((g) =>
+        [g.display_title, g.canonical_title, g.install_path, ...g.aliases].some((v) =>
+          v.toLocaleLowerCase().includes(needle),
+        ),
+      )
+      .sort((a, b) => rank(a.id) - rank(b.id))
+      .slice(0, 50);
+  }, [games, linkRecommendations, linkSearch, linkSource]);
   return (
     <section className="import-page batch-import" hidden={!visible} aria-label="批量导入游戏">
       <PageHeader
@@ -868,7 +866,7 @@ export function ImportPage({
               const source = candidate.install_path;
               const choice = choices[source];
               if (!choice) return null;
-              const existing = games.find((g) => g.id === choice.existing_id);
+              const existing = gamesById.get(choice.existing_id ?? '');
               const recommendations = matches[source] || [];
               const associations =
                 existing && !recommendations.some((match) => match.id === existing.id)
@@ -1642,22 +1640,7 @@ export function ImportPage({
           onClose={() => setDuplicateSource(null)}
           onBusy={setRecycling}
           onRecycled={() => {
-            setCandidates((current) =>
-              current.filter((candidate) => candidate.install_path !== duplicateSource),
-            );
-            setSelected(
-              (current) => new Set([...current].filter((source) => source !== duplicateSource)),
-            );
-            setChoices((current) => {
-              const next = { ...current };
-              delete next[duplicateSource];
-              return next;
-            });
-            setMatches((current) => {
-              const next = { ...current };
-              delete next[duplicateSource];
-              return next;
-            });
+            removeSources(new Set([duplicateSource]));
             setDuplicateSource(null);
             setNotice('导入副本已移入回收站，库中游戏保留。');
           }}

@@ -127,6 +127,88 @@ fn display(anchor: &Path, path: &Path) -> String {
     )
 }
 
+/// Compiled Ren'Py releases may omit options.rpy. A mirrored slot is a hint for
+/// the user, never an automatically associated path or a deletion target.
+pub(crate) fn renpy_mirrors(
+    local: &Path,
+    roaming: &Path,
+    stop: &dyn Fn() -> bool,
+) -> Vec<SaveHint> {
+    let mut hints = Vec::new();
+    let namespace = roaming.join("RenPy");
+    if crate::deletion::plain_path(&namespace).is_err() || !plain_dir(&namespace) {
+        return hints;
+    }
+    let Ok(entries) = fs::read_dir(local) else {
+        return hints;
+    };
+    let slots: Vec<_> = entries
+        .take(256)
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name();
+            if !entry
+                .path()
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("save"))
+            {
+                return None;
+            }
+            let info = fs::symlink_metadata(entry.path()).ok()?;
+            (info.is_file() && !is_link(&info) && info.len() > 0).then_some((
+                name,
+                info.len(),
+                info.modified().ok()?,
+            ))
+        })
+        .take(2)
+        .collect();
+    if slots.is_empty() {
+        return hints;
+    }
+    let Ok(dirs) = fs::read_dir(namespace) else {
+        return hints;
+    };
+    for dir in dirs.take(128).flatten() {
+        if stop() || hints.len() >= 8 {
+            break;
+        }
+        let name = dir.file_name();
+        let Some(name) = name.to_str() else { continue };
+        if name.eq_ignore_ascii_case("tokens")
+            || crate::save_detection::identity_path(name).is_none()
+            || !plain_dir(&dir.path())
+        {
+            continue;
+        }
+        let mut files = Vec::new();
+        for (slot, size, local_time) in &slots {
+            let Ok(info) = fs::symlink_metadata(dir.path().join(slot)) else {
+                continue;
+            };
+            if !info.is_file() || is_link(&info) || info.len() != *size {
+                continue;
+            }
+            let Ok(time) = info.modified() else { continue };
+            let delta = time
+                .duration_since(*local_time)
+                .or_else(|_| local_time.duration_since(time));
+            if delta.is_ok_and(|d| d <= std::time::Duration::from_secs(2)) {
+                files.push(slot.to_string_lossy().into_owned());
+            }
+        }
+        if !files.is_empty() {
+            hints.push(SaveHint {
+                path: format!("%APPDATA%/RenPy/{name}"),
+                reason: "与游戏目录的同名槽位大小和写入时间吻合，请核对".into(),
+                files,
+                can_add: true,
+            });
+        }
+    }
+    hints
+}
+
 pub(crate) fn unity(
     root: &Path,
     install_path: &Path,

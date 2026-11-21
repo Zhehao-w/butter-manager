@@ -850,7 +850,8 @@ async fn preview_game_delete(
     let imports = state.imports.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let token = uuid::Uuid::new_v4().to_string();
-        let mut plan = crate::deletion::preview(&game, &games, &settings, &data, &token);
+        let mut plan =
+            crate::deletion::preview_library_delete(&game, &games, &settings, &data, &token);
         if let Err(error) = imports.include_recovery_deletion(&id, &mut plan) {
             plan.blockers.push(error.to_string());
         }
@@ -899,7 +900,8 @@ async fn delete_game_files(
         let game = database.game(&id).map_err(|e| e.to_string())?;
         let games = database.games().map_err(|e| e.to_string())?;
         let settings = database.settings().map_err(|e| e.to_string())?;
-        let mut current = crate::deletion::preview(&game, &games, &settings, &data, &token);
+        let mut current =
+            crate::deletion::preview_library_delete(&game, &games, &settings, &data, &token);
         imports
             .include_recovery_deletion(&id, &mut current)
             .map_err(|e| e.to_string())?;

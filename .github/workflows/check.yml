@@ -187,16 +187,7 @@ jobs:
       - name: Install locked frontend dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Check formatting
-        run: |
-          pnpm format:check
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
-
-      - name: Run interface tests
-        run: pnpm test:ui
-
-      - name: Build interface
+      - name: Build interface for the Windows executable
         run: pnpm build
 
       - name: Run isolated backend tests

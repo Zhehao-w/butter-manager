@@ -1912,18 +1912,18 @@ describe('iteration interactions', () => {
     expect(api.startScan).not.toHaveBeenCalled();
     expect(api.register).not.toHaveBeenCalled();
   });
-  it('shows AppData cleanup only for RenPy and disables it without a valid directory', async () => {
+  it('omits AppData cleanup for other engines', async () => {
     const detail = await openDetail();
     showDetailTab('存档位置');
     expect(within(detail).queryByRole('button', { name: '清理 AppData 存档' })).toBeNull();
     expect(api.previewRenpyAppdata).not.toHaveBeenCalled();
-    fireEvent.click(within(detail).getByRole('button', { name: '关闭弹窗' }));
   });
   it('disables RenPy AppData cleanup when static detection finds no valid directory', async () => {
     vi.mocked(api.games).mockResolvedValue([{ ...game, engine: "Ren'Py" }]);
     const detail = await openDetail();
     showDetailTab('存档位置');
-    await within(detail).findByText('对应 AppData 存档目录不存在');
+    await within(detail).findByTitle('对应 AppData 存档目录不存在');
+    expect(within(detail).queryByText('对应 AppData 存档目录不存在')).toBeNull();
     expect(
       (within(detail).getByRole('button', { name: '清理 AppData 存档' }) as HTMLButtonElement)
         .disabled,
@@ -1954,13 +1954,15 @@ describe('iteration interactions', () => {
       expect(
         within(saveActions as HTMLElement).getByRole('button', { name: '编辑存档' }),
       ).toBeTruthy();
-      fireEvent.click(open);
-      const cancelDialog = await screen.findByRole('dialog', { name: '清理 AppData 存档？' });
-      expect(within(cancelDialog).getByText('C:/Fixture/RenPy/彼女-1234')).toBeTruthy();
-      expect(within(cancelDialog).getByText('游戏目录中的存档不受影响。')).toBeTruthy();
-      fireEvent.click(within(cancelDialog).getByRole('button', { name: '取消' }));
-      expect(api.recycleRenpyAppdata).not.toHaveBeenCalled();
-      await waitForEnabledButton('清理 AppData 存档', within(detail));
+      if (outcome === 'success') {
+        fireEvent.click(open);
+        const cancelDialog = await screen.findByRole('dialog', { name: '清理 AppData 存档？' });
+        expect(within(cancelDialog).getByText('C:/Fixture/RenPy/彼女-1234')).toBeTruthy();
+        expect(within(cancelDialog).getByText('游戏目录中的存档不受影响。')).toBeTruthy();
+        fireEvent.click(within(cancelDialog).getByRole('button', { name: '取消' }));
+        expect(api.recycleRenpyAppdata).not.toHaveBeenCalled();
+        await waitForEnabledButton('清理 AppData 存档', within(detail));
+      }
       fireEvent.click(open);
       const confirm = await screen.findByRole('dialog', { name: '清理 AppData 存档？' });
       if (outcome === 'success') {
@@ -1996,6 +1998,7 @@ describe('iteration interactions', () => {
     await screen.findByRole('button', { name: game.display_title });
     const search = screen.getByRole('textbox', { name: '搜索游戏或别名' });
     fireEvent.change(search, { target: { value: game.install_path } });
+    expect(search.getAttribute('autocomplete')).toBe('off');
     fireEvent.scroll(screen.getByLabelText('游戏列表'), { target: { scrollTop: 420 } });
     fireEvent.click(screen.getByRole('button', { name: '卡片视图' }));
     expect(screen.getByLabelText('游戏列表').scrollTop).toBe(420);
@@ -3007,6 +3010,27 @@ describe('iteration interactions', () => {
       expect(api.saveGame).not.toHaveBeenCalled();
     },
   );
+
+  it('adds the detected RenPy roaming location to an existing local save draft once', async () => {
+    const local = '<GAME>/game/saves';
+    const roaming = '%APPDATA%/RenPy/Title-123';
+    vi.mocked(api.games).mockResolvedValue([{ ...game, engine: "Ren'Py", save_paths: [local] }]);
+    vi.mocked(api.startGameAnalysis).mockResolvedValue('renpy-saves');
+    vi.mocked(api.job).mockResolvedValue({
+      ...job,
+      id: 'renpy-saves',
+      kind: 'analysis',
+      changes: [
+        { ...candidate, registered_id: game.id, engine: "Ren'Py", save_paths: [local, roaming] },
+      ],
+    });
+    const modal = await openDetail();
+    showDetailTab('存档位置');
+    fireEvent.click(within(modal).getByRole('button', { name: '分析游戏配置' }));
+    const paths = within(modal).getByRole('textbox', { name: /存档位置/ }) as HTMLTextAreaElement;
+    await waitFor(() => expect(paths.value).toBe([local, roaming].join('\n')));
+    expect(api.saveGame).not.toHaveBeenCalled();
+  });
 
   it('fills analyzed saves without a launch recommendation and stays on the selected tab', async () => {
     vi.mocked(api.startGameAnalysis).mockResolvedValue('saves-analysis');

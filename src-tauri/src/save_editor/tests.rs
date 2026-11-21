@@ -49,6 +49,38 @@ fn automatic_unity_editor_lookup_follows_the_mtool_game_target() {
 fn fixtures() -> Value {
     serde_json::from_str(include_str!("fixtures/renpy.json")).unwrap()
 }
+
+#[test]
+fn renpy_editor_defaults_to_the_local_slot_even_with_a_newer_roaming_copy() {
+    let temp = tempfile::tempdir().unwrap();
+    let install = temp.path().join("install");
+    let local = install.join("game/saves");
+    let roaming = temp.path().join("roaming");
+    fs::create_dir_all(&local).unwrap();
+    fs::create_dir(&roaming).unwrap();
+    let slot = local.join("1-1.save");
+    let copy = roaming.join("1-1.save");
+    fs::write(&slot, b"local").unwrap();
+    fs::write(&copy, b"roaming").unwrap();
+    fs::File::options()
+        .write(true)
+        .open(&slot)
+        .unwrap()
+        .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(12345))
+        .unwrap();
+    let mut g = game(&install);
+    g.engine = "Ren'Py".into();
+    g.save_paths = vec![roaming.display().to_string()];
+    let (_, entries) = discover(&g).unwrap();
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0].1, dunce::canonicalize(&slot).unwrap());
+    assert_ne!(entries[0].0.id, entries[1].0.id);
+    fs::remove_file(slot).unwrap();
+    assert_eq!(
+        discover(&g).unwrap().1[0].1,
+        dunce::canonicalize(copy).unwrap()
+    );
+}
 fn raw(fixture: &Value, name: &str) -> Vec<u8> {
     STANDARD.decode(fixture[name].as_str().unwrap()).unwrap()
 }

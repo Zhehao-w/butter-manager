@@ -192,20 +192,37 @@ fn discover_with(
     game: &Game,
     before_file: impl Fn(&Path),
 ) -> Result<(Catalog, Vec<(Slot, PathBuf)>)> {
+    let renpy = game.engine == "Ren'Py";
+    let install = Path::new(&game.install_path);
+    let local_root = renpy.then(|| dunce::canonicalize(install).ok()).flatten();
     let locations = if game.save_paths.is_empty() {
         crate::save_detection::detect_for_engine(
-            Path::new(&game.install_path),
+            install,
             &game.working_directory,
             &game.engine,
             game.game_executable(),
         )
     } else {
-        game.save_paths.clone()
+        // An older record may associate only the roaming copy. Probe game/saves
+        // directly without scanning the installation or opening options.rpy on every edit.
+        local_root
+            .as_deref()
+            .and_then(|root| {
+                crate::save_detection::preferred_local_save(
+                    root,
+                    &game.working_directory,
+                    &game.engine,
+                )
+            })
+            .into_iter()
+            .chain(game.save_paths.iter().cloned())
+            .collect()
     };
     let mut entries = Vec::new();
     let mut warnings = Vec::new();
     let mut detected_locations = Vec::new();
     let mut seen = HashSet::new();
+    let mut visited = HashSet::new();
     for location in locations {
         let root = match crate::deletion::resolve_save(game, &location) {
             Ok(path) => path,
@@ -214,6 +231,9 @@ fn discover_with(
                 continue;
             }
         };
+        if !visited.insert(crate::paths::path_key(&root)?) {
+            continue;
+        }
         let Some(root_info) = transient(fs::metadata(&root))? else {
             warnings.push(format!("存档目录不存在：{}", root.display()));
             continue;
@@ -371,8 +391,14 @@ fn discover_with(
         }
     }
     entries.sort_by(|a, b| {
-        b.0.modified
-            .cmp(&a.0.modified)
+        let external = |path: &Path| {
+            local_root
+                .as_ref()
+                .is_some_and(|root| !path.starts_with(root))
+        };
+        external(&a.1)
+            .cmp(&external(&b.1))
+            .then_with(|| b.0.modified.cmp(&a.0.modified))
             .then(a.0.name.cmp(&b.0.name))
     });
     Ok((

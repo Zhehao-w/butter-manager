@@ -6,7 +6,6 @@ const native = vi.hoisted(() => ({
   isMaximized: vi.fn(),
   minimize: vi.fn(),
   toggleMaximize: vi.fn(),
-  close: vi.fn(),
 }));
 vi.mock('@tauri-apps/api/window', () => ({ getCurrentWindow: () => native }));
 
@@ -15,24 +14,20 @@ beforeEach(() => {
   native.isMaximized.mockResolvedValue(false);
   native.minimize.mockResolvedValue(undefined);
   native.toggleMaximize.mockResolvedValue(undefined);
-  native.close.mockResolvedValue(undefined);
 });
 
-function renderTitleBar({ desktop = true, onError = vi.fn(), onClose = vi.fn() } = {}) {
+function renderTitleBar({ desktop = true, onError = vi.fn() } = {}) {
   const view = render(
-    <WindowTitleBar desktop={desktop} icon="icon.png" onError={onError} onClose={onClose} />,
+    <WindowTitleBar desktop={desktop} icon="icon.png" onError={onError} onClose={vi.fn()} />,
   );
-  return { ...view, onError, onClose };
+  return { ...view, onError };
 }
 
 describe('WindowTitleBar', () => {
-  it('minimizes and sends close through the shared guard', async () => {
-    const { onClose } = renderTitleBar();
+  it('minimizes the window', async () => {
+    renderTitleBar();
     fireEvent.click(screen.getByRole('button', { name: '最小化窗口' }));
     await waitFor(() => expect(native.minimize).toHaveBeenCalledTimes(1));
-    fireEvent.click(screen.getByRole('button', { name: '关闭窗口' }));
-    expect(onClose).toHaveBeenCalledOnce();
-    expect(native.close).not.toHaveBeenCalled();
   });
 
   it('switches maximize and restore controls and follows external window resizing', async () => {

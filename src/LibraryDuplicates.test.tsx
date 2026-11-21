@@ -92,34 +92,6 @@ async function openDeletion(id = 'b') {
   return screen.getByRole('dialog');
 }
 describe('library duplicate review', () => {
-  it('checks only on request, opens both details and supports ignore and undo without checking again', async () => {
-    const props = properties();
-    render(<LibraryDuplicates {...props} />);
-    expect(api.startDuplicateCheck).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: '查找重复' }));
-    await screen.findByText('去除明确版本后名称一致');
-    expect(screen.getByText('Z:/old')).toBeTruthy();
-    expect(screen.getByText('Z:/new')).toBeTruthy();
-    const details = screen.getAllByRole('button', { name: '查看详情' });
-    details.forEach((button) => fireEvent.click(button));
-    expect(props.onOpen.mock.calls.map((call) => call[0])).toEqual(['a', 'b']);
-    fireEvent.click(screen.getAllByRole('button', { name: '打开目录' })[0]);
-    expect(api.openFolder).toHaveBeenCalledWith('a');
-    const reviewRequests = vi.mocked(api.duplicateReviews).mock.calls.length;
-    vi.mocked(api.duplicateReviews).mockRejectedValue(new Error('refresh failed'));
-    fireEvent.click(screen.getByRole('tab', { name: '待确认 1' }));
-    fireEvent.click(screen.getByRole('button', { name: '不是同一游戏' }));
-    await screen.findByText('没有待确认的组合');
-    fireEvent.click(screen.getByRole('tab', { name: '已排除 1' }));
-    fireEvent.click(screen.getByRole('button', { name: '撤销排除' }));
-    await screen.findByText('没有已排除的组合');
-    fireEvent.click(screen.getByRole('tab', { name: '待确认 1' }));
-    expect(screen.getByText('Title v1.2')).toBeTruthy();
-    expect(screen.getByText('Title v1.0')).toBeTruthy();
-    expect(api.startDuplicateCheck).toHaveBeenCalledTimes(1);
-    expect(api.duplicateReviews).toHaveBeenCalledTimes(reviewRequests);
-    expect(props.onError).not.toHaveBeenCalled();
-  });
   it.each([
     ['excluded', '已排除', '撤销排除', 'a', 'b'],
     ['confirmed', '已确认', '撤销确认', 'b', 'a'],
@@ -132,7 +104,7 @@ describe('library duplicate review', () => {
       expect(screen.getByText('Title v1.2')).toBeTruthy();
       if (status === 'confirmed')
         expect(screen.getByRole('button', { name: '删除选中游戏…' })).toBeTruthy();
-      expect(api.startDuplicateCheck).not.toHaveBeenCalled();
+      const reviewRequests = vi.mocked(api.duplicateReviews).mock.calls.length;
       fireEvent.click(screen.getByRole('button', { name: undo }));
       await screen.findByText(`没有${label}的组合`);
       fireEvent.click(screen.getByRole('tab', { name: '待确认 1' }));
@@ -145,6 +117,8 @@ describe('library duplicate review', () => {
       expect(screen.getByText('已标记为不是同一游戏')).toBeTruthy();
       expect(screen.queryByText('已撤销决定，请重新检查匹配程度')).toBeNull();
       expect(screen.getByText('已标记为不是同一游戏。')).toBeTruthy();
+      expect(api.startDuplicateCheck).not.toHaveBeenCalled();
+      expect(api.duplicateReviews).toHaveBeenCalledTimes(reviewRequests);
     },
   );
   it('preserves filters and results across tabs and preserves the last complete results on cancellation', async () => {
@@ -334,8 +308,10 @@ describe('library duplicate review', () => {
     fireEvent.click(screen.getByRole('button', { name: '确认重复' }));
     const remove = await screen.findByRole('button', { name: '删除选中游戏…' });
     expect((remove as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.click(screen.getAllByRole('button', { name: '查看详情' })[0]);
-    expect(props.onOpen).toHaveBeenCalledWith('a');
+    screen
+      .getAllByRole('button', { name: '查看详情' })
+      .forEach((button) => fireEvent.click(button));
+    expect(props.onOpen.mock.calls.map(([id]) => id)).toEqual(['a', 'b']);
     expect((remove as HTMLButtonElement).disabled).toBe(true);
     vi.mocked(api.openFolder).mockRejectedValueOnce(new Error('目录不存在'));
     fireEvent.click(screen.getAllByRole('button', { name: '打开目录' })[1]);

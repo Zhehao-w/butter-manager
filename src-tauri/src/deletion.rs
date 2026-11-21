@@ -232,7 +232,19 @@ fn protected(
     Ok(())
 }
 
+/// Preview the installation and its explicitly configured saves.
 pub fn preview(
+    game: &Game,
+    games: &[Game],
+    settings: &Settings,
+    data: &Path,
+    token: &str,
+) -> DeletePlan {
+    preview_with_appdata(game, games, settings, data, token, None)
+}
+
+/// Only actual library-game deletion discovers unassociated Ren'Py AppData saves.
+pub fn preview_library_delete(
     game: &Game,
     games: &[Game],
     settings: &Settings,

@@ -41,6 +41,15 @@ fn renpy_delete_includes_the_unassociated_appdata_copy_once_and_checks_ownership
     .unwrap();
     fs::create_dir_all(&target).unwrap();
     game.engine = "Ren'Py".into();
+    let configured_only = preview(&game, &[], &settings, &data, "test");
+    assert!(configured_only.blockers.is_empty());
+    assert_eq!(
+        configured_only.saves,
+        [SaveAction {
+            path: text(&dunce::canonicalize(root.join("save")).unwrap()).unwrap(),
+            action: "recycle".into(),
+        }]
+    );
     let preview = |game: &Game, games: &[Game]| {
         preview_with_appdata(game, games, &settings, &data, "test", Some(&appdata))
     };

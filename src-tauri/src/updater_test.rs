@@ -986,7 +986,7 @@ fn update_preserves_uuid_metadata_local_and_external_saves_and_records_history_o
     let game = f.db.lock().unwrap().game(&f.id).unwrap();
     let settings = f.db.lock().unwrap().settings().unwrap();
     let games = f.db.lock().unwrap().games().unwrap();
-    let mut deletion = crate::deletion::preview(
+    let mut deletion = crate::deletion::preview_library_delete(
         &game,
         &games,
         &settings,

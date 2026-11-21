@@ -136,13 +136,23 @@ mod tests {
         let installed = library.join("希尔丝大冒险 The Adventures of HILLS v1.1.4");
         let source = temp.path().join("希尔丝大冒险 v1.1.4");
         let data = temp.path().join("manager");
-        fs::create_dir_all(&installed).unwrap();
-        fs::create_dir_all(source.join("www/save")).unwrap();
+        fs::create_dir_all(installed.join("game")).unwrap();
+        fs::create_dir_all(source.join("game/saves")).unwrap();
         fs::create_dir(&data).unwrap();
-        fs::write(source.join("www/save/slot.sav"), b"incoming save").unwrap();
-        let external = temp.path().join("external.sav");
+        for root in [&installed, &source] {
+            fs::write(
+                root.join("game/options.rpy"),
+                "define config.save_directory = 'DuplicateFixture-123'",
+            )
+            .unwrap();
+        }
+        fs::write(source.join("game/saves/slot.save"), b"incoming save").unwrap();
+        let external_dir = temp.path().join("AppData/RenPy/DuplicateFixture-123");
+        fs::create_dir_all(&external_dir).unwrap();
+        let external = external_dir.join("slot.save");
         fs::write(&external, b"existing save").unwrap();
         let mut game = crate::maintenance::tests::fixture_game(&installed);
+        game.engine = "Ren'Py".into();
         game.current_version = "v1.1.4".into();
         game.save_paths = vec![external.display().to_string()];
         let settings = Settings {
@@ -160,6 +170,8 @@ mod tests {
             "token",
         )
         .unwrap();
+        assert!(plan.files.blockers.is_empty());
+        assert!(plan.files.saves.is_empty());
         let trash = temp.path().join("trash");
         apply(
             &plan,
@@ -177,7 +189,7 @@ mod tests {
         assert!(installed.is_dir());
         assert!(!source.exists());
         assert_eq!(
-            fs::read(trash.join("www/save/slot.sav")).unwrap(),
+            fs::read(trash.join("game/saves/slot.save")).unwrap(),
             b"incoming save"
         );
         assert_eq!(fs::read(external).unwrap(), b"existing save");

@@ -1,7 +1,7 @@
 use crate::domain::{Error, Game, LibraryPathCheck, Result, ScanCandidate};
 use crate::{paths, scanner};
 use serde::Serialize;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -51,7 +51,7 @@ struct Data {
     warnings: Vec<String>,
     error: Option<String>,
     registered_ids: Vec<String>,
-    path_checks: Vec<LibraryPathCheck>,
+    path_checks: BTreeMap<String, LibraryPathCheck>,
     duplicate_pairs: Vec<crate::library_duplicates::DuplicatePair>,
     finished_ms: Option<u64>,
     last_progress: Instant,
@@ -104,7 +104,7 @@ impl Job {
                 warnings: vec![],
                 error: None,
                 registered_ids: vec![],
-                path_checks: vec![],
+                path_checks: BTreeMap::new(),
                 duplicate_pairs: vec![],
                 finished_ms: None,
                 last_progress: Instant::now(),
@@ -286,15 +286,7 @@ impl Job {
     }
     pub fn publish_path_check(&self, result: LibraryPathCheck) {
         let mut data = self.data.lock().unwrap();
-        if let Some(previous) = data
-            .path_checks
-            .iter_mut()
-            .find(|check| check.id == result.id)
-        {
-            *previous = result;
-        } else {
-            data.path_checks.push(result);
-        }
+        data.path_checks.insert(result.id.clone(), result);
         data.last_progress = Instant::now();
     }
     pub fn candidate(&self, path: &str) -> Option<ScanCandidate> {
@@ -384,7 +376,7 @@ impl Job {
             error: data.error.clone(),
             registered_ids: data.registered_ids.clone(),
             path_checks: if data.finished_ms.is_some() {
-                data.path_checks.clone()
+                data.path_checks.values().cloned().collect()
             } else {
                 vec![]
             },
@@ -398,6 +390,15 @@ struct Slots {
     registration: Option<Arc<Job>>,
     recent: std::collections::VecDeque<Arc<Job>>,
 }
+impl Slots {
+    fn active(&self) -> bool {
+        self.scan.as_ref().is_some_and(|job| job.is_active())
+            || self
+                .registration
+                .as_ref()
+                .is_some_and(|job| job.is_active())
+    }
+}
 #[derive(Default)]
 pub struct TaskManager {
     slots: Mutex<Slots>,
@@ -405,9 +406,7 @@ pub struct TaskManager {
 impl TaskManager {
     pub fn begin(&self, kind: &str, root: String) -> Result<Arc<Job>> {
         let mut slots = self.slots.lock().unwrap();
-        if slots.scan.as_ref().is_some_and(|v| v.is_active())
-            || slots.registration.as_ref().is_some_and(|v| v.is_active())
-        {
+        if slots.active() {
             return Err(Error::Validation(
                 "已有扫描或登记任务，请先等待完成或取消".into(),
             ));
@@ -427,9 +426,7 @@ impl TaskManager {
         Ok(job)
     }
     pub fn active(&self) -> bool {
-        let slots = self.slots.lock().unwrap();
-        slots.scan.as_ref().is_some_and(|v| v.is_active())
-            || slots.registration.as_ref().is_some_and(|v| v.is_active())
+        self.slots.lock().unwrap().active()
     }
     pub fn get(&self, id: &str) -> Result<Arc<Job>> {
         let slots = self.slots.lock().unwrap();
@@ -444,9 +441,7 @@ impl TaskManager {
     }
     pub fn clear_finished(&self) -> Result<()> {
         let mut slots = self.slots.lock().unwrap();
-        if slots.scan.as_ref().is_some_and(|j| j.is_active())
-            || slots.registration.as_ref().is_some_and(|j| j.is_active())
-        {
+        if slots.active() {
             return Err(Error::Validation("请先结束当前任务".into()));
         }
         *slots = Slots::default();

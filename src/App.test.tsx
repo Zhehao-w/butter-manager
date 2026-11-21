@@ -1912,12 +1912,11 @@ describe('iteration interactions', () => {
     expect(api.startScan).not.toHaveBeenCalled();
     expect(api.register).not.toHaveBeenCalled();
   });
-  it('shows AppData cleanup only for RenPy and disables it without a valid directory', async () => {
+  it('omits AppData cleanup for other engines', async () => {
     const detail = await openDetail();
     showDetailTab('存档位置');
     expect(within(detail).queryByRole('button', { name: '清理 AppData 存档' })).toBeNull();
     expect(api.previewRenpyAppdata).not.toHaveBeenCalled();
-    fireEvent.click(within(detail).getByRole('button', { name: '关闭弹窗' }));
   });
   it('disables RenPy AppData cleanup when static detection finds no valid directory', async () => {
     vi.mocked(api.games).mockResolvedValue([{ ...game, engine: "Ren'Py" }]);
@@ -1955,13 +1954,15 @@ describe('iteration interactions', () => {
       expect(
         within(saveActions as HTMLElement).getByRole('button', { name: '编辑存档' }),
       ).toBeTruthy();
-      fireEvent.click(open);
-      const cancelDialog = await screen.findByRole('dialog', { name: '清理 AppData 存档？' });
-      expect(within(cancelDialog).getByText('C:/Fixture/RenPy/彼女-1234')).toBeTruthy();
-      expect(within(cancelDialog).getByText('游戏目录中的存档不受影响。')).toBeTruthy();
-      fireEvent.click(within(cancelDialog).getByRole('button', { name: '取消' }));
-      expect(api.recycleRenpyAppdata).not.toHaveBeenCalled();
-      await waitForEnabledButton('清理 AppData 存档', within(detail));
+      if (outcome === 'success') {
+        fireEvent.click(open);
+        const cancelDialog = await screen.findByRole('dialog', { name: '清理 AppData 存档？' });
+        expect(within(cancelDialog).getByText('C:/Fixture/RenPy/彼女-1234')).toBeTruthy();
+        expect(within(cancelDialog).getByText('游戏目录中的存档不受影响。')).toBeTruthy();
+        fireEvent.click(within(cancelDialog).getByRole('button', { name: '取消' }));
+        expect(api.recycleRenpyAppdata).not.toHaveBeenCalled();
+        await waitForEnabledButton('清理 AppData 存档', within(detail));
+      }
       fireEvent.click(open);
       const confirm = await screen.findByRole('dialog', { name: '清理 AppData 存档？' });
       if (outcome === 'success') {

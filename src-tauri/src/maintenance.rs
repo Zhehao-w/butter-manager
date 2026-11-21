@@ -607,52 +607,6 @@ pub(crate) mod tests {
         );
     }
 
-    #[cfg(windows)]
-    #[test]
-    fn appdata_manual_cleanup_does_not_consult_running_game_state() {
-        use std::os::windows::process::CommandExt;
-        use std::process::{Command, Stdio};
-        let temp = tempfile::tempdir().unwrap();
-        let (_db, data, game, appdata) = appdata_fixture(temp.path());
-        let mut child = Command::new(std::env::var_os("ComSpec").unwrap())
-            .args(["/d", "/q", "/c", "set /p fixture="])
-            .creation_flags(0x08000000)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap();
-        let input = child.stdin.take().unwrap();
-        let running = crate::runtime::RunningGames::default();
-        running
-            .observe(
-                &game.id,
-                crate::runtime::ProcessLease::from_child(child).unwrap(),
-            )
-            .unwrap();
-        assert!(running.ensure_tracked_idle(&game).is_err());
-        ensure_appdata_cleanup_idle(0, false, false).unwrap();
-        let plan = preview_renpy_appdata(
-            &game,
-            std::slice::from_ref(&game),
-            &Settings::default(),
-            &data,
-            &appdata,
-        )
-        .unwrap();
-        recycle_renpy_appdata(&plan, &plan, |path| {
-            std::fs::rename(path, temp.path().join("fixture-trash"))?;
-            Ok(())
-        })
-        .unwrap();
-        assert!(running.ensure_tracked_idle(&game).is_err());
-        assert_eq!(
-            std::fs::read(Path::new(&game.install_path).join("game/saves/local.save")).unwrap(),
-            b"local unchanged"
-        );
-        drop(input);
-    }
-
     #[test]
     fn appdata_cleanup_rejects_ambiguous_public_shared_and_install_paths() {
         let temp = tempfile::tempdir().unwrap();

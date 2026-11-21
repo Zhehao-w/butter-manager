@@ -22,11 +22,11 @@ bash scripts/Check-Cloud.sh
 
 现有 `check.yml` 内 Linux 和 Windows 两个 job 并行执行，PR、main（兼容 master）、版本 Tag、手动构建和正式 Release 均保留检查：
 
-| job     | 检查与交付                                                                                         |
-| ------- | -------------------------------------------------------------------------------------------------- |
-| Linux   | 使用上述入口验证前端与可移植 Rust 核心，不构建桌面程序                                             |
-| Windows | 完整前端 / Rust 核心测试、格式、TypeScript / Vite、所有桌面目标 Clippy，并构建 Windows Release EXE |
-| Publish | Tag 推送自动发布；也支持已有 Release / 显式手动上传。等待两端成功后校验、上传并复核资产            |
+| job     | 检查与交付                                                                                |
+| ------- | ----------------------------------------------------------------------------------------- |
+| Linux   | 完整前端及 Rust 核心回归、Prettier、Rustfmt、TypeScript / Vite、发布脚本测试                 |
+| Windows | 原生 Rust 核心回归、所有桌面目标 Clippy、构建打包所需的前端并上传 Windows Release EXE       |
+| Publish | Tag 推送自动发布；也支持已有 Release / 显式手动上传。等待两端成功后校验、上传并复核资产     |
 
 所有 Windows 构建都上传 `butter-manager-windows-<完整提交 SHA>` artifact；PR 名称为 `butter-manager-windows-pr-<编号>`，保存 14 天。确认整个运行成功后下载与目标提交对应的 artifact，解压取得单 EXE。过期后可以对目标提交手动重跑构建，普通手动运行保持 `publish_release=false`，不会创建 Tag 或 Release。
 

@@ -45,7 +45,7 @@
 
 ## 开始使用
 
-**当前版本 1.6.3**。支持在存档编辑器中修改 VNEM/NGAM v1 余额并查看累计值。正式下载以 Release 页面为准。
+**当前版本 1.6.3**。支持在存档编辑器中按路径查看和修改 VNEM/NGAM v1 进度字段。正式下载以 Release 页面为准。
 
 1. **下载程序**：通过页首下载入口获取 `butter-manager-v1.6.3-windows-x64-portable.zip`，解压到可写的专用目录。
 2. **配置游戏库**：运行 `butter-manager.exe`，在“设置”中选择游戏库根目录并保存。首次启动自动创建旁边的 `data/`。
@@ -79,7 +79,7 @@ butter-manager/
 | Ren’Py 标准 `RevertableSet`   | 受支持结构中的字符串成员查看、增加与删除                                   |
 | Unity ES3 `.es3`              | 明文 / GZip 与标准 AES（需已知密码）的已有简单数值、布尔、文本；保留原类型 |
 | Naninovel `.nson` / `.json`   | 已识别状态结构中的标准本地 / 全局自定义变量，保留原始封装                  |
-| VNEM/NGAM v1 `.save`          | 编辑 `idol.agency.seed` 余额，单独查看只读的 `idol.agency.total_seed` 累计值 |
+| VNEM/NGAM v1 `.save`          | 按路径编辑进度 JSON 中已有的数值、布尔值和文本，支持对象与数组内字段       |
 
 ES3 的复杂对象、数组、引用与未知类型保持只读；加密存档需要已知密码，密码仅在当前编辑会话中保留。Naninovel 只编辑标准自定义变量，保留游戏自定义服务、脚本位置、场景和回滚历史；普通 JSON 文件不作为通用编辑入口。
 

@@ -689,7 +689,7 @@ fn write_document(
         }
         output
     } else if slot.format == vnem::FORMAT {
-        vnem::apply(&original, &changes[0].value)?
+        vnem::apply(&original, changes)?
     } else if unity::supports(&slot.format) {
         unity::decode(&original, &slot.format, password)?.apply(
             &original,

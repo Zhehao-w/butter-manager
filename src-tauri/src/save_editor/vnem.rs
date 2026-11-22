@@ -1,5 +1,5 @@
-use super::{format_error, invalid, json_tree, Field, Result};
-use serde_json::Value;
+use super::{format_error, invalid, json_tree, Change, Field, Result};
+use json_tree::Node;
 use std::{fs::File, io, io::Read, ops::Range, path::Path};
 
 pub(super) const FORMAT: &str = "VNEM/NGAM v1";
@@ -43,7 +43,7 @@ fn progress(data: &[u8]) -> Result<Range<usize>> {
     let progress = block(data, TABLE).ok_or_else(bad_table)?;
     // In v1 the first payload starts immediately after the 32-byte records.
     if !has_header(data)
-        || progress.start < TABLE + 2 * RECORD
+        || progress.start < TABLE + RECORD
         || !(progress.start - TABLE).is_multiple_of(RECORD)
     {
         return Err(bad_table());
@@ -56,49 +56,58 @@ fn progress(data: &[u8]) -> Result<Range<usize>> {
     Ok(progress)
 }
 
-fn agency(root: &json_tree::Node) -> Option<&json_tree::Node> {
-    root.child("idol")?.child("agency")
-}
-
 pub(super) fn fields(data: &[u8]) -> Result<Vec<Field>> {
-    let root = json_tree::Node::parse(&data[progress(data)?])?;
+    let root = Node::parse(&data[progress(data)?])?;
     let mut fields = Vec::new();
-    if let Some(agency) = agency(&root) {
-        for (key, name) in [("seed", "余额"), ("total_seed", "累计值")] {
-            if let Some(node) = agency.child(key).filter(|node| node.value.is_number()) {
-                let mut field = Field::new(
-                    format!("idol.agency.{key}"),
-                    name.into(),
-                    "variables",
-                    node.value.clone(),
-                );
-                if key == "total_seed" {
-                    field.readonly("累计值仅供查看");
-                }
-                fields.push(field);
-            }
-        }
-    }
+    collect_fields(&root, &mut String::new(), &mut fields);
     Ok(fields)
 }
 
-pub(super) fn apply(data: &[u8], value: &Value) -> Result<Vec<u8>> {
+fn collect_fields(node: &Node, path: &mut String, fields: &mut Vec<Field>) {
+    if !node.value.is_object() && !node.value.is_array() {
+        let mut field = Field::new(path.clone(), path.clone(), "variables", node.value.clone());
+        if node.value.is_null() {
+            field.readonly("空值没有可保留的类型");
+        }
+        fields.push(field);
+    }
+    for (key, child) in &node.children {
+        let parent_len = path.len();
+        path.push('/');
+        path.push_str(&key.replace('~', "~0").replace('/', "~1"));
+        collect_fields(child, path, fields);
+        path.truncate(parent_len);
+    }
+}
+
+pub(super) fn apply(data: &[u8], changes: &[Change]) -> Result<Vec<u8>> {
     let progress = progress(data)?;
-    let root = json_tree::Node::parse(&data[progress.clone()])?;
-    let seed = agency(&root)
-        .and_then(|agency| agency.child("seed"))
-        .ok_or_else(|| invalid("找不到 VNEM/NGAM 余额字段"))?;
-    let encoded = serde_json::to_vec(value).map_err(format_error)?;
-    let old_len = seed.span.len();
-    let new_len = encoded.len();
-    let span = progress.start + seed.span.start..progress.start + seed.span.end;
-    let mut output = json_tree::patch(data, vec![(span, encoded)])?;
-    if old_len != new_len {
-        let length = progress.len() - old_len + new_len;
+    let root = Node::parse(&data[progress.clone()])?;
+    let mut patches = Vec::with_capacity(changes.len());
+    for change in changes {
+        let node = change
+            .id
+            .strip_prefix('/')
+            .and_then(|path| {
+                path.split('/').try_fold(&root, |node, key| {
+                    node.child(&key.replace("~1", "/").replace("~0", "~"))
+                })
+            })
+            .ok_or_else(|| invalid("找不到 VNEM/NGAM 字段"))?;
+        let span = progress.start + node.span.start..progress.start + node.span.end;
+        patches.push((
+            span,
+            serde_json::to_vec(&change.value).map_err(format_error)?,
+        ));
+    }
+    let mut output = json_tree::patch(data, patches)?;
+    if output.len() != data.len() {
+        let length = output.len() - (data.len() - progress.len());
         output[TABLE + LENGTH..TABLE + RECORD].copy_from_slice(&(length as u64).to_le_bytes());
+        let progress_end = progress.start + length;
         for record in (TABLE + RECORD..progress.start).step_by(RECORD) {
             let start = block(data, record).expect("validated record").start;
-            let offset = start - NGAM - old_len + new_len;
+            let offset = progress_end - NGAM + (start - progress.end);
             output[record + OFFSET..record + LENGTH]
                 .copy_from_slice(&(offset as u64).to_le_bytes());
         }

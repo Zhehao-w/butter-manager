@@ -6,6 +6,7 @@ mod rpg;
 #[cfg(test)]
 mod tests;
 mod unity;
+mod vnem;
 
 use crate::domain::{Error, Game, Result};
 use serde::{Deserialize, Serialize};
@@ -362,6 +363,18 @@ fn discover_with(
             {
                 return Err(invalid("存档路径已改变或越出关联目录"));
             }
+            let format = if format == "RenPy" {
+                let Some(is_vnem) = transient(vnem::probe(&path))? else {
+                    continue;
+                };
+                if is_vnem {
+                    vnem::FORMAT
+                } else {
+                    format
+                }
+            } else {
+                format
+            };
             if !seen.insert(crate::paths::path_key(&path)?) {
                 continue;
             }
@@ -454,6 +467,8 @@ fn document_with_password(
             auxiliary.warnings,
             None,
         )
+    } else if slot.format == vnem::FORMAT {
+        (vnem::fields(data)?, Vec::new(), None, Vec::new(), None)
     } else if unity::supports(&slot.format) {
         if password.is_none() && unity::locked(data, &slot.format) {
             return Ok(Document {
@@ -673,6 +688,8 @@ fn write_document(
             return Err(invalid("存档往返校验失败"));
         }
         output
+    } else if slot.format == vnem::FORMAT {
+        vnem::apply(&original, changes)?
     } else if unity::supports(&slot.format) {
         unity::decode(&original, &slot.format, password)?.apply(
             &original,
@@ -702,7 +719,7 @@ fn write_document(
             }
         }
     }
-    if unity::supports(&slot.format) && output == original {
+    if (slot.format == vnem::FORMAT || unity::supports(&slot.format)) && output == original {
         return document_with_password(game, slot, path, &original, password);
     }
     // A complete, validated sibling temporary file; never a backup of the source.

@@ -516,8 +516,8 @@ export function SaveEditor({
         {busy && !document && <p role="status">正在读取存档…</p>}
         {!busy && !catalog.slots.length && (
           <p className="muted">
-            支持 MV、MZ、Ren’Py、ES3 和
-            Naninovel。请确认已关联存档目录，且游戏已经保存过进度；新增的目录需要先保存资料。
+            支持 MV、MZ、Ren’Py、ES3、Naninovel 和 VNEM/NGAM v1。
+            请确认已关联存档目录，且游戏已经保存过进度；新增的目录需要先保存资料。
           </p>
         )}
         {document && (

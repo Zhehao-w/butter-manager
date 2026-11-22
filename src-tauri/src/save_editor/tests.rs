@@ -102,6 +102,81 @@ fn field<'a>(fields: &'a [Field], name: &str) -> &'a Field {
     fields.iter().find(|f| f.name == name).unwrap()
 }
 
+#[test]
+fn vnem_roundtrips_progress_fields_preserving_other_blocks() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("save/slot.save");
+    fs::create_dir(path.parent().unwrap()).unwrap();
+    let settings = b"\x00\xffsettings";
+    let trailer = b"\x01\x03\xff";
+    let fixture = |progress: &str, later_blocks: bool| {
+        let progress_offset = if later_blocks { 0x68 } else { 0x28 };
+        let mut data = vec![0; 0x80 + progress_offset];
+        data[..4].copy_from_slice(b"VNEM");
+        data[0x80..0x84].copy_from_slice(b"NGAM");
+        data[0x84] = 1;
+        data[0x98..0xa0].copy_from_slice(&(progress_offset as u64).to_le_bytes());
+        data[0xa0..0xa8].copy_from_slice(&(progress.len() as u64).to_le_bytes());
+        if later_blocks {
+            data[0xa8] = 1;
+            data[0xc8] = 2;
+            let settings_offset = (progress_offset + progress.len()) as u64;
+            for (at, value) in [
+                (0xb8, settings_offset),
+                (0xc0, settings.len() as u64),
+                (0xd8, settings_offset + settings.len() as u64 + 1),
+                (0xe0, trailer.len() as u64),
+            ] {
+                data[at..at + 8].copy_from_slice(&value.to_le_bytes());
+            }
+        }
+        data.extend_from_slice(progress.as_bytes());
+        if later_blocks {
+            data.extend_from_slice(settings);
+            data.push(0x7f);
+            data.extend_from_slice(trailer);
+        }
+        data
+    };
+    let original = r#"{
+  "idol": {"agency": {"seed": 12, "total_seed": 1200}},
+  "party": [{"name/~": "测试", "active": false}], "seed": 12, "empty": null
+}"#;
+    let expected = r#"{
+  "idol": {"agency": {"seed": 765432, "total_seed": 1200}},
+  "party": [{"name/~": "勇者 A", "active": true}], "seed": 12, "empty": null
+}"#;
+    let game = game(temp.path());
+    for later_blocks in [false, true] {
+        let original = fixture(original, later_blocks);
+        fs::write(&path, &original).unwrap();
+        let slot = list(&game).unwrap().slots.pop().unwrap();
+        assert_eq!(slot.format, "VNEM/NGAM v1");
+        let before = read(&game, &slot.id).unwrap();
+        assert!(before.signature.is_none());
+        assert!(!field(&before.fields, "/empty").editable);
+        let fields = [
+            field(&before.fields, "/idol/agency/seed"),
+            field(&before.fields, "/party/0/name~1~0"),
+            field(&before.fields, "/party/0/active"),
+        ];
+        let changes = [
+            change(fields[0], json!(765432)),
+            change(fields[1], json!("勇者 A")),
+            change(fields[2], json!(true)),
+        ];
+        let after = apply(&game, &slot.id, &before.revision, &changes, false).unwrap();
+        let total = field(&after.fields, "/idol/agency/total_seed");
+        assert_eq!(total.value, json!(1200));
+        assert!(total.editable);
+        assert_eq!(fs::read(&path).unwrap(), fixture(expected, later_blocks));
+
+        let restore = fields.map(|field| change(field, field.value.clone()));
+        apply(&game, &slot.id, &after.revision, &restore, false).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), original);
+    }
+}
+
 fn unity_fixtures() -> Vec<Value> {
     serde_json::from_str(include_str!("fixtures/unity.json")).unwrap()
 }

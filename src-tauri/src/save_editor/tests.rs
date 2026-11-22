@@ -102,6 +102,90 @@ fn field<'a>(fields: &'a [Field], name: &str) -> &'a Field {
     fields.iter().find(|f| f.name == name).unwrap()
 }
 
+#[test]
+fn vnem_roundtrips_a_balance_with_different_digits_preserving_total_and_settings() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("save/slot.save");
+    fs::create_dir(path.parent().unwrap()).unwrap();
+    let settings = b"{\"volume\":0.8, \"textSpeed\":2}";
+    let trailer = b"\x01\x03\xff";
+    let fixture = |progress: &str| {
+        let mut data = vec![0; 0xe8];
+        data[..4].copy_from_slice(b"VNEM");
+        data[0x80..0x84].copy_from_slice(b"NGAM");
+        data[0x84] = 1;
+        data[0xa8] = 1;
+        data[0xc8] = 2;
+        let settings_offset = 0x68 + progress.len() as u64;
+        for (at, value) in [
+            (0x98, 0x68),
+            (0xa0, progress.len() as u64),
+            (0xb8, settings_offset),
+            (0xc0, settings.len() as u64),
+            (0xd8, settings_offset + settings.len() as u64 + 1),
+            (0xe0, trailer.len() as u64),
+        ] {
+            data[at..at + 8].copy_from_slice(&value.to_le_bytes());
+        }
+        data.extend_from_slice(progress.as_bytes());
+        data.extend_from_slice(settings);
+        data.push(0x7f);
+        data.extend_from_slice(trailer);
+        data
+    };
+    let progress =
+        r#"{ "name": "测试", "idol": {"agency": {"seed": 12, "total_seed": 1200}}, "seed": 12 }"#;
+    let original = fixture(progress);
+    fs::write(&path, &original).unwrap();
+    let game = game(temp.path());
+    let slot = list(&game).unwrap().slots.pop().unwrap();
+    assert_eq!(slot.format, "VNEM/NGAM v1");
+    let before = read(&game, &slot.id).unwrap();
+    assert!(before.signature.is_none());
+    assert_eq!(before.fields.len(), 2);
+    let balance = field(&before.fields, "余额");
+    let total = field(&before.fields, "累计值");
+    assert_eq!(balance.path, "idol.agency.seed");
+    assert_eq!(balance.value, json!(12));
+    assert!(balance.editable);
+    assert_eq!(total.path, "idol.agency.total_seed");
+    assert_eq!(total.value, json!(1200));
+    assert!(!total.editable);
+    assert!(apply(
+        &game,
+        &slot.id,
+        &before.revision,
+        &[change(total, json!(1))],
+        false,
+    )
+    .is_err());
+    assert_eq!(fs::read(&path).unwrap(), original);
+
+    let after = apply(
+        &game,
+        &slot.id,
+        &before.revision,
+        &[change(balance, json!(765432))],
+        false,
+    )
+    .unwrap();
+    assert_eq!(field(&after.fields, "余额").value, json!(765432));
+    assert_eq!(field(&after.fields, "累计值"), total);
+    assert_eq!(
+        fs::read(&path).unwrap(),
+        fixture(&progress.replacen("\"seed\": 12", "\"seed\": 765432", 1))
+    );
+    apply(
+        &game,
+        &slot.id,
+        &after.revision,
+        &[change(balance, json!(12))],
+        false,
+    )
+    .unwrap();
+    assert_eq!(fs::read(&path).unwrap(), original);
+}
+
 fn unity_fixtures() -> Vec<Value> {
     serde_json::from_str(include_str!("fixtures/unity.json")).unwrap()
 }

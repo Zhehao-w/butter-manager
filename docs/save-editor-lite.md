@@ -8,7 +8,7 @@
 
 ## 支持范围
 
-1.1.0 支持 MV / MZ、Ren’Py，以及下表 ES3 / Naninovel。自动化验证不等于所有真实游戏均已读档验收；NRBF、通用 JSON 和注册表不在本版本范围内。参考来源见 [Unity 专项调研](unity-save-research.md)和 [格式总体调研](save-format-research.md)。
+当前支持 MV / MZ、Ren’Py、ES3、Naninovel 和 VNEM/NGAM v1。NRBF、通用 JSON 和注册表不在支持范围。参考来源见 [Unity 专项调研](unity-save-research.md)和 [格式总体调研](save-format-research.md)。
 
 | 格式 | 支持 | 限制 |
 | --- | --- | --- |
@@ -18,6 +18,13 @@
 | Ren’Py `persistent` | zlib pickle + 尾部签名；公开字段与容器子字段；同步所属顶层字段的 `_changed` 修改时间戳 | 无法安全维护时间戳时只读；不根据变量名推断字段含义 |
 | ES3（1.1.0 新增） | `.es3` 明文 / GZip；标准 AES-128-CBC + PKCS7、IV 前缀、PBKDF2-HMAC-SHA1 的已知密码容器，支持加密内的 GZip | 顶层 typed-entry 中明确类型的已有数值、布尔、文本；复杂对象、数组、引用与未知类型只读；不查找或猜测密码 |
 | Naninovel（1.1.0 新增） | raw DEFLATE `.nson` 与已识别结构的明文 `.json`；`CustomVariableManager` 的本地 / 全局简单变量，新版类型化变量与旧版字符串映射 | 保留原始封装；游戏自定义服务、脚本位置、场景和回滚历史不编辑；自定义加密 / handler 不支持 |
+| VNEM/NGAM v1（1.6.3 新增） | 已关联的 `.save`；编辑 `idol.agency.seed` 余额，单独显示只读的 `idol.agency.total_seed` 累计值 | 仅写回所选槽位的余额，设置及其他数据原样保留 |
+
+## VNEM/NGAM v1 文件编辑
+
+将包含 `.save` 的目录或单个文件添加到游戏的「存档位置」，保存资料后打开编辑器。文件头在 `0x00` 和 `0x80` 分别匹配 `VNEM` 和 `NGAM` 时，按该格式打开。区块表从 `0x88` 连续排列到首个区块，每条记录为小端 `<IIQQQ>`，末两项为相对 `0x80` 的偏移和字节长度。区块 0 是 UTF-8 进度 JSON，区块 1 是设置。
+
+保存只替换余额的 JSON 数字。数字字节数变化时同步区块 0 长度及后续区块偏移，保留累计值、设置、其他区块和原有空白。沿用修改校验、同文件版本复核与临时文件替换。合成夹具已覆盖位数变化，实际游戏读档待验收。
 
 ## Unity 文件编辑（1.1.0 新增）
 

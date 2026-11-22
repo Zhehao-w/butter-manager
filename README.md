@@ -30,7 +30,7 @@
 | 导入与更新     | 批量导入、关联已有游戏，预览名称、目录和存档处理，保留游戏标识及历史；可记住人工确认的关联          |
 | 恢复与回退     | 中断任务继续 / 撤回，从仍在回收站中的原旧版本回退，并带回当前内部存档                               |
 | 查重与工具清理 | 查看重复推荐，确认 / 排除 / 撤销；导入后可选整目录回收随包 MTool                                    |
-| 存档编辑       | 编辑受支持的 RPG Maker MV / MZ、Ren’Py、ES3 与 Naninovel 存档，支持字段和值搜索                     |
+| 存档编辑       | 编辑受支持的 RPG Maker MV / MZ、Ren’Py、ES3、Naninovel 与 VNEM/NGAM v1 存档，支持字段和值搜索       |
 | 路径与资料管理 | 目录重命名、整库路径重新关联、Ren’Py AppData 专属存档目录手动回收                                   |
 
 [直接 EXE 启动参数](docs/launch-arguments.md)支持多参数和双引号分组；MTool / QSP 模式隐藏参数，切回直接 EXE 时保留原值。分析结果可直接选用发现的文件，高级选项位于末尾；Import 顶部标记生效的启动参数。标准名称用于识别与关联，目录名在「记录与管理 → 重命名目录」修改。
@@ -45,14 +45,14 @@
 
 ## 开始使用
 
-**当前版本 1.6.2**。减少跨盘导入、游戏匹配和批量迁移中的重复工作，并修复移除库记录或清空库时可能漏检未完成导入的问题。正式下载以 Release 页面为准。
+**当前版本 1.6.3**。支持在存档编辑器中修改 VNEM/NGAM v1 余额并查看累计值。正式下载以 Release 页面为准。
 
-1. **下载程序**：通过页首下载入口获取 `butter-manager-v1.6.2-windows-x64-portable.zip`，解压到可写的专用目录。
+1. **下载程序**：通过页首下载入口获取 `butter-manager-v1.6.3-windows-x64-portable.zip`，解压到可写的专用目录。
 2. **配置游戏库**：运行 `butter-manager.exe`，在“设置”中选择游戏库根目录并保存。首次启动自动创建旁边的 `data/`。
 3. **登记已有游戏**：点击“扫描目录”，选择需要入库的游戏。扫描登记保持游戏原位；完整扫描也会按已保存配置补齐已有游戏的空存档路径，不覆盖已有路径。新下载的游戏从“导入”添加。
 4. **开始游玩**：从游戏库启动，或在详情中调整资料与启动配置。“正在玩”随成功提交的启动请求更新，手动设置的“已通关”保留。
 
-Windows 需要 [WebView2 Runtime](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution)。发布页提供 Portable ZIP 和 `butter-manager-v1.6.2-windows-x64-portable.zip.sha256`；独立 EXE 仅保留在 CI artifact 中。未签名程序可能出现 SmartScreen 提示，请核对来源与校验值。
+Windows 需要 [WebView2 Runtime](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution)。发布页提供 Portable ZIP 和 `butter-manager-v1.6.3-windows-x64-portable.zip.sha256`；独立 EXE 仅保留在 CI artifact 中。未签名程序可能出现 SmartScreen 提示，请核对来源与校验值。
 
 ```text
 butter-manager/
@@ -60,7 +60,7 @@ butter-manager/
 └── data/                 # 游戏库、设置、恢复记录与 WebView2 用户资料
 ```
 
-**升级**：关闭管理器，从新版 ZIP 提取 EXE 并替换旧 EXE，保留整个现有 `data/`；不要用下载目录中新建的空资料覆盖原库。“设置 → 关于应用”可查看应用版本与构建提交。**1.6.2 沿用 schema 15，从 1.5.0–1.6.1 升级无需迁移；从 1.4.0 及更早版本升级时自动迁移。已使用 schema 15 的开发构建无需再次迁移；1.4.0 及更早 EXE 无法打开升级后的库，请勿直接降级。**
+**升级**：关闭管理器，从新版 ZIP 提取 EXE 并替换旧 EXE，保留整个现有 `data/`；不要用下载目录中新建的空资料覆盖原库。“设置 → 关于应用”可查看应用版本与构建提交。**1.6.3 沿用 schema 15，从 1.5.0–1.6.2 升级无需迁移；从 1.4.0 及更早版本升级时自动迁移。已使用 schema 15 的开发构建无需再次迁移；1.4.0 及更早 EXE 无法打开升级后的库，请勿直接降级。**
 
 **迁移**：先完成或撤回文件任务，关闭程序，再复制整个程序文件夹和游戏目录。路径变化后，在“设置 → 高级维护”预览并确认新旧根目录映射；此功能重新关联记录，不搬动文件。
 
@@ -79,6 +79,7 @@ butter-manager/
 | Ren’Py 标准 `RevertableSet`   | 受支持结构中的字符串成员查看、增加与删除                                   |
 | Unity ES3 `.es3`              | 明文 / GZip 与标准 AES（需已知密码）的已有简单数值、布尔、文本；保留原类型 |
 | Naninovel `.nson` / `.json`   | 已识别状态结构中的标准本地 / 全局自定义变量，保留原始封装                  |
+| VNEM/NGAM v1 `.save`          | 编辑 `idol.agency.seed` 余额，单独查看只读的 `idol.agency.total_seed` 累计值 |
 
 ES3 的复杂对象、数组、引用与未知类型保持只读；加密存档需要已知密码，密码仅在当前编辑会话中保留。Naninovel 只编辑标准自定义变量，保留游戏自定义服务、脚本位置、场景和回滚历史；普通 JSON 文件不作为通用编辑入口。
 

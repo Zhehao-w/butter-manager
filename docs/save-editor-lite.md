@@ -8,7 +8,7 @@
 
 ## 支持范围
 
-当前支持 MV / MZ、Ren’Py、ES3、Naninovel 和 VNEM/NGAM v1。独立的 `.json` 文件需要符合 Naninovel 结构。参考来源见 [Unity 专项调研](unity-save-research.md)和 [格式总体调研](save-format-research.md)。
+当前支持 MV / MZ、Ren’Py、ES3、Naninovel、VNEM/NGAM v1 和 Godot 4 FileAccess Variant。普通文本 `.json` 的编辑支持以 Naninovel 结构为准。参考来源见 [Unity 专项调研](unity-save-research.md)和 [格式总体调研](save-format-research.md)。
 
 | 格式 | 支持 | 限制 |
 | --- | --- | --- |
@@ -19,6 +19,15 @@
 | ES3（1.1.0 新增） | `.es3` 明文 / GZip；标准 AES-128-CBC + PKCS7、IV 前缀、PBKDF2-HMAC-SHA1 的已知密码容器，支持加密内的 GZip | 顶层 typed-entry 中明确类型的已有数值、布尔、文本；复杂对象、数组、引用与未知类型只读；不查找或猜测密码 |
 | Naninovel（1.1.0 新增） | raw DEFLATE `.nson` 与已识别结构的明文 `.json`；`CustomVariableManager` 的本地 / 全局简单变量，新版类型化变量与旧版字符串映射 | 保留原始封装；游戏自定义服务、脚本位置、场景和回滚历史不编辑；自定义加密 / handler 不支持 |
 | VNEM/NGAM v1（1.6.3 新增） | 已关联的 `.save`；按路径搜索和编辑进度 JSON 中已有的数值、布尔值和文本 | `null` 只读，后续区块原样保留 |
+| Godot 4（1.6.4 新增） | `FileAccess.store_var()` 生成的一条或多条记录。支持 Dictionary、Array、内建类型声明及已有的布尔值、整数、浮点数、String 和 StringName | 键、Nil、数学类型及 Packed 数组只读，全对象序列化需另行支持 |
+
+## Godot 4 FileAccess 存档
+
+将存档文件或其直接所在目录加入游戏的「存档位置」，保存资料后打开编辑器。每条记录以 4 字节小端长度开头，后面紧跟完整的 Variant。编辑器逐条检查到文件末尾，再将文件列为 **Godot 4** 槽位。识别不需要指定游戏引擎、文件名或字段名，`.save` 同样先走内容识别。[Godot 4.6 FileAccess 源码](https://github.com/godotengine/godot/blob/4.6-stable/core/io/file_access.cpp#L921-L934)
+
+每条记录在字段树中独立显示，例如 `/1/party/0` 是第一条记录的 `party` 数组的第一项。可一次保存多处修改。Dictionary 键、Array 元素类型声明和未修改的值按原始字节保留。整数仍是整数，浮点数仍是浮点数，较大的值可从 32 位编码扩为 64 位。若文本或数值的编码变长，保存时更新对应记录的长度。现有文件版本和写回校验继续生效。[Godot 4.6 Variant 序列化源码](https://github.com/godotengine/godot/blob/4.6-stable/core/io/marshalls.cpp)
+
+本功能覆盖小端的连续 `store_var()` 记录。ConfigFile 文本、独立的 `var_to_bytes()` 缓冲区，以及额外压缩、加密或游戏自定义包装需要对应的格式支持。Godot 的字段含义及可接受的值由游戏自身决定。
 
 ## VNEM/NGAM v1 文件编辑
 

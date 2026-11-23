@@ -103,6 +103,100 @@ fn field<'a>(fields: &'a [Field], name: &str) -> &'a Field {
 }
 
 #[test]
+fn godot_store_var_roundtrips_native_single_and_multi_record_fixtures() {
+    let fixture: Value = serde_json::from_str(include_str!("fixtures/godot.json")).unwrap();
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path().join("save");
+    fs::create_dir(&dir).unwrap();
+    let multi = dir.join("world.save");
+    let original = raw(&fixture, "original");
+    fs::write(&multi, &original).unwrap();
+    fs::write(dir.join("checkpoint"), raw(&fixture, "single")).unwrap();
+    fs::write(dir.join("renpy.save"), b"PK\x03\x04not a Variant").unwrap();
+    let game = game(temp.path());
+    let catalog = list(&game).unwrap();
+    assert_eq!(catalog.slots.len(), 3);
+    let slot = |name: &str| {
+        catalog
+            .slots
+            .iter()
+            .find(|slot| slot.name.starts_with(name))
+            .unwrap()
+    };
+    assert_eq!(slot("renpy.save").format, "RenPy");
+    let single = slot("checkpoint");
+    assert_eq!(single.format, godot::FORMAT);
+    let single = read(&game, &single.id).unwrap();
+    assert_eq!(single.fields.len(), 1);
+    assert_eq!(single.fields[0].value, json!("one"));
+    assert_eq!(single.fields[0].type_name.as_deref(), Some("StringName"));
+
+    let slot = slot("world.save");
+    assert_eq!(slot.format, godot::FORMAT);
+    let before = read(&game, &slot.id).unwrap();
+    let at = |path: &str| {
+        before
+            .fields
+            .iter()
+            .find(|field| field.path == path)
+            .unwrap()
+    };
+    assert_eq!(at("/1").child_count, Some(7));
+    assert_eq!(
+        at("/1/party/0").parent_id.as_ref(),
+        Some(&at("/1/party").id)
+    );
+    assert_eq!(at("/1/party/0").value, "短");
+    assert!(!at("/1/position").editable);
+    assert!(!at("/1/unset").editable);
+    assert!(apply(
+        &game,
+        &slot.id,
+        &before.revision,
+        &[change(at("/1/turn"), json!(1.5))],
+        false,
+    )
+    .is_err());
+    assert_eq!(fs::read(&multi).unwrap(), original);
+    let changes = [
+        change(at("/1/party/0"), json!("见习冒险者")),
+        change(at("/1/ranks/[int 7]"), json!(0.1)),
+        change(at("/1/turn"), json!(4_000_000_000i64)),
+        change(at("/1/victory"), json!(true)),
+        change(at("/2"), json!("a longer second record")),
+    ];
+    let after = apply(&game, &slot.id, &before.revision, &changes, false).unwrap();
+    assert_eq!(field(&after.fields, "turn").value, json!(4_000_000_000i64));
+    let actual = fs::read(&multi).unwrap();
+    assert_eq!(actual, raw(&fixture, "expected"));
+    export_fixture("godot-edited.save", &actual);
+}
+
+#[test]
+fn godot_detection_requires_exact_variant_records_through_eof() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("data");
+    for words in [
+        &[8u32, 2][..],          // Truncated Variant.
+        &[8, 0, 0],              // Valid Nil followed by bytes inside the record.
+        &[4, 0, 0],              // Valid first record followed by an invalid length.
+        &[4, 0, 8, 2],           // Truncated second record.
+        &[4, 255],               // Unknown type.
+        &[4, 24],                // Full Object encoding is outside the codec.
+        &[8, 0x1001c, 2],        // Typed Array with no count.
+        &[16, 0x1001c, 2, 1, 0], // Nil in an Array[int].
+        &[12, 4, 1, 0xff],       // Invalid UTF-8.
+    ] {
+        let data: Vec<u8> = words.iter().flat_map(|word| word.to_le_bytes()).collect();
+        fs::write(&path, &data).unwrap();
+        assert!(
+            !godot::probe(&path, data.len() as u64).unwrap(),
+            "{words:x?}"
+        );
+    }
+}
+
+#[test]
 fn vnem_roundtrips_progress_fields_preserving_other_blocks() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("save/slot.save");

@@ -1,4 +1,5 @@
 //! Save Editor Lite: associated slots, explicit leaf paths and known string sets are writable.
+mod godot;
 mod json_tree;
 mod pickle;
 mod renpy;
@@ -338,19 +339,8 @@ fn discover_with(
                 unity::ES3
             } else if lower.ends_with(".nson") {
                 unity::NANI
-            } else if lower.ends_with(".json") && info.len() <= FILE_LIMIT as u64 {
-                if vanished(plain(&path))?.is_none() {
-                    continue;
-                }
-                let Some(bytes) = vanished(read_limited(&path, FILE_LIMIT))? else {
-                    continue;
-                };
-                if !unity::recognize_json(&bytes) {
-                    continue;
-                }
-                unity::NANI
             } else {
-                continue;
+                ""
             };
             let Some(path) = transient(dunce::canonicalize(path))? else {
                 continue;
@@ -363,7 +353,9 @@ fn discover_with(
             {
                 return Err(invalid("存档路径已改变或越出关联目录"));
             }
-            let format = if format == "RenPy" {
+            let format = if !nested && godot::probe(&path, info.len()).unwrap_or(false) {
+                godot::FORMAT
+            } else if format == "RenPy" {
                 let Some(is_vnem) = transient(vnem::probe(&path))? else {
                     continue;
                 };
@@ -372,8 +364,18 @@ fn discover_with(
                 } else {
                     format
                 }
-            } else {
+            } else if !format.is_empty() {
                 format
+            } else if lower.ends_with(".json") && info.len() <= FILE_LIMIT as u64 {
+                let Some(bytes) = vanished(read_limited(&path, FILE_LIMIT))? else {
+                    continue;
+                };
+                if !unity::recognize_json(&bytes) {
+                    continue;
+                }
+                unity::NANI
+            } else {
+                continue;
             };
             if !seen.insert(crate::paths::path_key(&path)?) {
                 continue;
@@ -467,6 +469,8 @@ fn document_with_password(
             auxiliary.warnings,
             None,
         )
+    } else if slot.format == godot::FORMAT {
+        (godot::fields(data)?, Vec::new(), None, Vec::new(), None)
     } else if slot.format == vnem::FORMAT {
         (vnem::fields(data)?, Vec::new(), None, Vec::new(), None)
     } else if unity::supports(&slot.format) {
@@ -688,6 +692,8 @@ fn write_document(
             return Err(invalid("存档往返校验失败"));
         }
         output
+    } else if slot.format == godot::FORMAT {
+        godot::apply(&original, changes)?
     } else if slot.format == vnem::FORMAT {
         vnem::apply(&original, changes)?
     } else if unity::supports(&slot.format) {
@@ -719,7 +725,10 @@ fn write_document(
             }
         }
     }
-    if (slot.format == vnem::FORMAT || unity::supports(&slot.format)) && output == original {
+    if (matches!(slot.format.as_str(), godot::FORMAT | vnem::FORMAT)
+        || unity::supports(&slot.format))
+        && output == original
+    {
         return document_with_password(game, slot, path, &original, password);
     }
     // A complete, validated sibling temporary file; never a backup of the source.

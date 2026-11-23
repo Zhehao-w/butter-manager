@@ -688,7 +688,8 @@ mod tests {
         let exact = low.join("DefaultCompany/ProjectMoon");
         let from_log = low.join("古い名前/Project42");
         let other = low.join("Other/Project42");
-        for d in [&data, &exact, &from_log, &other] {
+        let name_only = low.join("NameOnly/ProjectMoon");
+        for d in [&data, &exact, &from_log, &other, &name_only] {
             fs::create_dir_all(d).unwrap();
         }
         fs::write(data.join("app.info"), "DefaultCompany\nProjectMoon\n").unwrap();
@@ -696,8 +697,6 @@ mod tests {
         let mono = format!("Mono path[0] = '{}/Managed'", data.display());
         fs::write(from_log.join("Player.log"), &mono).unwrap();
         fs::write(other.join("Player.log"), mono.replace("_Data", "_Data2")).unwrap();
-        fs::create_dir(from_log.join("Slots")).unwrap();
-        fs::write(from_log.join("Slots/slot01.es3"), b"fixture").unwrap();
         let analyze = || {
             let mut hints = Vec::new();
             let paths = search(
@@ -715,23 +714,29 @@ mod tests {
         };
         let (paths, hints) = analyze();
         assert!(paths.is_empty());
-        assert!(hints
-            .iter()
-            .any(|h| h.path.ends_with("ProjectMoon") && !h.can_add));
-        assert!(hints.iter().any(|h| h.path.ends_with("Project42/Slots")
-            && h.files == ["slot01.es3"]
-            && h.can_add));
-        assert!(!hints.iter().any(|h| h.path.contains("Other")));
+        for (suffix, can_add) in [
+            ("DefaultCompany/ProjectMoon", true),
+            ("古い名前/Project42", true),
+            ("NameOnly/ProjectMoon", false),
+        ] {
+            let hint = hints.iter().find(|h| h.path.ends_with(suffix)).unwrap();
+            assert_eq!(hint.can_add, can_add, "{suffix}");
+            assert!(hint.files.is_empty());
+        }
+        assert!(!hints.iter().any(|h| h.path.contains("Other/Project42")));
+        fs::create_dir(from_log.join("Slots")).unwrap();
+        fs::write(from_log.join("Slots/slot01.es3"), b"fixture").unwrap();
         let canonical_data = dunce::canonicalize(&data).unwrap();
         fs::write(
             from_log.join("Player.log"),
             format!("Mono path[0] = '{}/Managed'", canonical_data.display()),
         )
         .unwrap();
-        assert!(analyze()
-            .1
-            .iter()
-            .any(|h| h.path.ends_with("Project42/Slots") && h.can_add));
+        let with_slots = analyze().1;
+        let first = with_slots.first().unwrap();
+        assert!(first.path.ends_with("Project42/Slots"));
+        assert_eq!(first.files, ["slot01.es3"]);
+        assert!(first.can_add);
         fs::write(exact.join("save.nson"), b"fixture").unwrap();
         for name in ["Custom", "Save"] {
             fs::create_dir(exact.join(name)).unwrap();

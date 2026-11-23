@@ -117,14 +117,14 @@ fn log_matches(log: &str, needle: &str) -> bool {
     })
 }
 
-fn display(anchor: &Path, path: &Path) -> String {
-    format!(
-        "%USERPROFILE%/AppData/LocalLow/{}",
-        path.strip_prefix(anchor)
-            .unwrap()
-            .to_string_lossy()
-            .replace('\\', "/")
-    )
+fn locallow_path(anchor: &Path, path: &Path) -> Option<String> {
+    let relative = path.strip_prefix(anchor).ok()?.to_str()?;
+    (!relative.contains('%')).then(|| {
+        format!(
+            "%USERPROFILE%/AppData/LocalLow/{}",
+            relative.replace('\\', "/")
+        )
+    })
 }
 
 /// Compiled Ren'Py releases may omit options.rpy. A mirrored slot is a hint for
@@ -266,7 +266,7 @@ pub(crate) fn unity(
     }
     let mut matches = BTreeMap::new();
     if let Some(dir) = product {
-        matches.insert(dir.to_path_buf(), "厂商名和产品名与 app.info 一致");
+        matches.insert(dir.to_path_buf(), ("厂商名和产品名与 app.info 一致", true));
     }
     let mut exact_files = product.map(|dir| evidence(dir, stop));
     let search_logs = exact_files.as_ref().is_none_or(BTreeMap::is_empty);
@@ -288,10 +288,15 @@ pub(crate) fn unity(
                     break;
                 }
                 let dir = entry.path();
+                // Paths read from the directory may use different separators or casing than app.info.
                 if !plain_dir(&dir)
-                    || matches
-                        .keys()
-                        .any(|p| dir.as_os_str().eq_ignore_ascii_case(p.as_os_str()))
+                    || product.is_some_and(|exact| {
+                        dir.iter().count() == exact.iter().count()
+                            && dir
+                                .iter()
+                                .zip(exact)
+                                .all(|(a, b)| a.eq_ignore_ascii_case(b))
+                    })
                 {
                     continue;
                 }
@@ -299,47 +304,45 @@ pub(crate) fn unity(
                     let log = text.replace('\\', "/").to_lowercase();
                     log_paths.iter().any(|path| log_matches(&log, path))
                 }) {
-                    matches.insert(dir, "Player.log 指向当前游戏的安装目录");
+                    matches.insert(dir, ("Player.log 指向当前游戏的安装目录", true));
                 } else if distinctive_stem && entry.file_name().eq_ignore_ascii_case(stem) {
-                    matches.insert(dir, "目录名与启动文件同名，请核对");
+                    matches.insert(dir, ("目录名与启动文件同名，请核对", false));
                 } else if identity.as_ref().is_some_and(|(_, product)| {
                     entry
                         .file_name()
                         .eq_ignore_ascii_case(std::ffi::OsStr::new(product))
                 }) {
-                    matches.insert(dir, "目录与产品同名，请核对厂商");
+                    matches.insert(dir, ("目录与产品同名，请核对厂商", false));
                 }
             }
         }
     }
-    for (dir, reason) in matches {
+    for (dir, (reason, confirmed)) in matches {
         if stop() {
             break;
         }
-        let path = display(low, &dir);
         let found = if Some(dir.as_path()) == product {
             exact_files.take().unwrap_or_default()
         } else {
             evidence(&dir, stop)
         };
         if found.is_empty() {
-            hints.push(SaveHint {
-                path,
-                reason: format!("{reason}，尚未发现可辨认的存档文件"),
-                files: vec![],
-                can_add: false,
-            });
+            if let Some(path) = locallow_path(low, &dir) {
+                hints.push(SaveHint {
+                    path,
+                    reason: format!("{reason}，尚未发现可辨认的存档文件"),
+                    files: vec![],
+                    can_add: confirmed,
+                });
+            }
         } else {
             for (subdir, mut files) in found {
-                if subdir
-                    .strip_prefix(low)
-                    .is_ok_and(|p| p.to_string_lossy().contains('%'))
-                {
+                let Some(path) = locallow_path(low, &subdir) else {
                     continue;
-                }
+                };
                 files.sort();
                 hints.push(SaveHint {
-                    path: display(low, &subdir),
+                    path,
                     reason: reason.into(),
                     files,
                     can_add: true,
@@ -353,6 +356,7 @@ pub(crate) fn unity(
         });
         (
             !h.can_add,
+            h.files.is_empty(),
             h.reason.contains("同名"),
             !save_folder,
             h.path.clone(),

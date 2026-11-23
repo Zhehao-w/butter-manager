@@ -127,7 +127,8 @@ describe('Save Editor Lite', () => {
     fireEvent.change(await screen.findByLabelText('金钱'), { target: { value: '25' } });
     expect(screen.queryByLabelText('ES3 密码')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: '保存修改 (1)' }));
-    await screen.findByText('已保存，请回游戏重新读档。');
+    const saved = await screen.findByText('已保存，请回游戏重新读档。');
+    expect(saved.querySelector('.save-success-mark')).toBeTruthy();
     expect(api.applySaveEdits).toHaveBeenLastCalledWith(
       'game',
       'one',

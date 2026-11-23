@@ -1,9 +1,28 @@
 import { act, fireEvent, render, renderHook, screen } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { NotificationToast, useNotifications } from './notifications';
+import { NotificationToast, useDelayedBusy, useNotifications } from './notifications';
 
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
+
+it('skips busy feedback for a quick request and only shows it while a slow request is active', () => {
+  const { result, rerender } = renderHook(({ busy }) => useDelayedBusy(busy), {
+    initialProps: { busy: true },
+  });
+  act(() => vi.advanceTimersByTime(35));
+  expect(result.current).toBe(false);
+  rerender({ busy: false });
+  act(() => vi.advanceTimersByTime(300));
+  expect(result.current).toBe(false);
+  rerender({ busy: true });
+  act(() => vi.advanceTimersByTime(299));
+  expect(result.current).toBe(false);
+  act(() => vi.advanceTimersByTime(1));
+  expect(result.current).toBe(true);
+  rerender({ busy: false });
+  expect(result.current).toBe(false);
+});
+
 function Fixture() {
   const { notice, setToast, setError, dismiss } = useNotifications();
   return (

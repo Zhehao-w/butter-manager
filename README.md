@@ -17,7 +17,7 @@
   <a href="https://github.com/Zhehao-w/butter-manager/releases/latest"><strong>下载 Windows 版</strong></a> ·
   <a href="#开始使用">快速开始</a> ·
   <a href="#存档编辑">支持的存档</a> ·
-  <a href="CHANGELOG.md">更新记录</a> ·
+  <a href="#界面反馈">界面反馈</a> ·
   <a href="https://github.com/Zhehao-w/butter-manager/issues">反馈问题</a>
 </p>
 
@@ -31,9 +31,11 @@
 | 处理重复文件和路径变更 | 查看重复推荐、回收随包 MTool、重命名游戏目录或批量迁移库路径                                          |
 | 定位和编辑存档         | 查找本地或 AppData 存档，按名称、路径或值搜索受支持的字段                                             |
 
-## 开始使用
+> **1.6.5 · 界面动效与操作反馈**
+>
+> 弹窗背景平滑过渡，保存成功有对勾，短操作期间按钮保持稳定。[完整变更](CHANGELOG.md)
 
-> **1.6.4** 加入 Godot 4 `FileAccess.store_var()` 存档编辑。正式资产见 [GitHub Releases](https://github.com/Zhehao-w/butter-manager/releases/latest)。
+## 开始使用
 
 1. **下载并解压。** 下载 Windows x64 Portable ZIP，将 `butter-manager.exe` 放在可写的专用目录。
 2. **设置游戏库。** 启动管理器，在「设置」中选择游戏库根目录并保存。首次运行会在程序旁创建 `data/`。
@@ -48,7 +50,7 @@ butter-manager/
 └── data/                 # 游戏库、设置、恢复记录与 WebView2 用户资料
 ```
 
-**升级时关闭管理器，只替换 EXE，保留完整的 `data/`。** 1.6.4 沿用 schema 15，从 1.5.0–1.6.3 升级无需迁移。「设置 → 关于应用」显示版本和构建提交。[旧版升级与数据目录](docs/portable.md)
+**升级时关闭管理器，只替换 EXE，保留完整的 `data/`。** 1.6.5 沿用 schema 15，从 1.5.0–1.6.4 升级无需迁移。「设置 → 关于应用」显示版本和构建提交。[旧版升级与数据目录](docs/portable.md)
 
 迁移时先完成或撤回文件任务，再关闭程序并复制程序和游戏目录。游戏路径有变化时，在「设置 → 高级维护」预览并确认新旧根目录的映射。[便携迁移步骤](docs/portable.md)
 
@@ -66,6 +68,12 @@ butter-manager/
 | VNEM/NGAM v1 `.save`             | 按路径编辑进度 JSON 中已有的数值、布尔值和文本，支持对象与数组内字段               |
 
 **每次只保存选中的槽位文件。** Naninovel 的 `Global` 是独立槽位，可能影响多个存档。Ren’Py 优先打开游戏目录内的存档，现有记录可用「分析游戏配置」补全 AppData 路径。各格式的字段范围、已知密码要求和 Ren’Py 本机重签见 [存档编辑说明](docs/save-editor-lite.md)。
+
+## 界面反馈
+
+- 打开详情、筛选、存档编辑或确认框时，弹窗和背景分别平滑过渡。叠在下面的弹窗使用同样的遮罩规则。
+- 保存结果在原提示位置显示。短操作会立即防止重复提交，耗时较长时再显示忙碌反馈。
+- 切换标签或筛选时，内容即时更新，选中样式平滑过渡。界面遵循 Windows 的「减少动态效果」设置。
 
 ## 导入、回退与回收
 

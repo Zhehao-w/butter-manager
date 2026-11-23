@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef } from 'react';
+import { useId, useLayoutEffect, useRef } from 'react';
 import type { ButtonHTMLAttributes, ReactNode } from 'react';
 import type { Game } from './types';
 import libraryIcon from './assets/lucide/gamepad-2.svg';
@@ -243,6 +243,8 @@ export function CardTitle({
     </div>
   );
 }
+const openDialogs: HTMLDialogElement[] = [];
+
 export function Modal({
   title,
   onClose,
@@ -267,10 +269,19 @@ export function Modal({
   children: ReactNode;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const dialog = ref.current!;
     dialog.showModal();
-    return () => dialog.close();
+    const previous = openDialogs.at(-1);
+    if (previous) previous.dataset.modalCovered = '';
+    openDialogs.push(dialog);
+    return () => {
+      dialog.close();
+      openDialogs.splice(openDialogs.indexOf(dialog), 1);
+      delete dialog.dataset.modalCovered;
+      const front = openDialogs.at(-1);
+      if (front) delete front.dataset.modalCovered;
+    };
   }, []);
   return (
     <dialog

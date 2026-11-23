@@ -8,7 +8,12 @@ import { useStableVirtualizer } from './useStableVirtualizer';
 import { api } from './api';
 import { mergeDetailDraft, mergeScanGame } from './gameSync';
 import { useLibraryReorder } from './useLibraryReorder';
-import { useNotifications, NotificationToast } from './notifications';
+import {
+  useDelayedBusy,
+  useNotifications,
+  NotificationToast,
+  SaveSuccessMark,
+} from './notifications';
 import { appIcon, sidebarCharacter } from './appearance';
 import {
   Icon,
@@ -335,7 +340,7 @@ export default function App() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const autoSelected = useRef(new Set<string>());
   const [starting, setStarting] = useState(false);
-  const { notice, setToast, setError, dismiss } = useNotifications();
+  const { notice, setToast, setSaved, setError, dismiss } = useNotifications();
   const desktop = isTauri();
 
   function mergeChanges(changes: ScanCandidate[]) {
@@ -1819,7 +1824,7 @@ export default function App() {
               onSave={async (next) => {
                 const saved = await api.saveSettings(next);
                 setSettings(saved);
-                setToast('设置已保存。');
+                setSaved('设置已保存。');
               }}
             />
           )}
@@ -2242,6 +2247,7 @@ function DiscardConfirmation({
   busy?: boolean;
   error?: string;
 }) {
+  const showBusy = useDelayedBusy(busy);
   return (
     <Modal
       title={onSave ? '关闭前保存修改？' : '放弃未保存修改？'}
@@ -2256,8 +2262,8 @@ function DiscardConfirmation({
             {actionLabel}
           </button>
           {onSave && (
-            <button disabled={busy} className="primary" onClick={onSave}>
-              {busy ? '保存中…' : '保存并关闭'}
+            <button disabled={busy} aria-busy={busy} className="primary" onClick={onSave}>
+              {showBusy ? '保存中…' : '保存并关闭'}
             </button>
           )}
         </div>
@@ -2938,7 +2944,7 @@ function GameDetail({
       const saved = await api.addSaveLocation(game.id, path);
       appendSaveDraft(path);
       onSavePathsChanged(saved);
-      setMessage('存档位置已自动保存。');
+      setSaved('存档位置已自动保存。');
     }, '正在保存存档位置…');
   }
   const selectedSave = saveLocations.includes(saveToOpen) ? saveToOpen : saveLocations[0];
@@ -2998,7 +3004,7 @@ function GameDetail({
   const [maintenanceBusy, setMaintenanceBusy] = useState(false);
   const [folderError, setFolderError] = useState<string | null>(null);
   const busy = requestBusy || maintenanceBusy;
-  const [message, setMessage] = useState('');
+  const { notice: detailNotice, setToast: setMessage, setSaved } = useNotifications();
   const saveFeedbackTimer = useRef<number | null>(null);
   const saveFeedbackOwner = useRef(0);
   useEffect(
@@ -3018,11 +3024,14 @@ function GameDetail({
       setMessage(progress);
     }, 300);
     saveFeedbackTimer.current = timer;
-    return (result?: string) => {
+    return (result?: string, saved = false) => {
       if (owner !== saveFeedbackOwner.current) return;
       window.clearTimeout(timer);
       saveFeedbackTimer.current = null;
-      if (result) setMessage(result);
+      if (result) {
+        if (saved) setSaved(result);
+        else setMessage(result);
+      }
     };
   }
   const [confirmClose, setConfirmClose] = useState(false);
@@ -3161,7 +3170,7 @@ function GameDetail({
     JSON.stringify(draft.tags ?? []) !== JSON.stringify(game.tags) ||
     aliases !== game.aliases.join('\n') ||
     saves !== game.save_paths.join('\n');
-  const detailStatus = message || analysisNotice;
+  const detailStatus = detailNotice?.message || analysisNotice;
   const close = () => {
     if (busy || pendingStatus.current) return;
     if (dirty) setConfirmClose(true);
@@ -3201,7 +3210,7 @@ function GameDetail({
       setAliases(saved.aliases.join('\n'));
       setSaves(saved.save_paths.join('\n'));
       onSaved(saved);
-      setMessage('游戏资料已保存。');
+      setSaved('游戏资料已保存。');
     }, '正在保存游戏资料…');
   }
   async function saveStatus(status: PlayStatus) {
@@ -3218,7 +3227,7 @@ function GameDetail({
     try {
       const saved = await write;
       setDraft((current) => ({ ...current, play_status: saved }));
-      finishFeedback('游玩状态已自动保存。');
+      finishFeedback('游玩状态已自动保存。', true);
     } catch (reason) {
       finishFeedback(`游玩状态保存失败：${String(reason)}`);
     } finally {
@@ -3401,7 +3410,7 @@ function GameDetail({
             <button
               type="submit"
               form={formId}
-              className={`detail-save-button ${dirty ? 'primary' : ''}`}
+              className="primary detail-save-button"
               disabled={!dirty || busy || launching || confirmClose}
             >
               <Icon name="save" size={18} />
@@ -3425,6 +3434,7 @@ function GameDetail({
         />
       )}
       <div className="detail-feedback" role="status" title={detailStatus}>
+        {detailNotice?.saved && <SaveSuccessMark key={detailNotice.id} />}
         {detailStatus}
       </div>
       <PathBadge check={pathCheck} />

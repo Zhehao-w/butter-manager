@@ -21,7 +21,10 @@ const page: JobPage = {
   error: null,
   registered_ids: [],
 };
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
 
 it('keeps active progress and cancellation visible, then fades after completion', () => {
   vi.useFakeTimers();
@@ -44,19 +47,13 @@ it('keeps active progress and cancellation visible, then fades after completion'
   );
   act(() => vi.advanceTimersByTime(3000));
   expect(screen.getByRole('status').classList.contains('fading')).toBe(true);
-  expect(
-    screen.getByRole('status').closest('.task-banner-slot')?.classList.contains('expanded'),
-  ).toBe(true);
-  act(() => vi.advanceTimersByTime(300));
+  act(() => vi.advanceTimersByTime(149));
   expect(screen.getByRole('status')).toBeTruthy();
-  expect(
-    screen.getByRole('status').closest('.task-banner-slot')?.classList.contains('expanded'),
-  ).toBe(false);
-  act(() => vi.advanceTimersByTime(300));
+  act(() => vi.advanceTimersByTime(1));
   expect(screen.queryByRole('status')).toBeNull();
 });
 
-it('pauses dismissal while hovering and keeps failures available until dismissed', () => {
+it('pauses dismissal while hovered or focused and keeps failures until dismissed', () => {
   vi.useFakeTimers();
   const { rerender } = render(
     <TaskBanner page={{ ...page, status: 'completed' }} onCancel={() => {}} />,
@@ -65,9 +62,13 @@ it('pauses dismissal while hovering and keeps failures available until dismissed
   act(() => vi.advanceTimersByTime(10000));
   expect(screen.getByRole('status').classList.contains('fading')).toBe(false);
   fireEvent.mouseLeave(screen.getByRole('status'));
+  const close = screen.getByRole('button', { name: '关闭扫描目录提示' });
+  fireEvent.focus(close);
+  act(() => vi.advanceTimersByTime(10000));
+  expect(screen.getByRole('status').classList.contains('fading')).toBe(false);
+  fireEvent.blur(close);
   act(() => vi.advanceTimersByTime(3000));
-  act(() => vi.advanceTimersByTime(300));
-  act(() => vi.advanceTimersByTime(300));
+  act(() => vi.advanceTimersByTime(150));
   expect(screen.queryByRole('status')).toBeNull();
   rerender(
     <TaskBanner
@@ -80,7 +81,21 @@ it('pauses dismissal while hovering and keeps failures available until dismissed
   fireEvent.click(screen.getByRole('button', { name: '关闭扫描目录提示' }));
   expect(screen.getByRole('alert').classList.contains('fading')).toBe(true);
   fireEvent.mouseLeave(screen.getByRole('alert'));
-  act(() => vi.advanceTimersByTime(300));
-  act(() => vi.advanceTimersByTime(300));
+  act(() => vi.advanceTimersByTime(150));
+  expect(screen.queryByRole('alert')).toBeNull();
+});
+
+it('skips the fade when reduced motion is enabled', () => {
+  vi.useFakeTimers();
+  vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: true }));
+  const { rerender } = render(
+    <TaskBanner page={{ ...page, status: 'completed' }} onCancel={() => {}} />,
+  );
+  act(() => vi.advanceTimersByTime(2999));
+  expect(screen.getByRole('status')).toBeTruthy();
+  act(() => vi.advanceTimersByTime(1));
+  expect(screen.queryByRole('status')).toBeNull();
+  rerender(<TaskBanner page={{ ...page, id: 'retry', status: 'failed' }} onCancel={() => {}} />);
+  fireEvent.click(screen.getByRole('button', { name: '关闭扫描目录提示' }));
   expect(screen.queryByRole('alert')).toBeNull();
 });

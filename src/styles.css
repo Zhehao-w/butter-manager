@@ -20,6 +20,7 @@
   --dropdown-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23788aa9' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
   --line: #e3edfa;
   --accent: #1677ff;
+  --modal-scrim: #1c355e40;
   --control-height: 40px;
   --toolbar-control-height: 44px;
   --control-radius: 11px;
@@ -58,9 +59,12 @@ button {
   box-shadow: 0 1px 2px #00000006;
   font-weight: 500;
   transition:
-    background-color 120ms,
-    border-color 120ms,
-    box-shadow 120ms;
+    background-color 120ms ease var(--button-lock-delay, 0ms),
+    border-color 120ms ease var(--button-lock-delay, 0ms),
+    color 120ms ease var(--button-lock-delay, 0ms),
+    opacity 100ms ease var(--button-lock-delay, 0ms),
+    box-shadow 0ms var(--button-lock-delay, 0ms),
+    translate 100ms ease-out;
 }
 button:hover:not(:disabled) {
   background-color: #edf5ff;
@@ -69,7 +73,15 @@ button:hover:not(:disabled) {
 button:active:not(:disabled) {
   background-color: #dfedff;
 }
+@media (prefers-reduced-motion: no-preference) {
+  button:is(.primary, .danger-solid, .save-editor-entry):active:not(:disabled):not(
+      [data-launch-pending]
+    ) {
+    translate: 0 1px;
+  }
+}
 button:disabled {
+  --button-lock-delay: 150ms;
   opacity: 0.42;
   cursor: default;
 }
@@ -1226,6 +1238,21 @@ pre {
   display: flex;
   flex-direction: column;
 }
+@media (prefers-reduced-motion: no-preference) {
+  .modal[open] {
+    animation: modal-enter 150ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+}
+@keyframes modal-enter {
+  from {
+    opacity: 0;
+    translate: 0 4px;
+  }
+  to {
+    opacity: 1;
+    translate: 0 0;
+  }
+}
 .modal-scroll-shell {
   flex: 1;
   min-height: 0;
@@ -1238,13 +1265,29 @@ pre {
   overscroll-behavior: contain;
   scrollbar-gutter: auto;
 }
-.modal::backdrop {
-  position: fixed;
+#root::after,
+.modal::after {
+  content: '';
   inset: 0;
-  /* Clip the blur output to the WebView viewport as well as its background. */
-  clip-path: inset(0);
-  background: #1d1d1f30;
-  backdrop-filter: blur(3px);
+  background: var(--modal-scrim);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+#root::after {
+  position: fixed;
+  z-index: 30;
+}
+.modal::after {
+  position: absolute;
+  z-index: 4;
+}
+#root:has(.modal[open])::after,
+.modal[data-modal-covered]::after {
+  opacity: 1;
+}
+.modal::backdrop {
+  display: none;
 }
 .modal-header {
   display: flex;
@@ -1253,8 +1296,7 @@ pre {
   gap: 16px;
   flex: none;
   padding: 20px 24px;
-  background: #f4f8ffef;
-  backdrop-filter: blur(12px);
+  background: #f4f8ff;
   border-bottom: 1px solid var(--line);
   z-index: 1;
 }
@@ -1361,27 +1403,8 @@ fieldset {
   max-height: calc(100% - 180px);
   display: flex;
   flex-direction: column;
+  gap: 8px;
   pointer-events: none;
-}
-.task-banner-slot {
-  display: grid;
-  grid-template-rows: 0fr;
-  margin-top: 0;
-  opacity: 0;
-  filter: drop-shadow(0 8px 14px #294e7c1c);
-  transition:
-    grid-template-rows 300ms cubic-bezier(0.22, 1, 0.36, 1),
-    margin-top 300ms cubic-bezier(0.22, 1, 0.36, 1),
-    opacity 220ms ease;
-}
-.task-banner-slot.expanded {
-  grid-template-rows: 1fr;
-  margin-top: 8px;
-  opacity: 1;
-}
-.task-banner-slot-content {
-  min-height: 0;
-  overflow: hidden;
 }
 .task-banner {
   display: flex;
@@ -1392,15 +1415,13 @@ fieldset {
   border-radius: 16px;
   background: #fafdff;
   color: #42628b;
+  box-shadow: 0 8px 14px #294e7c1c;
   pointer-events: auto;
   opacity: 1;
-  transition:
-    opacity 300ms ease,
-    transform 300ms ease;
+  transition: opacity 150ms ease-out;
 }
 .task-banner.fading {
   opacity: 0;
-  transform: translateY(6px);
   pointer-events: none;
 }
 .task-banner > .icon {
@@ -1610,12 +1631,6 @@ fieldset {
     margin-left: auto;
   }
 }
-@media (prefers-reduced-motion: reduce) {
-  .task-banner,
-  .task-banner-slot {
-    transition: none;
-  }
-}
 .active-item {
   display: flex;
   align-items: center;
@@ -1652,6 +1667,33 @@ fieldset {
   background: transparent;
   border-color: transparent;
   box-shadow: none;
+}
+.save-success-mark {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  color: #27786e;
+  opacity: 0.85;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .save-success-mark {
+    animation: save-success 800ms ease-out;
+  }
+}
+@keyframes save-success {
+  from {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+  18%,
+  75% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0.85;
+    transform: scale(1);
+  }
 }
 .play-button {
   min-width: 96px;
@@ -1691,10 +1733,13 @@ fieldset {
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  *,
+  *:not(button),
   *::before,
   *::after {
     transition: none !important;
+  }
+  button {
+    transition-duration: 0ms !important;
   }
 }
 
@@ -2128,6 +2173,9 @@ button {
 }
 .import-disclosure-toggle:hover {
   background: #eaf3ff;
+}
+.import-disclosure-toggle > .icon:first-child {
+  transition: transform 120ms ease-out;
 }
 .import-disclosure-toggle[aria-expanded='true'] > .icon:first-child {
   transform: rotate(90deg);
@@ -4037,6 +4085,12 @@ tbody tr:not(:last-child) td {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 .filter-options .filter-option {
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease;
+}
+.filter-options .filter-option {
   --filter-tint: #f0f3f8;
   --filter-color: #657590;
   display: grid;
@@ -4049,14 +4103,12 @@ tbody tr:not(:last-child) td {
   border-radius: 11px;
   background: var(--filter-tint);
   cursor: pointer;
-  transition:
-    border-color 120ms ease,
-    box-shadow 120ms ease;
 }
 .filter-options .filter-option:hover {
   border-color: #c2d5ed;
 }
 .filter-options .filter-option.selected {
+  background-color: color-mix(in srgb, var(--filter-tint) 93%, var(--accent));
   border-color: #84b5f3;
   box-shadow: inset 0 0 0 1px #84b5f326;
 }
@@ -4200,7 +4252,6 @@ tbody tr:not(:last-child) td {
   padding: 0;
   border: 0;
   background: transparent;
-  backdrop-filter: none;
   z-index: 2;
 }
 .modal-with-hero > .modal-header button {
@@ -4209,10 +4260,6 @@ tbody tr:not(:last-child) td {
 }
 .modal-with-hero > .modal-header button:not(.primary) {
   background: #ffffffde;
-}
-.modal::backdrop {
-  background: #1c355e40;
-  backdrop-filter: blur(6px);
 }
 .modal-header {
   padding: 16px 24px;
@@ -4319,6 +4366,9 @@ tbody tr:not(:last-child) td {
 }
 .detail-feedback {
   position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   z-index: 3;
   bottom: 56px;
   right: 24px;
@@ -4447,7 +4497,7 @@ tbody tr:not(:last-child) td {
 }
 .detail-save-button:disabled {
   color: #8c9bb1;
-  background: #f5f8fc;
+  background-color: #f5f8fc;
   border-color: #dce6f4;
   opacity: 1;
   box-shadow: none;
@@ -4478,12 +4528,11 @@ tbody tr:not(:last-child) td {
 }
 .detail-tabs button[aria-selected='true'] {
   color: var(--accent);
-  background: linear-gradient(180deg, #fff, #f6faff);
+  background: #fafdff;
   border-color: #a9ceff;
   box-shadow:
     0 2px 8px #406db012,
     inset 0 -2px 0 #6ba8ff;
-  font-weight: 600;
 }
 .modal-detail [role='tabpanel'] {
   min-width: 0;
@@ -4984,7 +5033,7 @@ textarea,
   scroll-behavior: auto;
   overscroll-behavior: contain;
 }
-.toast > span:not(.icon) {
+.toast-message {
   flex: 1;
   min-width: 0;
 }
@@ -6010,6 +6059,9 @@ button.save-editor-entry:active:not(:disabled) {
   border-radius: 10px;
 }
 .save-editor-success {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   color: #15907f;
   font-size: 13px;
 }

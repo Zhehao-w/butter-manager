@@ -345,11 +345,14 @@ describe('library organization', () => {
       fireEvent.click(within(filters).getByLabelText('只看收藏'));
       fireEvent.click(within(filters).getByRole('button', { name: '管理标签' }));
       const manager = screen.getByRole('dialog', { name: '管理标签' });
+      expect(filters.hasAttribute('data-modal-covered')).toBe(true);
+      expect(manager.hasAttribute('data-modal-covered')).toBe(false);
       if (action === 'Escape')
         fireEvent(manager, new Event('cancel', { bubbles: true, cancelable: true }));
       else fireEvent.click(within(manager).getByRole('button', { name: action }));
       expect(screen.queryByRole('dialog', { name: '管理标签' })).toBeNull();
       expect(screen.getByRole('dialog', { name: '筛选游戏' })).toBe(filters);
+      expect(filters.hasAttribute('data-modal-covered')).toBe(false);
       expect(body.scrollTop).toBe(240);
       expect((within(filters).getByLabelText('只看收藏') as HTMLInputElement).checked).toBe(true);
       expect(screen.getByRole('button', { name: 'Other' })).toBeTruthy();
@@ -1118,9 +1121,14 @@ describe('iteration interactions', () => {
         await act(async () => {});
         const success = mode === 'status' ? '游玩状态已自动保存。' : '游戏资料已保存。';
         expect(feedback.textContent).toBe(success);
+        const firstMark = feedback.querySelector('.save-success-mark');
+        expect(firstMark).toBeTruthy();
         save();
         expect(feedback.textContent).toBe(success);
         await act(async () => {});
+        const secondMark = feedback.querySelector('.save-success-mark');
+        expect(secondMark).toBeTruthy();
+        expect(secondMark).not.toBe(firstMark);
         await act(async () => {
           await vi.advanceTimersByTimeAsync(1000);
         });
@@ -1132,6 +1140,7 @@ describe('iteration interactions', () => {
         expect(feedback.textContent).toBe(success);
         await act(async () => {});
         expect(feedback.textContent).toContain('fast save failure');
+        expect(feedback.querySelector('.save-success-mark')).toBeNull();
         await act(async () => {
           await vi.advanceTimersByTimeAsync(1000);
         });
@@ -2127,6 +2136,11 @@ describe('iteration interactions', () => {
       ),
     );
     expect(api.saveSettings).toHaveBeenCalledWith({ ...config, scan_workers: 4 });
+    expect(
+      (await screen.findByText('设置已保存。'))
+        .closest('.toast')
+        ?.querySelector('.save-success-mark'),
+    ).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: '设置' }));
     expect((screen.getByRole('combobox', { name: /扫描线程/ }) as HTMLSelectElement).value).toBe(
       '4',

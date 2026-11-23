@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { api } from './api';
+import { SaveSuccessMark, useDelayedBusy, useNotifications } from './notifications';
 import { Icon, Modal, SearchField } from './ui';
 import { useWindowCloseGuard } from './windowClose';
 import type { Game } from './types';
@@ -52,7 +53,7 @@ export function SaveEditor({
   const [valueEditor, setValueEditor] = useState<SaveField | null>(null);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
+  const { notice, setToast: setNotice, setSaved } = useNotifications();
   const [password, setPassword] = useState('');
   const passwords = useRef(new Map<string, string>());
   const [pending, setPending] = useState<null | (() => void)>(null);
@@ -126,6 +127,7 @@ export function SaveEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [game.id]);
   const dirty = Object.keys(drafts).length > 0;
+  const showSaving = useDelayedBusy(busy && dirty);
   function guarded(action: () => void) {
     if (active.current) return;
     if (dirty) setPending(() => action);
@@ -184,7 +186,7 @@ export function SaveEditor({
       trusted.current.set(next.slot.id, next.revision);
       setDocument(next);
       setDrafts({});
-      setNotice('已保存，请回游戏重新读档。');
+      setSaved('已保存，请回游戏重新读档。');
     });
   }
   async function unlock() {
@@ -424,9 +426,10 @@ export function SaveEditor({
             <button
               className="primary"
               disabled={busy || !dirty}
+              aria-busy={busy && dirty}
               onClick={() => trustBeforeWrite(() => void save())}
             >
-              {busy && dirty
+              {showSaving
                 ? '正在保存…'
                 : `保存修改${dirty ? ` (${Object.keys(drafts).length})` : ''}`}
             </button>
@@ -505,7 +508,8 @@ export function SaveEditor({
         )}
         {notice && (
           <p role="status" className="save-editor-success">
-            {notice}
+            {notice.saved && <SaveSuccessMark key={notice.id} />}
+            {notice.message}
           </p>
         )}
         {[...catalog.warnings, ...(document?.warnings ?? [])].map((warning, index) => (

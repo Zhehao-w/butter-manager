@@ -65,31 +65,36 @@ async function openDetail() {
   return screen.getByRole('dialog', { name: game.display_title });
 }
 
-it('quick search saves just the chosen location immediately and keeps other drafts editable', async () => {
-  const slot = '<GAME>/Save';
+it('quick search can save a confirmed directory without recognized files and keeps other drafts editable', async () => {
+  const location = '%USERPROFILE%/AppData/LocalLow/Studio/Project';
   vi.mocked(api.games).mockResolvedValue([game]);
   vi.mocked(api.findSaveLocations).mockResolvedValue([
-    { path: slot, reason: '发现槽位', files: ['slot01.sav'], can_add: true },
+    {
+      path: location,
+      reason: 'Player.log 指向当前游戏的安装目录，尚未发现可辨认的存档文件',
+      files: [],
+      can_add: true,
+    },
   ]);
   vi.mocked(api.addSaveLocation)
     .mockRejectedValueOnce(new Error('位置已失效'))
-    .mockResolvedValue({ ...game, save_paths: [slot] });
+    .mockResolvedValue({ ...game, save_paths: [location] });
   const detail = await openDetail();
   showDetailTab('存档位置');
   fireEvent.click(within(detail).getByRole('button', { name: '快速查找存档' }));
-  const add = await within(detail).findByRole('button', { name: '加入位置 ' + slot });
+  const add = await within(detail).findByRole('button', { name: '加入位置 ' + location });
   const paths = within(detail).getByRole('textbox', { name: /存档位置/ }) as HTMLTextAreaElement;
   fireEvent.change(paths, { target: { value: 'D:/草稿' } });
   fireEvent.click(add);
   await within(detail).findByText(/位置已失效/);
   expect(paths.value).toBe('D:/草稿');
   fireEvent.click(add);
-  await within(detail).findByRole('button', { name: '已加入 ' + slot });
-  expect(api.addSaveLocation).toHaveBeenLastCalledWith(game.id, slot);
-  expect(paths.value).toBe('D:/草稿\n' + slot);
+  await within(detail).findByRole('button', { name: '已加入 ' + location });
+  expect(api.addSaveLocation).toHaveBeenLastCalledWith(game.id, location);
+  expect(paths.value).toBe('D:/草稿\n' + location);
   expect(api.saveGame).not.toHaveBeenCalled();
   expect(api.startGameAnalysis).not.toHaveBeenCalled();
-  fireEvent.change(paths, { target: { value: slot } });
+  fireEvent.change(paths, { target: { value: location } });
   expect(
     (within(detail).getByRole('button', { name: '保存资料' }) as HTMLButtonElement).disabled,
   ).toBe(true);

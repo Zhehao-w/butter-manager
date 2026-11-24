@@ -117,14 +117,9 @@ fn log_matches(log: &str, needle: &str) -> bool {
     })
 }
 
-fn display(anchor: &Path, path: &Path) -> String {
-    format!(
-        "%USERPROFILE%/AppData/LocalLow/{}",
-        path.strip_prefix(anchor)
-            .unwrap()
-            .to_string_lossy()
-            .replace('\\', "/")
-    )
+fn appdata_path(anchor: &Path, label: &str, path: &Path) -> Option<String> {
+    let relative = path.strip_prefix(anchor).ok()?.to_str()?;
+    (!relative.contains('%')).then(|| format!("{label}/{}", relative.replace('\\', "/")))
 }
 
 /// Compiled Ren'Py releases may omit options.rpy. A mirrored slot is a hint for
@@ -213,8 +208,7 @@ pub(crate) fn unity(
     root: &Path,
     install_path: &Path,
     layout: &UnityLayout,
-    low: &Path,
-    product: Option<&Path>,
+    environment: &dyn Fn(&str) -> Option<PathBuf>,
     stop: &dyn Fn() -> bool,
 ) -> Vec<SaveHint> {
     // Unity may log the launcher's path spelling, including a Windows short directory name.
@@ -229,12 +223,9 @@ pub(crate) fn unity(
         })
         .collect::<Vec<_>>();
     log_paths.dedup();
-    let stem = std::ffi::OsStr::new(&layout.stem);
-    let distinctive_stem = crate::save_detection::identity_path(&layout.stem).is_some();
-    let identity = &layout.identity;
     let mut hints = vec![];
     #[cfg(windows)]
-    if let Some((company, product)) = identity {
+    if let Some((company, product)) = &layout.identity {
         use windows_sys::Win32::System::Registry::{
             RegCloseKey, RegOpenKeyExW, HKEY_CURRENT_USER, KEY_QUERY_VALUE,
         };
@@ -261,90 +252,23 @@ pub(crate) fn unity(
             });
         }
     }
-    if !plain_dir(low) || crate::deletion::plain_path(low).is_err() {
-        return hints;
-    }
-    let mut matches = BTreeMap::new();
-    if let Some(dir) = product {
-        matches.insert(dir.to_path_buf(), "厂商名和产品名与 app.info 一致");
-    }
-    let mut exact_files = product.map(|dir| evidence(dir, stop));
-    let search_logs = exact_files.as_ref().is_none_or(BTreeMap::is_empty);
-    let mut budget = 384;
-    if let Some(companies) = search_logs.then(|| fs::read_dir(low).ok()).flatten() {
-        for company in companies.take(256).flatten() {
-            if stop() || budget == 0 {
-                break;
-            }
-            if !plain_dir(&company.path()) {
-                continue;
-            }
-            let Ok(products) = fs::read_dir(company.path()) else {
-                continue;
-            };
-            for entry in products.take(budget.min(128)).flatten() {
-                budget -= 1;
-                if stop() {
-                    break;
-                }
-                let dir = entry.path();
-                if !plain_dir(&dir)
-                    || matches
-                        .keys()
-                        .any(|p| dir.as_os_str().eq_ignore_ascii_case(p.as_os_str()))
-                {
-                    continue;
-                }
-                if prefix(&dir.join("Player.log"), 32 * 1024).is_some_and(|text| {
-                    let log = text.replace('\\', "/").to_lowercase();
-                    log_paths.iter().any(|path| log_matches(&log, path))
-                }) {
-                    matches.insert(dir, "Player.log 指向当前游戏的安装目录");
-                } else if distinctive_stem && entry.file_name().eq_ignore_ascii_case(stem) {
-                    matches.insert(dir, "目录名与启动文件同名，请核对");
-                } else if identity.as_ref().is_some_and(|(_, product)| {
-                    entry
-                        .file_name()
-                        .eq_ignore_ascii_case(std::ffi::OsStr::new(product))
-                }) {
-                    matches.insert(dir, "目录与产品同名，请核对厂商");
-                }
-            }
-        }
-    }
-    for (dir, reason) in matches {
+    let roots = [
+        (
+            environment("USERPROFILE").map(|profile| profile.join("AppData/LocalLow")),
+            "%USERPROFILE%/AppData/LocalLow",
+            384,
+        ),
+        (environment("LOCALAPPDATA"), "%LOCALAPPDATA%", 128),
+        (environment("APPDATA"), "%APPDATA%", 128),
+    ];
+    for (base, label, budget) in roots {
         if stop() {
             break;
         }
-        let path = display(low, &dir);
-        let found = if Some(dir.as_path()) == product {
-            exact_files.take().unwrap_or_default()
-        } else {
-            evidence(&dir, stop)
-        };
-        if found.is_empty() {
-            hints.push(SaveHint {
-                path,
-                reason: format!("{reason}，尚未发现可辨认的存档文件"),
-                files: vec![],
-                can_add: false,
-            });
-        } else {
-            for (subdir, mut files) in found {
-                if subdir
-                    .strip_prefix(low)
-                    .is_ok_and(|p| p.to_string_lossy().contains('%'))
-                {
-                    continue;
-                }
-                files.sort();
-                hints.push(SaveHint {
-                    path: display(low, &subdir),
-                    reason: reason.into(),
-                    files,
-                    can_add: true,
-                });
-            }
+        if let Some(base) = base {
+            hints.extend(unity_in_appdata(
+                &base, label, budget, layout, &log_paths, stop,
+            ));
         }
     }
     hints.sort_by_cached_key(|h| {
@@ -353,11 +277,129 @@ pub(crate) fn unity(
         });
         (
             !h.can_add,
+            h.files.is_empty(),
             h.reason.contains("同名"),
             !save_folder,
             h.path.clone(),
         )
     });
     hints.truncate(12);
+    hints
+}
+
+fn unity_in_appdata(
+    base: &Path,
+    label: &str,
+    mut budget: usize,
+    layout: &UnityLayout,
+    log_paths: &[String],
+    stop: &dyn Fn() -> bool,
+) -> Vec<SaveHint> {
+    if !plain_dir(base) || crate::deletion::plain_path(base).is_err() {
+        return vec![];
+    }
+    let stem = std::ffi::OsStr::new(&layout.stem);
+    let distinctive_stem = crate::save_detection::identity_path(&layout.stem).is_some();
+    let identity = &layout.identity;
+    let product = identity
+        .as_ref()
+        .map(|(company, product)| base.join(company).join(product))
+        .filter(|dir| crate::deletion::plain_path(dir).is_ok() && plain_dir(dir));
+    let product = product.as_deref();
+    let mut matches = BTreeMap::new();
+    if let Some(dir) = product {
+        matches.insert(dir.to_path_buf(), ("厂商名和产品名与 app.info 一致", true));
+    }
+    let mut exact_files = product.map(|dir| evidence(dir, stop));
+    let search_logs = exact_files.as_ref().is_none_or(BTreeMap::is_empty);
+    let max_children = budget / 3;
+    if let Some(companies) = search_logs.then(|| fs::read_dir(base).ok()).flatten() {
+        for company in companies.take(256).flatten() {
+            if stop() || budget == 0 {
+                break;
+            }
+            let company = company.path();
+            if !plain_dir(&company) {
+                continue;
+            }
+            // Some games use a single product directory directly under AppData.
+            let children = fs::read_dir(&company)
+                .into_iter()
+                .flatten()
+                .take(max_children)
+                .flatten()
+                .map(|entry| entry.path());
+            for dir in std::iter::once(company).chain(children).take(budget) {
+                budget -= 1;
+                if stop() {
+                    break;
+                }
+                // Paths read from the directory may use different separators or casing than app.info.
+                if !plain_dir(&dir)
+                    || product.is_some_and(|exact| {
+                        dir.iter().count() == exact.iter().count()
+                            && dir
+                                .iter()
+                                .zip(exact)
+                                .all(|(a, b)| a.eq_ignore_ascii_case(b))
+                    })
+                {
+                    continue;
+                }
+                let Some(name) = dir.file_name() else {
+                    continue;
+                };
+                if prefix(&dir.join("Player.log"), 32 * 1024).is_some_and(|text| {
+                    let log = text.replace('\\', "/").to_lowercase();
+                    log_paths.iter().any(|path| log_matches(&log, path))
+                }) {
+                    matches.insert(dir, ("Player.log 指向当前游戏的安装目录", true));
+                } else if dir.parent() == Some(base) {
+                    // A top-level vendor directory may contain several unrelated games.
+                    continue;
+                } else if distinctive_stem && name.eq_ignore_ascii_case(stem) {
+                    matches.insert(dir, ("目录名与启动文件同名，请核对", false));
+                } else if identity.as_ref().is_some_and(|(_, product)| {
+                    name.eq_ignore_ascii_case(std::ffi::OsStr::new(product))
+                }) {
+                    matches.insert(dir, ("目录与产品同名，请核对厂商", false));
+                }
+            }
+        }
+    }
+    let mut hints = vec![];
+    for (dir, (reason, confirmed)) in matches {
+        if stop() {
+            break;
+        }
+        let found = if Some(dir.as_path()) == product {
+            exact_files.take().unwrap_or_default()
+        } else {
+            evidence(&dir, stop)
+        };
+        if found.is_empty() {
+            if let Some(path) = appdata_path(base, label, &dir) {
+                hints.push(SaveHint {
+                    path,
+                    reason: format!("{reason}，尚未发现可辨认的存档文件"),
+                    files: vec![],
+                    can_add: confirmed,
+                });
+            }
+        } else {
+            for (subdir, mut files) in found {
+                let Some(path) = appdata_path(base, label, &subdir) else {
+                    continue;
+                };
+                files.sort();
+                hints.push(SaveHint {
+                    path,
+                    reason: reason.into(),
+                    files,
+                    can_add: true,
+                });
+            }
+        }
+    }
     hints
 }

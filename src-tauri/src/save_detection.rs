@@ -633,31 +633,28 @@ fn search(
                     }
                 }
             }
-            external = layout.identity.as_ref().and_then(|(company, product)| {
-                if detail.is_none() && company.eq_ignore_ascii_case("DefaultCompany") {
-                    return None;
-                }
-                external_rule(
-                    engine,
-                    false,
-                    &[
-                        ("company", Path::new(company)),
-                        ("product", Path::new(product)),
-                    ],
-                )
-            });
-            if let (Some(detail), Some(profile)) = (detail, environment("USERPROFILE")) {
-                let product = external.take().and_then(|(_, relative)| {
-                    existing_external(&profile, &relative).then(|| profile.join(relative))
-                });
+            if let Some(detail) = detail {
                 *detail.hints = crate::save_discovery::unity(
                     &root,
                     install_path,
                     &layout,
-                    &profile.join("AppData/LocalLow"),
-                    product.as_deref(),
+                    environment,
                     detail.stop,
                 );
+            } else {
+                external = layout.identity.as_ref().and_then(|(company, product)| {
+                    if company.eq_ignore_ascii_case("DefaultCompany") {
+                        return None;
+                    }
+                    external_rule(
+                        engine,
+                        false,
+                        &[
+                            ("company", Path::new(company)),
+                            ("product", Path::new(product)),
+                        ],
+                    )
+                });
             }
         }
     }
@@ -680,24 +677,39 @@ fn search(
 mod tests {
     use super::*;
     #[test]
-    fn separates_save_evidence_from_logs_and_uses_the_selected_install_path() {
+    fn separates_save_evidence_from_logs_across_all_appdata_locations() {
         let tmp = tempfile::tempdir().unwrap();
         let game = tmp.path().join(".").join("汉化版");
         let data = game.join("bin/Game_Data");
         let low = tmp.path().join("AppData/LocalLow");
+        let local = tmp.path().join("AppData/Local");
+        let roaming = tmp.path().join("AppData/Roaming");
         let exact = low.join("DefaultCompany/ProjectMoon");
         let from_log = low.join("古い名前/Project42");
+        let local_product = local.join("DefaultCompany/ProjectMoon");
+        let roaming_from_log = roaming.join("CustomProgress");
+        let roaming_name_only = roaming.join("ProjectMoon");
         let other = low.join("Other/Project42");
-        for d in [&data, &exact, &from_log, &other] {
+        let name_only = low.join("NameOnly/ProjectMoon");
+        for d in [
+            &data,
+            &exact,
+            &from_log,
+            &local_product,
+            &roaming_from_log,
+            &roaming_name_only,
+            &other,
+            &name_only,
+        ] {
             fs::create_dir_all(d).unwrap();
         }
         fs::write(data.join("app.info"), "DefaultCompany\nProjectMoon\n").unwrap();
         fs::write(exact.join("Player.log"), "Unity").unwrap();
         let mono = format!("Mono path[0] = '{}/Managed'", data.display());
         fs::write(from_log.join("Player.log"), &mono).unwrap();
+        fs::write(roaming_from_log.join("Player.log"), &mono).unwrap();
+        fs::write(roaming_name_only.join("unrelated.sav"), b"fixture").unwrap();
         fs::write(other.join("Player.log"), mono.replace("_Data", "_Data2")).unwrap();
-        fs::create_dir(from_log.join("Slots")).unwrap();
-        fs::write(from_log.join("Slots/slot01.es3"), b"fixture").unwrap();
         let analyze = || {
             let mut hints = Vec::new();
             let paths = search(
@@ -705,7 +717,12 @@ mod tests {
                 ".",
                 "Unity",
                 Some("bin/Game.exe"),
-                &|_| Some(tmp.path().into()),
+                &|name| match name {
+                    "USERPROFILE" => Some(tmp.path().into()),
+                    "LOCALAPPDATA" => Some(local.clone()),
+                    "APPDATA" => Some(roaming.clone()),
+                    _ => None,
+                },
                 Some(DetailSearch {
                     stop: &|| false,
                     hints: &mut hints,
@@ -715,23 +732,47 @@ mod tests {
         };
         let (paths, hints) = analyze();
         assert!(paths.is_empty());
-        assert!(hints
-            .iter()
-            .any(|h| h.path.ends_with("ProjectMoon") && !h.can_add));
-        assert!(hints.iter().any(|h| h.path.ends_with("Project42/Slots")
-            && h.files == ["slot01.es3"]
-            && h.can_add));
-        assert!(!hints.iter().any(|h| h.path.contains("Other")));
+        for (path, can_add) in [
+            (
+                "%USERPROFILE%/AppData/LocalLow/DefaultCompany/ProjectMoon",
+                true,
+            ),
+            ("%USERPROFILE%/AppData/LocalLow/古い名前/Project42", true),
+            ("%USERPROFILE%/AppData/LocalLow/NameOnly/ProjectMoon", false),
+            ("%LOCALAPPDATA%/DefaultCompany/ProjectMoon", true),
+            ("%APPDATA%/CustomProgress", true),
+        ] {
+            let hint = hints.iter().find(|h| h.path == path).unwrap();
+            assert_eq!(hint.can_add, can_add, "{path}");
+            assert!(hint.files.is_empty());
+        }
+        assert!(!hints.iter().any(|h| h.path.contains("Other/Project42")));
+        assert!(!hints.iter().any(|h| h.path == "%APPDATA%/ProjectMoon"));
+        fs::create_dir(from_log.join("Slots")).unwrap();
+        fs::write(from_log.join("Slots/slot01.es3"), b"fixture").unwrap();
         let canonical_data = dunce::canonicalize(&data).unwrap();
         fs::write(
             from_log.join("Player.log"),
             format!("Mono path[0] = '{}/Managed'", canonical_data.display()),
         )
         .unwrap();
-        assert!(analyze()
-            .1
-            .iter()
-            .any(|h| h.path.ends_with("Project42/Slots") && h.can_add));
+        let with_slots = analyze().1;
+        let first = with_slots.first().unwrap();
+        assert!(first.path.ends_with("Project42/Slots"));
+        assert_eq!(first.files, ["slot01.es3"]);
+        assert!(first.can_add);
+        fs::write(local_product.join("local.sav"), b"fixture").unwrap();
+        fs::write(roaming_from_log.join("roaming.sav"), b"fixture").unwrap();
+        let with_external_slots = analyze().1;
+        assert_eq!(with_external_slots[0].path, "%APPDATA%/CustomProgress");
+        assert_eq!(
+            with_external_slots[1].path,
+            "%LOCALAPPDATA%/DefaultCompany/ProjectMoon"
+        );
+        for (hint, slot) in with_external_slots.iter().zip(["roaming.sav", "local.sav"]) {
+            assert_eq!(hint.files, [slot]);
+            assert!(hint.can_add);
+        }
         fs::write(exact.join("save.nson"), b"fixture").unwrap();
         for name in ["Custom", "Save"] {
             fs::create_dir(exact.join(name)).unwrap();
@@ -744,7 +785,7 @@ mod tests {
             .any(|h| h.path.ends_with("Project42/Slots")));
         assert!(exact_hints
             .iter()
-            .any(|h| h.path.ends_with("ProjectMoon") && h.can_add));
+            .any(|h| h.path.ends_with("LocalLow/DefaultCompany/ProjectMoon") && h.can_add));
     }
     #[test]
     fn renpy_mirrored_slots_are_detail_candidates_only() {

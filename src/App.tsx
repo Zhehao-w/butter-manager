@@ -74,7 +74,7 @@ import {
   TagManager,
 } from './LibraryOrganization';
 import { WindowCloseGuards, useWindowCloseGuard, useWindowClosing } from './windowClose';
-import { useLibraryLayout, useSavedSort } from './preferences';
+import { useLibraryLayout, useLibrarySortPriority, useSavedSort } from './preferences';
 import {
   PlayBadge,
   playLabels,
@@ -273,6 +273,8 @@ export default function App() {
     'played-asc',
     'played-desc',
   ]);
+  const [sortPriority, setSortPriority] = useLibrarySortPriority();
+  const playingFirst = sortPriority === 'playing';
   const [filters, setFilters] = useState(emptyFilters);
   const [otherEnginesOnly, setOtherEnginesOnly] = useState(false);
   const [quickEngineCount, setQuickEngineCount] = useState(5);
@@ -328,7 +330,7 @@ export default function App() {
   useLayoutEffect(() => {
     viewScroll.current.library = 0;
     if (libraryScroll.current) libraryScroll.current.scrollTop = 0;
-  }, [search, sort, issuesOnly, filters, otherEnginesOnly]);
+  }, [search, sort, playingFirst, issuesOnly, filters, otherEnginesOnly]);
   const [scanId, setScanId] = useState<string | null>(null);
   const [taskId, setTaskId] = useState<string | null>(null);
   const [showCheckBanner, setShowCheckBanner] = useState(false);
@@ -697,8 +699,19 @@ export default function App() {
             ),
         ),
         sort,
+        playingFirst,
       ),
-    [games, needle, sort, pathChecks, issuesOnly, filters, otherEnginesOnly, popularEngines],
+    [
+      games,
+      needle,
+      sort,
+      playingFirst,
+      pathChecks,
+      issuesOnly,
+      filters,
+      otherEnginesOnly,
+      popularEngines,
+    ],
   );
   // Filter changes never retain an invisible selection; sorting and view changes keep UUIDs.
   useEffect(() => {
@@ -798,8 +811,8 @@ export default function App() {
   );
   prepareLibraryReorder.current = useLibraryReorder(
     libraryScroll,
-    `${layout}:${cardColumns}:${sort}:${search}:${JSON.stringify(filters)}:${issuesOnly}:${otherEnginesOnly}`,
-    sort.startsWith('played') && !previewOpen && !importOpen && !settingsOpen,
+    `${layout}:${cardColumns}:${sort}:${playingFirst}:${search}:${JSON.stringify(filters)}:${issuesOnly}:${otherEnginesOnly}`,
+    (playingFirst || sort.startsWith('played')) && !previewOpen && !importOpen && !settingsOpen,
   );
   const virtualizer = useVirtualizer<HTMLElement, HTMLElement>({
     count: layout === 'list' ? filtered.length : Math.ceil(filtered.length / cardColumns),
@@ -1106,18 +1119,28 @@ export default function App() {
                     <Icon name="check" size={16} />
                     {selectionMode ? '结束选择' : '批量选择'}
                   </button>
-                  <SortField
-                    label="游戏排序"
-                    value={sort}
-                    onChange={(value) => setSort(value as LibrarySort)}
-                  >
-                    <option value="name-asc">游戏名 · 正序</option>
-                    <option value="name-desc">游戏名 · 倒序</option>
-                    <option value="added-desc">入库时间 · 最新</option>
-                    <option value="added-asc">入库时间 · 最早</option>
-                    <option value="played-desc">运行时间 · 最近</option>
-                    <option value="played-asc">运行时间 · 最早</option>
-                  </SortField>
+                  <div className="library-sort-controls">
+                    <button
+                      type="button"
+                      className={`library-filter-button ${playingFirst ? 'active' : ''}`}
+                      aria-pressed={playingFirst}
+                      onClick={() => setSortPriority(playingFirst ? 'none' : 'playing')}
+                    >
+                      正在玩优先
+                    </button>
+                    <SortField
+                      label="游戏排序"
+                      value={sort}
+                      onChange={(value) => setSort(value as LibrarySort)}
+                    >
+                      <option value="name-asc">游戏名 · 正序</option>
+                      <option value="name-desc">游戏名 · 倒序</option>
+                      <option value="added-desc">入库时间 · 最新</option>
+                      <option value="added-asc">入库时间 · 最早</option>
+                      <option value="played-desc">运行时间 · 最近</option>
+                      <option value="played-asc">运行时间 · 最早</option>
+                    </SortField>
+                  </div>
                 </div>
               </div>
               {selectionMode ? (
@@ -1260,7 +1283,7 @@ export default function App() {
                                 }
                               : undefined
                           }
-                          className={`${g.id === highlightedGameId ? 'selected' : ''} ${row ? 'virtual-row' : ''}`}
+                          className={`${g.id === highlightedGameId ? 'selected' : ''} ${row ? 'virtual-row' : ''} ${selectionMode && librarySelected.has(g.id) ? 'is-batch-selected' : ''}`}
                           onMouseEnter={() => setHighlightedGameId(g.id)}
                           onFocus={() => setHighlightedGameId(g.id)}
                           onClick={(event) => {
@@ -2866,10 +2889,17 @@ function GameDetail({
   ] as const;
   type DetailTab = (typeof detailTabs)[number][0];
   const [detailTab, setDetailTab] = useState<DetailTab>('basic');
+  const detailForm = useRef<HTMLFormElement>(null);
+  const tabScroll = useRef<Partial<Record<DetailTab, number>>>({});
+  useLayoutEffect(() => {
+    const body = detailForm.current?.closest<HTMLElement>('.modal-body');
+    if (body) body.scrollTop = tabScroll.current[detailTab] ?? 0;
+  }, [detailTab]);
   function selectDetailTab(tab: DetailTab) {
+    if (tab === detailTab) return;
+    const body = detailForm.current?.closest<HTMLElement>('.modal-body');
+    if (body) tabScroll.current[detailTab] = body.scrollTop;
     setDetailTab(tab);
-    const body = document.getElementById(formId)?.closest('.modal-body');
-    if (body) body.scrollTop = 0;
   }
   const panelProps = (tab: DetailTab) => ({
     id: `${formId}-${tab}-panel`,
@@ -3445,6 +3475,7 @@ function GameDetail({
         <TaskProgress page={analysisJob} onCancel={() => void run(onCancelAnalysis)} />
       )}
       <form
+        ref={detailForm}
         id={formId}
         onInvalidCapture={(event) => {
           const panel = (event.target as HTMLElement).closest<HTMLElement>('[data-detail-tab]');

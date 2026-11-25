@@ -10,9 +10,14 @@ export const bytesText = (bytes: number) =>
 export type LibrarySort =
   'name-asc' | 'name-desc' | 'added-asc' | 'added-desc' | 'played-asc' | 'played-desc';
 const collator = new Intl.Collator('zh-CN', { numeric: true, sensitivity: 'base' });
-export function sortGames(games: Game[], sort: LibrarySort): Game[] {
+export function sortGames(games: Game[], sort: LibrarySort, playingFirst = false): Game[] {
   const descending = sort.endsWith('desc');
   return [...games].sort((a, b) => {
+    if (playingFirst) {
+      const aPlaying = a.play_status === 'PLAYING';
+      const bPlaying = b.play_status === 'PLAYING';
+      if (aPlaying !== bPlaying) return aPlaying ? -1 : 1;
+    }
     const tie = collator.compare(a.display_title, b.display_title) || a.id.localeCompare(b.id);
     if (sort.startsWith('name')) return (descending ? -1 : 1) * tie;
     const field = sort.startsWith('added') ? 'created_at' : 'last_launched_at';

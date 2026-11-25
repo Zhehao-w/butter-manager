@@ -24,6 +24,12 @@ function useSavedChoice<T extends string>(key: string, fallback: T, allowed: rea
 export function useSavedSort<T extends string>(module: string, fallback: T, allowed: readonly T[]) {
   return useSavedChoice(`butter-manager.sort.${module}`, fallback, allowed);
 }
+export function useLibrarySortPriority() {
+  return useSavedChoice('butter-manager.sort.library.priority', 'none', [
+    'none',
+    'playing',
+  ] as const);
+}
 export function useLibraryLayout() {
   return useSavedChoice('butter-manager.view.library', 'list', ['list', 'grid'] as const);
 }

@@ -40,7 +40,10 @@ export function FavoriteButton({
         onChange();
       }}
     >
-      <Icon name="star" size={17} filled={game.favorite} />
+      <span className="favorite-star" aria-hidden="true">
+        <Icon name="star" size={17} />
+        <Icon name="star" size={17} filled />
+      </span>
     </button>
   );
 }
@@ -98,7 +101,10 @@ export function LibraryBatchActions({
     <div className="library-batch-actions" role="group" aria-label="批量操作" aria-busy={busy}>
       {selectAll && <label className="library-select-all">{selectAll}全选</label>}
       <span className="library-selected-count" role="status">
-        已选 {selected} 个<span> / 共 {total} 个</span>
+        <span className="library-selected-amount" data-width-label={`已选 ${total} 个`}>
+          <span>已选 {selected} 个</span>
+        </span>{' '}
+        <span className="library-selected-total">/ 共 {total} 个</span>
       </span>
       <div className="library-batch-buttons">
         <div className="play-quick-filters" role="group" aria-label="批量游玩状态">

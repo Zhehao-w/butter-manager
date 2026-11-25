@@ -472,8 +472,12 @@ describe('library organization', () => {
       fireEvent.click(screen.getByRole('button', { name: '批量选择' }));
       const all = screen.getByRole('checkbox', { name: '全选当前筛选结果' }) as HTMLInputElement;
       if (layout === 'list') expect(all.closest('th')?.textContent).toContain('游戏');
-      fireEvent.click(screen.getByRole('checkbox', { name: `选择 ${game.display_title}` }));
+      const checkbox = screen.getByRole('checkbox', { name: `选择 ${game.display_title}` });
+      fireEvent.click(checkbox);
       expect(all.indeterminate).toBe(true);
+      expect(checkbox.closest('[data-library-game]')?.classList.contains('is-batch-selected')).toBe(
+        true,
+      );
       fireEvent.click(all);
       expect(screen.getByText('已选 3 个')).toBeTruthy();
       expect(screen.queryByRole('combobox', { name: '批量目标状态' })).toBeNull();
@@ -867,10 +871,11 @@ describe('iteration interactions', () => {
     await waitFor(() => expect(api.listEditableSaves).toHaveBeenCalledTimes(2));
     expect(api.saveGame).not.toHaveBeenCalled();
   });
-  it('preserves drafts across detail tabs, autosaves status and submits the remaining edits together', async () => {
+  it('preserves drafts and scroll across detail tabs, and saves status independently', async () => {
     vi.mocked(api.saveGame).mockImplementation(async (edit) => ({ ...game, ...edit }));
     vi.mocked(api.setPlayStatuses).mockResolvedValue([{ ...game, play_status: 'COMPLETED' }]);
     const detail = await openDetail();
+    const viewport = within(detail).getByRole('region', { name: '游戏详情内容' });
     expect(
       within(detail)
         .getAllByRole('tabpanel')
@@ -882,7 +887,9 @@ describe('iteration interactions', () => {
     fireEvent.click(within(detail).getByRole('radio', { name: '已通关' }));
     await within(detail).findByText('游玩状态已自动保存。');
     expect(api.setPlayStatuses).toHaveBeenCalledWith([game.id], 'COMPLETED');
+    viewport.scrollTop = 140;
     showDetailTab('启动配置');
+    expect(viewport.scrollTop).toBe(0);
     fireEvent.change(within(detail).getByRole('textbox', { name: /启动文件（/ }), {
       target: { value: 'new.exe' },
     });
@@ -890,6 +897,9 @@ describe('iteration interactions', () => {
     fireEvent.change(within(detail).getByRole('textbox', { name: /存档位置/ }), {
       target: { value: '<GAME>/save' },
     });
+    viewport.scrollTop = 220;
+    showDetailTab('存档位置');
+    expect(viewport.scrollTop).toBe(220);
     showDetailTab('别名管理');
     fireEvent.change(within(detail).getByRole('textbox', { name: /别名（/ }), {
       target: { value: '另一个名称' },
@@ -900,6 +910,7 @@ describe('iteration interactions', () => {
     ).toBe('true');
     expect(within(detail).queryByRole('textbox', { name: '显示名称' })).toBeNull();
     fireEvent.keyDown(within(detail).getByRole('tab', { name: '记录与管理' }), { key: 'Home' });
+    expect(viewport.scrollTop).toBe(140);
     expect(
       (within(detail).getByRole('textbox', { name: '显示名称' }) as HTMLInputElement).value,
     ).toBe('修改标题');
@@ -921,6 +932,7 @@ describe('iteration interactions', () => {
       (within(detail).getByRole('radio', { name: '已通关' }) as HTMLInputElement).checked,
     ).toBe(true);
     showDetailTab('存档位置');
+    expect(viewport.scrollTop).toBe(220);
     expect(
       (within(detail).getByRole('textbox', { name: /存档位置/ }) as HTMLTextAreaElement).value,
     ).toBe('<GAME>/save');
@@ -4075,7 +4087,63 @@ describe('scan synchronization races', () => {
   });
 });
 
-describe('recently played sorting after launch', () => {
+describe('library sorting', () => {
+  it('remembers playing-first priority independently of the sort order within each group', async () => {
+    const library = [
+      makeGame({
+        id: 'a',
+        display_title: 'Game A',
+        play_status: 'PLAYING',
+        created_at: '2026-11-01',
+      }),
+      makeGame({
+        id: 'b',
+        display_title: 'Game B',
+        play_status: 'UNPLAYED',
+        created_at: '2026-11-04',
+      }),
+      makeGame({
+        id: 'c',
+        display_title: 'Game C',
+        play_status: 'PLAYING',
+        created_at: '2026-11-03',
+      }),
+      makeGame({
+        id: 'd',
+        display_title: 'Game D',
+        play_status: 'COMPLETED',
+        created_at: '2026-11-02',
+      }),
+    ];
+    vi.mocked(api.games).mockResolvedValue(library);
+    const gamesInOrder = () =>
+      Array.from(
+        screen.getByLabelText('游戏列表').querySelectorAll<HTMLElement>('[data-library-game]'),
+        (item) => item.dataset.libraryGame,
+      );
+    const priority = () => screen.getByRole('button', { name: '正在玩优先' });
+    const sortOrder = () => screen.getByRole<HTMLSelectElement>('combobox', { name: '游戏排序' });
+    const { unmount } = render(<App />);
+    await screen.findByRole('button', { name: 'Game A' });
+    expect(priority().getAttribute('aria-pressed')).toBe('false');
+    fireEvent.change(sortOrder(), { target: { value: 'added-desc' } });
+    expect(gamesInOrder()).toEqual(['b', 'c', 'd', 'a']);
+    fireEvent.click(priority());
+    expect(gamesInOrder()).toEqual(['c', 'a', 'b', 'd']);
+    fireEvent.change(sortOrder(), { target: { value: 'name-asc' } });
+    expect(gamesInOrder()).toEqual(['a', 'c', 'b', 'd']);
+    fireEvent.change(sortOrder(), { target: { value: 'added-desc' } });
+    unmount();
+
+    render(<App />);
+    await screen.findByRole('button', { name: 'Game A' });
+    expect(priority().getAttribute('aria-pressed')).toBe('true');
+    expect(sortOrder().value).toBe('added-desc');
+    expect(gamesInOrder()).toEqual(['c', 'a', 'b', 'd']);
+    fireEvent.click(priority());
+    expect(gamesInOrder()).toEqual(['b', 'c', 'd', 'a']);
+  });
+
   it.each(['list', 'grid'] as const)(
     'keeps the %s viewport and surviving nodes during reordering',
     async (layout) => {

@@ -2365,6 +2365,18 @@ button {
 .import-item .candidate-heading .mode {
   flex-shrink: 0;
 }
+.import-item [data-import-status='update'] {
+  background: #e4f4ef;
+  color: #28746a;
+}
+.import-item [data-import-status='same'] {
+  background: #edf1f6;
+  color: #596b81;
+}
+.import-item [data-import-status='pending'] {
+  background: #f9ecd4;
+  color: #8b6022;
+}
 .import-edit-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   margin-bottom: 12px;
@@ -5915,6 +5927,15 @@ button.save-editor-entry:active:not(:disabled) {
 .save-editor-filters .search input {
   height: 34px;
   padding: 5px 38px;
+}
+.save-editor-filters .save-editor-modified-toggle {
+  min-height: 34px;
+  padding: 3px 10px;
+}
+.save-editor-filters .save-editor-modified-toggle[aria-pressed='true'] {
+  background: #e7f0ff;
+  border-color: #bcd4ff;
+  color: #1672ff;
 }
 .save-editor-tabs {
   display: flex;

@@ -1037,14 +1037,16 @@ describe('batch import flow', () => {
     });
     vi.mocked(api.recycleImportDuplicate).mockResolvedValue(undefined);
     renderNewImport({ games: [installed] });
-    await screen.findByText('待确认关联');
+    expect((await screen.findByText('待确认关联')).dataset.importStatus).toBe('pending');
     expect(screen.queryByRole('button', { name: '删除导入副本…' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: '关联：Game' }));
     await expandSettings();
     const version = screen.getByRole('textbox', { name: '版本' });
     fireEvent.change(version, { target: { value: 'v1.3' } });
+    expect(screen.getByText('更新已有游戏').dataset.importStatus).toBe('update');
     expect(screen.queryByRole('button', { name: '删除导入副本…' })).toBeNull();
     fireEvent.change(version, { target: { value: 'v1.2' } });
+    expect(screen.getByText('已有同版本').dataset.importStatus).toBe('same');
     await expandSettings('游戏关联');
     fireEvent.click(screen.getByRole('button', { name: '删除导入副本…' }));
     const confirmation = await screen.findByRole('button', { name: '确认移入回收站' });

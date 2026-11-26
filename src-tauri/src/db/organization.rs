@@ -334,7 +334,7 @@ mod tests {
     }
 
     #[test]
-    fn favorites_tags_and_manual_status_survive_edits_version_changes_and_reopen() {
+    fn version_update_reopens_completed_games_but_replay_and_rollback_keep_later_status_edits() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("isolated.db");
         let mut db = Database::open(&path).unwrap();
@@ -350,7 +350,11 @@ mod tests {
         let mut new = old.clone();
         new.version = "v2".into();
         db.commit_version("a", "operation", &old, &new).unwrap();
+        assert_eq!(db.game("a").unwrap().play_status, PlayStatus::Playing);
+        db.set_play_statuses(&["a".into()], PlayStatus::Completed)
+            .unwrap();
         db.commit_version("a", "operation", &old, &new).unwrap();
+        assert_eq!(db.game("a").unwrap().play_status, PlayStatus::Completed);
         db.rollback_version("a", "operation", &new, &old).unwrap();
         let launched = db.record_launch("a").unwrap();
         assert!(launched.favorite);

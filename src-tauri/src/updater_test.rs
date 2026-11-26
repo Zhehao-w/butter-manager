@@ -778,11 +778,10 @@ fn database_commit_failure_restores_files_and_configuration_then_can_resume() {
     let id = f.plan(true, true);
     f.db.lock().unwrap().fail_version_commit(true).unwrap();
     assert!(f.apply(&id).is_err());
-    assert_eq!(f.db.lock().unwrap().game(&f.id).unwrap().aliases, aliases);
-    assert_eq!(
-        f.db.lock().unwrap().game(&f.id).unwrap().current_version,
-        "v1"
-    );
+    let failed = f.db.lock().unwrap().game(&f.id).unwrap();
+    assert_eq!(failed.aliases, aliases);
+    assert_eq!(failed.current_version, "v1");
+    assert_eq!(failed.play_status, crate::domain::PlayStatus::Completed);
     assert!(f
         .db
         .lock()
@@ -938,7 +937,8 @@ fn update_preserves_uuid_metadata_local_and_external_saves_and_records_history_o
         f.db.lock().unwrap().version_history(&f.id).unwrap()[0].created_at
     );
     assert_eq!(after.last_launched_at, before.last_launched_at);
-    assert_eq!(after.play_status, before.play_status);
+    assert_eq!(before.play_status, crate::domain::PlayStatus::Completed);
+    assert_eq!(after.play_status, crate::domain::PlayStatus::Playing);
     assert_eq!(after.current_version, "v2");
     assert_eq!(
         fs::read(f.old().join("www/save/進行.sav")).unwrap(),

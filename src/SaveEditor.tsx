@@ -313,18 +313,16 @@ export function SaveEditor({
   }, [document, fieldsById, category, expanded]);
   const needle = search.trim().toLocaleLowerCase();
   const searching = !!needle;
-  const fieldSearch = useMemo(
-    () =>
-      new Map(
-        searching
-          ? document?.fields.map((field) => [
-              field.id,
-              `${field.name} ${field.path} ${field.type_name ?? ''} ${field.description ?? ''} ${field.kind === 'container' ? '' : saveValueText(field.value)}`.toLocaleLowerCase(),
-            ])
-          : [],
-      ),
-    [document, searching],
-  );
+  const fieldSearch = useMemo(() => {
+    if (!searching || !document) return;
+    return new Map(
+      document.fields.map((field) => {
+        const value = field.kind === 'container' ? '' : saveValueText(field.value);
+        const text = `${field.name} ${field.path} ${field.type_name ?? ''} ${field.description ?? ''} ${value}`;
+        return [field.id, text.toLocaleLowerCase()];
+      }),
+    );
+  }, [document, searching]);
   const fields = useMemo(() => {
     if (!onlyModified && !needle) return visibleFields;
     const candidates = onlyModified
@@ -333,16 +331,17 @@ export function SaveEditor({
           .filter((entry) => entry !== undefined)
           .sort((a, b) => a.index - b.index)
           .map(({ field }) => field)
-      : (document?.fields ?? []).filter((field) => field.category === category);
+      : (document?.fields ?? []);
     if (!needle) return candidates;
     return candidates.filter((field) => {
-      const text = fieldSearch.get(field.id) ?? '';
+      if (!onlyModified && field.category !== category) return false;
       // Search the saved value as well as the draft while the user types.
-      return (
-        field.kind !== 'container' && field.id in drafts
-          ? `${text} ${saveValueText(drafts[field.id]).toLocaleLowerCase()}`
-          : text
-      ).includes(needle);
+      const saved = fieldSearch?.get(field.id) ?? '';
+      const draft =
+        field.kind !== 'container' && Object.hasOwn(drafts, field.id)
+          ? ` ${saveValueText(drafts[field.id]).toLocaleLowerCase()}`
+          : '';
+      return (saved + draft).includes(needle);
     });
   }, [document, fieldsById, visibleFields, category, needle, onlyModified, fieldSearch, drafts]);
   const virtual = useVirtualizer({

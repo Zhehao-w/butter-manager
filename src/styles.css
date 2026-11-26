@@ -2365,18 +2365,6 @@ button {
 .import-item .candidate-heading .mode {
   flex-shrink: 0;
 }
-.import-item [data-import-status='update'] {
-  background: #e4f4ef;
-  color: #28746a;
-}
-.import-item [data-import-status='same'] {
-  background: #edf1f6;
-  color: #596b81;
-}
-.import-item [data-import-status='pending'] {
-  background: #f9ecd4;
-  color: #8b6022;
-}
 .import-edit-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   margin-bottom: 12px;
@@ -3857,6 +3845,18 @@ tbody tr:not(:last-child) td {
   font-size: 11px;
   background: #e9f2ff;
   color: #2278e7;
+}
+.mode[data-import-status='update'] {
+  background: #e4f4ef;
+  color: #28746a;
+}
+.mode[data-import-status='same'] {
+  background: #edf1f6;
+  color: #596b81;
+}
+.mode[data-import-status='pending'] {
+  background: #f9ecd4;
+  color: #8b6022;
 }
 .version-badge {
   background: #f0f4fb;

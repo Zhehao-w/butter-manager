@@ -250,12 +250,21 @@ describe('Save Editor Lite', () => {
     expect((screen.getByLabelText('data["money"]') as HTMLInputElement).value).toBe('19');
     fireEvent.change(screen.getByRole('textbox', { name: '存档字段' }), { target: { value: '5' } });
     expect((screen.getByLabelText('data["money"]') as HTMLInputElement).value).toBe('19');
+    fireEvent.change(screen.getByRole('textbox', { name: '存档字段' }), { target: { value: '' } });
+    expect(screen.queryByLabelText('data["money"]')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '只看已修改' }));
+    expect((screen.getByLabelText('data["money"]') as HTMLInputElement).value).toBe('19');
     fireEvent.click(screen.getByRole('button', { name: '保存修改 (1)' }));
     await waitFor(() =>
       expect(api.applySaveEdits).toHaveBeenCalledWith('game', 'one', 'revision-1', [
         { id: 'child', value: 19 },
       ]),
     );
+    await screen.findByText('已保存，请回游戏重新读档。');
+    expect(
+      (screen.getByRole('button', { name: '只看已修改', pressed: false }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
   });
 
   it('requires explicit null initialization and submits the selected numeric type', async () => {
@@ -514,7 +523,7 @@ describe('Save Editor Lite', () => {
       true,
     );
   });
-  it('uses a boolean switch, filters by path, and retains changes between categories', async () => {
+  it('filters pending edits across categories and combines the filter with search', async () => {
     render(<SaveEditor game={game} onClose={vi.fn()} />);
     await screen.findByLabelText('金钱');
     fireEvent.click(screen.getByRole('tab', { name: '开关' }));
@@ -529,6 +538,15 @@ describe('Save Editor Lite', () => {
     expect(
       (screen.getByRole('button', { name: '保存修改 (1)' }) as HTMLButtonElement).disabled,
     ).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: '只看已修改' }));
+    expect(screen.queryByLabelText('姓名')).toBeNull();
+    expect(screen.queryByRole('switch', { name: /旗标/ })).toBeNull();
+    fireEvent.change(screen.getByRole('textbox', { name: '存档字段' }), { target: { value: '' } });
+    expect(screen.getByRole('switch', { name: /旗标/, checked: true })).toBeTruthy();
+    expect(screen.queryByLabelText('金钱')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '只看已修改' }));
+    expect(screen.getByLabelText('金钱')).toBeTruthy();
+    expect(screen.queryByRole('switch', { name: /旗标/ })).toBeNull();
   });
   it('confirms discarding dirty edits for slot switching, refresh and closing', async () => {
     const close = vi.fn();

@@ -42,6 +42,12 @@ const capsuleTitle = (title: string) => {
   const characters = Array.from(title);
   return characters.length > 32 ? characters.slice(0, 32).join('') + '…' : title;
 };
+const importStatusLabels = {
+  new: '新游戏',
+  update: '更新已有游戏',
+  same: '已有同版本',
+  pending: '待确认关联',
+};
 
 // Keep form controls mounted so folding a card never discards edits.
 function ImportDisclosure({
@@ -883,6 +889,15 @@ export function ImportPage({
                   : recommendations;
               const associationIssue =
                 !!recommendations.length && !choice.existing_id && !choice.new_override;
+              const sameVersion =
+                existing && sameImportVersion(choice.version, existing.current_version);
+              const importStatus = associationIssue
+                ? 'pending'
+                : !choice.existing_id
+                  ? 'new'
+                  : sameVersion
+                    ? 'same'
+                    : 'update';
               const saveIssue =
                 !!existing && !existing.save_paths.length && choice.preserve_saves !== false;
               const toolLaunch = !!choice.mtool;
@@ -967,16 +982,8 @@ export function ImportPage({
                         }
                       />
                       <strong title={choice.title}>{choice.title}</strong>
-                      <span
-                        className={`mode${recommendations.length && !choice.existing_id && !choice.new_override ? ' association-pending' : ''}`}
-                      >
-                        {choice.existing_id
-                          ? existing && sameImportVersion(choice.version, existing.current_version)
-                            ? '已有同版本'
-                            : '更新已有游戏'
-                          : matches[source]?.length && !choice.new_override
-                            ? '待确认关联'
-                            : '新游戏'}
+                      <span className="mode" data-import-status={importStatus}>
+                        {importStatusLabels[importStatus]}
                       </span>
                     </div>
                     <div className="import-source-row">
@@ -1425,16 +1432,15 @@ export function ImportPage({
                             >
                               关联已有游戏…
                             </button>
-                            {existing &&
-                              sameImportVersion(choice.version, existing.current_version) && (
-                                <button
-                                  className="danger"
-                                  disabled={disabled || !scanId || !!recoveryIssues.length}
-                                  onClick={() => setDuplicateSource(source)}
-                                >
-                                  删除导入副本…
-                                </button>
-                              )}
+                            {sameVersion && (
+                              <button
+                                className="danger"
+                                disabled={disabled || !scanId || !!recoveryIssues.length}
+                                onClick={() => setDuplicateSource(source)}
+                              >
+                                删除导入副本…
+                              </button>
+                            )}
                           </div>
                         </div>
                         {existing && (

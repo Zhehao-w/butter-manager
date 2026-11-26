@@ -130,9 +130,11 @@ impl Database {
         Self::write_version(&tx, id, new)?;
         // Version titles belong to the current identity; keep existing aliases untouched.
         tx.execute("INSERT INTO version_history(operation,game_id,old_version,new_version,status) VALUES(?1,?2,?3,?4,'committed')", params![operation,id,old.version,new.version])?;
-        // A successful version import counts as newly added; journal replay returns above.
+        // Refresh the intake time and reopen completed games only on the first commit.
         tx.execute(
-            "UPDATE games SET created_at=(SELECT created_at FROM version_history WHERE operation=?2 AND game_id=?1) WHERE id=?1",
+            "UPDATE games SET created_at=(SELECT created_at FROM version_history WHERE operation=?2 AND game_id=?1),
+                play_status=CASE WHEN play_status='COMPLETED' THEN 'PLAYING' ELSE play_status END
+             WHERE id=?1",
             params![id, operation],
         )?;
         if let Some(profile) = memory {
@@ -1583,7 +1585,7 @@ mod tests {
     }
 
     #[test]
-    fn version_import_refreshes_added_time_only_on_successful_first_commit() {
+    fn version_import_refreshes_added_time_and_preserves_unplayed_or_playing_status() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("library.db");
         let mut db = Database::open(&path).unwrap();
@@ -1598,7 +1600,9 @@ mod tests {
         assert_eq!(db.version_config("game").unwrap(), old);
         db.fail_version_commit(false).unwrap();
         db.commit_version("game", "update", &old, &new).unwrap();
-        let imported_time = db.game("game").unwrap().created_at;
+        let imported = db.game("game").unwrap();
+        let imported_time = imported.created_at;
+        assert_eq!(imported.play_status, crate::domain::PlayStatus::Unplayed);
         assert!(imported_time > original_time);
         assert_eq!(
             imported_time,
@@ -1624,9 +1628,11 @@ mod tests {
             .unwrap();
         db.commit_version("game", "next-update", &old, &new)
             .unwrap();
-        assert!(db.game("game").unwrap().created_at.as_str() > "2022-01-01T00:00:00.000Z");
+        let updated = db.game("game").unwrap();
+        assert_eq!(updated.play_status, crate::domain::PlayStatus::Playing);
+        assert!(updated.created_at.as_str() > "2022-01-01T00:00:00.000Z");
         assert_eq!(
-            db.game("game").unwrap().created_at,
+            updated.created_at,
             db.version_history("game").unwrap()[0].created_at
         );
     }

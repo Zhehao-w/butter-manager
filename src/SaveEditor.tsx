@@ -48,6 +48,7 @@ export function SaveEditor({
   const [slotId, setSlotId] = useState('');
   const [category, setCategory] = useState('variables');
   const [search, setSearch] = useState('');
+  const [onlyModified, setOnlyModified] = useState(false);
   const [drafts, setDrafts] = useState<Record<string, SaveValue>>({});
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [valueEditor, setValueEditor] = useState<SaveField | null>(null);
@@ -67,9 +68,13 @@ export function SaveEditor({
   const alive = useRef(true);
   const active = useRef(false);
   const viewport = useRef<HTMLDivElement>(null);
+  function clearDrafts() {
+    setDrafts({});
+    setOnlyModified(false);
+  }
   async function load(id: string) {
     setPassword('');
-    setDrafts({});
+    clearDrafts();
     setExpanded(new Set());
     setValueEditor(null);
     setSearch('');
@@ -185,7 +190,7 @@ export function SaveEditor({
       if (!alive.current) return;
       trusted.current.set(next.slot.id, next.revision);
       setDocument(next);
-      setDrafts({});
+      clearDrafts();
       setSaved('已保存，请回游戏重新读档。');
     });
   }
@@ -235,7 +240,7 @@ export function SaveEditor({
       setCatalog((current) => ({ ...current, slots: [...current.slots, next.slot] }));
       setDocument(next);
       setSlotId(next.slot.id);
-      setDrafts({});
+      clearDrafts();
       setSearch('');
       setCategory(next.slot.format === 'Persistent' ? 'persistent' : 'variables');
       if (next.slot.format === 'RenPy') lastNormalSlot.current = next.slot.id;
@@ -253,7 +258,7 @@ export function SaveEditor({
       if (!alive.current) return;
       trusted.current.set(next.slot.id, next.revision);
       setDocument(next);
-      setDrafts({});
+      clearDrafts();
       setNotice('已重新签名为本机存档，内容未修改。签名不保证不同游戏版本的兼容性。');
     });
   }
@@ -280,13 +285,17 @@ export function SaveEditor({
     if (renpy && tab !== category) {
       const slot = categorySlot(tab);
       if (slot) guarded(() => void run(() => load(slot.id)));
-    } else setCategory(tab);
+    } else {
+      setOnlyModified(false);
+      setCategory(tab);
+    }
   }
   const fields = useMemo(() => {
     const needle = search.trim().toLocaleLowerCase();
-    const byId = new Map(document?.fields.map((field) => [field.id, field]) ?? []);
+    const byId =
+      needle || onlyModified ? null : new Map(document?.fields.map((field) => [field.id, field]));
     return (document?.fields ?? []).filter((field) => {
-      if (field.category !== category) return false;
+      if (onlyModified ? !(field.id in drafts) : field.category !== category) return false;
       if (needle) {
         // Keep the saved value searchable while editing, as well as the pending value,
         // so a value filter does not remove the input halfway through typing.
@@ -303,16 +312,17 @@ export function SaveEditor({
           .toLocaleLowerCase()
           .includes(needle);
       }
+      if (onlyModified) return true;
       let parent = field.parent_id;
       const visited = new Set<string>();
       while (parent) {
         if (!expanded.has(parent) || visited.has(parent)) return false;
         visited.add(parent);
-        parent = byId.get(parent)?.parent_id;
+        parent = byId?.get(parent)?.parent_id;
       }
       return true;
     });
-  }, [document, category, search, expanded, drafts]);
+  }, [document, category, search, onlyModified, expanded, drafts]);
   const virtual = useVirtualizer({
     count: fields.length,
     getScrollElement: () => viewport.current,
@@ -324,7 +334,7 @@ export function SaveEditor({
   useEffect(() => {
     if (viewport.current) viewport.current.scrollTop = 0;
     virtual.measure();
-  }, [category, search, document, virtual]);
+  }, [category, search, onlyModified, document, virtual]);
   function row(field: SaveField) {
     const changed = field.id in drafts;
     const value = changed ? drafts[field.id] : field.value;
@@ -569,6 +579,14 @@ export function SaveEditor({
                 onChange={setSearch}
                 placeholder="搜索名称、值、ID 或字段路径"
               />
+              <button
+                className="save-editor-modified-toggle"
+                aria-pressed={onlyModified}
+                disabled={busy || (!dirty && !onlyModified)}
+                onClick={() => setOnlyModified(!onlyModified)}
+              >
+                只看已修改
+              </button>
             </div>
             <div
               className="save-editor-fields"
@@ -599,7 +617,11 @@ export function SaveEditor({
               )}
               {!fields.length && (
                 <p className="muted save-editor-empty">
-                  {search.trim() ? '未找到匹配字段，请调整搜索关键词。' : '此页暂无可显示的字段。'}
+                  {search.trim()
+                    ? '未找到匹配字段，请调整搜索关键词。'
+                    : onlyModified
+                      ? '当前槽位没有待保存的修改。'
+                      : '此页暂无可显示的字段。'}
                 </p>
               )}
             </div>
@@ -627,7 +649,7 @@ export function SaveEditor({
               onClick={() => {
                 const action = pending;
                 setPending(null);
-                setDrafts({});
+                clearDrafts();
                 action();
               }}
             >

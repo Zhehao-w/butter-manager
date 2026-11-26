@@ -28,6 +28,9 @@ const categories: Record<string, string> = {
   actors: '角色',
   persistent: 'Persistent',
 };
+const saveValueText = (value: SaveValue) =>
+  Array.isArray(value) ? value.join('\n') : value === null ? 'null none' : String(value);
+
 export function SaveEditor({
   game,
   onClose,
@@ -290,39 +293,58 @@ export function SaveEditor({
       setCategory(tab);
     }
   }
-  const fields = useMemo(() => {
-    const needle = search.trim().toLocaleLowerCase();
-    const byId =
-      needle || onlyModified ? null : new Map(document?.fields.map((field) => [field.id, field]));
+  const fieldsById = useMemo(
+    () => new Map(document?.fields.map((field, index) => [field.id, { field, index }])),
+    [document],
+  );
+  const visibleFields = useMemo(() => {
     return (document?.fields ?? []).filter((field) => {
-      if (onlyModified ? !(field.id in drafts) : field.category !== category) return false;
-      if (needle) {
-        // Keep the saved value searchable while editing, as well as the pending value,
-        // so a value filter does not remove the input halfway through typing.
-        const values =
-          field.kind === 'container'
-            ? []
-            : [field.value, ...(field.id in drafts ? [drafts[field.id]] : [])];
-        const valueText = values
-          .map((value) =>
-            Array.isArray(value) ? value.join('\n') : value === null ? 'null none' : String(value),
-          )
-          .join(' ');
-        return `${field.name} ${field.path} ${field.type_name ?? ''} ${field.description ?? ''} ${valueText}`
-          .toLocaleLowerCase()
-          .includes(needle);
-      }
-      if (onlyModified) return true;
+      if (field.category !== category) return false;
       let parent = field.parent_id;
+      if (!parent) return true;
       const visited = new Set<string>();
       while (parent) {
         if (!expanded.has(parent) || visited.has(parent)) return false;
         visited.add(parent);
-        parent = byId?.get(parent)?.parent_id;
+        parent = fieldsById.get(parent)?.field.parent_id;
       }
       return true;
     });
-  }, [document, category, search, onlyModified, expanded, drafts]);
+  }, [document, fieldsById, category, expanded]);
+  const needle = search.trim().toLocaleLowerCase();
+  const searching = !!needle;
+  const fieldSearch = useMemo(
+    () =>
+      new Map(
+        searching
+          ? document?.fields.map((field) => [
+              field.id,
+              `${field.name} ${field.path} ${field.type_name ?? ''} ${field.description ?? ''} ${field.kind === 'container' ? '' : saveValueText(field.value)}`.toLocaleLowerCase(),
+            ])
+          : [],
+      ),
+    [document, searching],
+  );
+  const fields = useMemo(() => {
+    if (!onlyModified && !needle) return visibleFields;
+    const candidates = onlyModified
+      ? Object.keys(drafts)
+          .map((id) => fieldsById.get(id))
+          .filter((entry) => entry !== undefined)
+          .sort((a, b) => a.index - b.index)
+          .map(({ field }) => field)
+      : (document?.fields ?? []).filter((field) => field.category === category);
+    if (!needle) return candidates;
+    return candidates.filter((field) => {
+      const text = fieldSearch.get(field.id) ?? '';
+      // Search the saved value as well as the draft while the user types.
+      return (
+        field.kind !== 'container' && field.id in drafts
+          ? `${text} ${saveValueText(drafts[field.id]).toLocaleLowerCase()}`
+          : text
+      ).includes(needle);
+    });
+  }, [document, fieldsById, visibleFields, category, needle, onlyModified, fieldSearch, drafts]);
   const virtual = useVirtualizer({
     count: fields.length,
     getScrollElement: () => viewport.current,

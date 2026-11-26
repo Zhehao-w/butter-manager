@@ -17,7 +17,14 @@ import { useStableVirtualizer } from './useStableVirtualizer';
 import { api } from './api';
 import { activeJob, useJob } from './useJob';
 import { BrowseButton, Modal, Icon, PageHeader, SearchField } from './ui';
-import { bytesText, displayVersion, formatTime } from './library';
+import {
+  bytesText,
+  displayVersion,
+  foldCase,
+  formatTime,
+  gameSearchFields,
+  indexGames,
+} from './library';
 import { QspConfiguration } from './QspConfiguration';
 import { EngineSelect } from './EngineSelect';
 import { ProgressBar } from './ProgressBar';
@@ -269,7 +276,7 @@ export function ImportPage({
   onOpenGame: (id: string) => void;
   recoveryIssues?: ImportRecoveryIssue[];
 }) {
-  const gamesById = useMemo(() => new Map(games.map((game) => [game.id, game])), [games]);
+  const gamesById = indexGames(games);
   const [candidates, setCandidates] = useState<ScanCandidate[]>([]);
   const [choices, setChoices] = useState<Record<string, ImportSelection>>({});
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -577,21 +584,41 @@ export function ImportPage({
       },
     }));
   }
-  const rows = useMemo(() => {
-    const key = search.trim().toLocaleLowerCase();
-    return newCandidates
-      .filter((c) =>
-        [
-          c.suggested_title,
-          c.install_path,
-          choices[c.install_path]?.version,
-          choices[c.install_path]?.title,
-          choices[c.install_path]?.external_player?.game_file,
-          choices[c.install_path]?.executable,
-        ].some((v) => v?.toLocaleLowerCase().includes(key)),
-      )
-      .sort((a, b) => a.suggested_title.localeCompare(b.suggested_title, 'zh-CN'));
-  }, [newCandidates, choices, search]);
+  const sortedCandidates = useMemo(
+    () =>
+      [...newCandidates].sort((a, b) =>
+        a.suggested_title.localeCompare(b.suggested_title, 'zh-CN'),
+      ),
+    [newCandidates],
+  );
+  const searchKey = foldCase(search.trim());
+  const searching = !!searchKey;
+  const candidateSearchFields = useMemo(
+    () =>
+      searching
+        ? sortedCandidates.map((candidate) => {
+            const choice = choices[candidate.install_path];
+            return [
+              candidate.suggested_title,
+              candidate.install_path,
+              choice?.version,
+              choice?.title,
+              choice?.external_player?.game_file,
+              choice?.executable,
+            ].map((value) => foldCase(value ?? ''));
+          })
+        : [],
+    [sortedCandidates, choices, searching],
+  );
+  const rows = useMemo(
+    () =>
+      searchKey
+        ? sortedCandidates.filter((_, index) =>
+            candidateSearchFields[index].some((field) => field.includes(searchKey)),
+          )
+        : sortedCandidates,
+    [sortedCandidates, candidateSearchFields, searchKey],
+  );
   const count = view === 'new' ? rows.length : 0;
   const virtual = count > 50;
   const itemKey = useMemo(() => (index: number) => rows[index].install_path, [rows]);
@@ -678,23 +705,24 @@ export function ImportPage({
       ? `还有 ${missingLaunchFiles} 项需要选择启动文件。`
       : invalidArguments || '';
   const linkRecommendations = linkSource ? matches[linkSource] : undefined;
-  const manualGames = useMemo(() => {
+  const linkGames = useMemo(() => {
     if (!linkSource) return [];
-    const needle = linkSearch.toLocaleLowerCase();
-    const recommendations = linkRecommendations ?? [];
-    const rank = (id: string) => {
-      const index = recommendations.findIndex((match) => match.id === id);
-      return index < 0 ? recommendations.length : index;
-    };
-    return games
-      .filter((g) =>
-        [g.display_title, g.canonical_title, g.install_path, ...g.aliases].some((v) =>
-          v.toLocaleLowerCase().includes(needle),
-        ),
-      )
-      .sort((a, b) => rank(a.id) - rank(b.id))
-      .slice(0, 50);
-  }, [games, linkRecommendations, linkSearch, linkSource]);
+    const ranked = new Set((linkRecommendations ?? []).map((match) => match.id));
+    const ordered = [
+      ...[...ranked].map((id) => gamesById.get(id)).filter((game) => game !== undefined),
+      ...games.filter((game) => !ranked.has(game.id)),
+    ];
+    return ordered.map((game) => ({ game, fields: gameSearchFields(game).map(foldCase) }));
+  }, [games, gamesById, linkRecommendations, linkSource]);
+  const manualGames = useMemo(() => {
+    const needle = foldCase(linkSearch);
+    const results: Game[] = [];
+    for (const { game, fields } of linkGames) {
+      if (!needle || fields.some((value) => value.includes(needle))) results.push(game);
+      if (results.length === 50) break;
+    }
+    return results;
+  }, [linkGames, linkSearch]);
   return (
     <section className="import-page batch-import" hidden={!visible} aria-label="批量导入游戏">
       <PageHeader

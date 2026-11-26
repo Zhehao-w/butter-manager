@@ -1,6 +1,6 @@
 import { LaunchArgumentsField } from './LaunchArgumentsField';
 import { createElement, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { CSSProperties, RefObject } from 'react';
+import type { ComponentPropsWithoutRef, CSSProperties, RefObject } from 'react';
 import { isTauri } from '@tauri-apps/api/core';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { version as appVersion } from '../package.json';
@@ -28,7 +28,16 @@ import {
   BrowseButton,
 } from './ui';
 import { iconLicense, virtualLicense } from './iconCredits';
-import { sortGames, formatTime, displayVersion, versionInput, isAssociatedFile } from './library';
+import {
+  displayVersion,
+  formatTime,
+  gameSearchFields,
+  indexGames,
+  isAssociatedFile,
+  normalizeSearch,
+  sortGames,
+  versionInput,
+} from './library';
 import type { LibrarySort } from './library';
 import { activeJob, useJob } from './useJob';
 import { TaskBanner } from './TaskBanner';
@@ -124,13 +133,40 @@ function launchBlockReason(game: Game, check?: LibraryPathCheck): string | undef
   return undefined;
 }
 
+function LaunchButton({
+  launching,
+  showProgress,
+  progressLabel = '启动中…',
+  iconSize,
+  disabled,
+  ...props
+}: Omit<ComponentPropsWithoutRef<'button'>, 'children'> & {
+  launching: boolean;
+  showProgress: boolean;
+  progressLabel?: string;
+  iconSize?: number;
+}) {
+  return (
+    <button
+      type="button"
+      {...props}
+      data-launch-pending={launching && !showProgress}
+      aria-busy={launching}
+      disabled={disabled || launching}
+    >
+      <Icon name="play" size={iconSize} />
+      {showProgress ? progressLabel : '启动'}
+    </button>
+  );
+}
+
 export default function App() {
   useEffect(() => {
     const favicon = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
     if (favicon) favicon.href = appIcon;
   }, [appIcon]);
   const [games, setGames] = useState<Game[]>([]);
-  const gamesById = useMemo(() => new Map(games.map((game) => [game.id, game])), [games]);
+  const gamesById = indexGames(games);
   const [libraryTags, setLibraryTags] = useState<LibraryTag[]>([]);
   const [tagManagerOpen, setTagManagerOpen] = useState(false);
   const [organizationBusy, setOrganizationBusy] = useState(false);
@@ -384,7 +420,7 @@ export default function App() {
       acceptPathChecks(job.path_checks || []);
       if (job.status === 'completed') {
         try {
-          const before = new Map(games.map((game) => [game.id, game]));
+          const before = gamesById;
           const changed = await api.syncScanMtool(job.id);
           if (currentScanId.current !== job.id) return;
           if (changed.length) {
@@ -554,7 +590,7 @@ export default function App() {
     setStarting(false);
   }
   function acceptRelocated(saved: Game) {
-    const old = games.find((game) => game.id === saved.id);
+    const old = gamesById.get(saved.id);
     if (old) autoSelected.current.add(old.install_path);
     refreshLibraryAfterMaintenance();
     setGames((current) => current.map((game) => (game.id === saved.id ? saved : game)));
@@ -595,7 +631,7 @@ export default function App() {
     void startLibraryCheck(true);
   }
   async function removeRecord(id: string) {
-    const removed = games.find((game) => game.id === id);
+    const removed = gamesById.get(id);
     await api.removeGame(id);
     forgetGame(id, removed);
     setToast('库记录已移除，游戏与存档文件保留。');
@@ -679,33 +715,34 @@ export default function App() {
     });
     setStarting(false);
   }
-  const needle = search.normalize('NFKC').toLocaleLowerCase();
+  const needle = normalizeSearch(search);
   const problemCount = useMemo(
     () =>
       games.filter((game) => pathChecks[game.id] && pathChecks[game.id].state !== 'available')
         .length,
     [games, pathChecks],
   );
+  const sortedGames = useMemo(
+    () => sortGames(games, sort, playingFirst),
+    [games, sort, playingFirst],
+  );
+  const searchableGames = useMemo(
+    () => new Map(games.map((game) => [game.id, gameSearchFields(game).map(normalizeSearch)])),
+    [games],
+  );
   const filtered = useMemo(
     () =>
-      sortGames(
-        games.filter(
-          (game) =>
-            matchesFilters(game, filters) &&
-            (!otherEnginesOnly || !popularEngines.has(game.engine)) &&
-            (!issuesOnly || (!!pathChecks[game.id] && pathChecks[game.id].state !== 'available')) &&
-            [game.display_title, game.canonical_title, game.install_path, ...game.aliases].some(
-              (s) => s.normalize('NFKC').toLocaleLowerCase().includes(needle),
-            ),
-        ),
-        sort,
-        playingFirst,
+      sortedGames.filter(
+        (game) =>
+          matchesFilters(game, filters) &&
+          (!otherEnginesOnly || !popularEngines.has(game.engine)) &&
+          (!issuesOnly || (!!pathChecks[game.id] && pathChecks[game.id].state !== 'available')) &&
+          (!needle || searchableGames.get(game.id)?.some((field) => field.includes(needle))),
       ),
     [
-      games,
+      sortedGames,
+      searchableGames,
       needle,
-      sort,
-      playingFirst,
       pathChecks,
       issuesOnly,
       filters,
@@ -875,7 +912,33 @@ export default function App() {
   const scanRows = virtualScan
     ? scanVirtualizer.getVirtualItems().map((row) => ({ candidate: scanFiltered[row.index], row }))
     : scanFiltered.map((candidate) => ({ candidate, row: null }));
-  const game = games.find((g) => g.id === selectedId);
+  const game = selectedId ? gamesById.get(selectedId) : undefined;
+  const linkedGame = linkGameId ? gamesById.get(linkGameId) : undefined;
+  function renderLibraryLaunch(game: Game, card = false) {
+    const label = `启动 ${game.display_title}`;
+    const blocked = taskActive
+      ? '当前任务完成后可启动'
+      : launchBlockReason(game, pathChecks[game.id]);
+    return (
+      <LaunchButton
+        className={card ? 'library-play-button card-play-button' : 'library-play-button'}
+        aria-label={label}
+        title={blocked || label}
+        disabled={!!blocked}
+        launching={launchingIds.has(game.id)}
+        showProgress={visibleLaunchingIds.has(game.id)}
+        progressLabel={card ? '启动中…' : '启动中'}
+        iconSize={14}
+        onClick={(event) => {
+          event.stopPropagation();
+          void action(async () => {
+            await playGame(game.id);
+            setToast(`已发送“${game.display_title}”的启动请求。`);
+          });
+        }}
+      />
+    );
+  }
   const staleRoot = !!scanJob.page && !!settings && scanJob.page.root !== settings.game_root;
   function setChoice(path: string, choice: Choice) {
     setChoices((current) => ({ ...current, [path]: { ...current[path], ...choice } }));
@@ -1312,36 +1375,7 @@ export default function App() {
                                 </div>
                               </div>
                             </div>
-                            <button
-                              type="button"
-                              className="library-play-button"
-                              data-launch-pending={
-                                launchingIds.has(g.id) && !visibleLaunchingIds.has(g.id)
-                              }
-                              aria-busy={launchingIds.has(g.id)}
-                              aria-label={`启动 ${g.display_title}`}
-                              title={
-                                taskActive
-                                  ? '当前任务完成后可启动'
-                                  : launchBlockReason(g, pathChecks[g.id]) ||
-                                    `启动 ${g.display_title}`
-                              }
-                              disabled={
-                                taskActive ||
-                                launchingIds.has(g.id) ||
-                                !!launchBlockReason(g, pathChecks[g.id])
-                              }
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                void action(async () => {
-                                  await playGame(g.id);
-                                  setToast(`已发送“${g.display_title}”的启动请求。`);
-                                });
-                              }}
-                            >
-                              <Icon name="play" size={14} />
-                              {visibleLaunchingIds.has(g.id) ? '启动中' : '启动'}
-                            </button>
+                            {renderLibraryLaunch(g)}
                           </td>
                           <td title={g.current_version === 'Unknown' ? '版本未知' : undefined}>
                             {displayVersion(g.current_version)}
@@ -1463,36 +1497,7 @@ export default function App() {
                                 <Icon name="clock" size={14} />
                                 {formatTime(g.last_launched_at)}
                               </span>
-                              <button
-                                type="button"
-                                className="library-play-button card-play-button"
-                                data-launch-pending={
-                                  launchingIds.has(g.id) && !visibleLaunchingIds.has(g.id)
-                                }
-                                aria-busy={launchingIds.has(g.id)}
-                                aria-label={`启动 ${g.display_title}`}
-                                title={
-                                  taskActive
-                                    ? '当前任务完成后可启动'
-                                    : launchBlockReason(g, pathChecks[g.id]) ||
-                                      `启动 ${g.display_title}`
-                                }
-                                disabled={
-                                  taskActive ||
-                                  launchingIds.has(g.id) ||
-                                  !!launchBlockReason(g, pathChecks[g.id])
-                                }
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  void action(async () => {
-                                    await playGame(g.id);
-                                    setToast(`已发送“${g.display_title}”的启动请求。`);
-                                  });
-                                }}
-                              >
-                                <Icon name="play" size={14} />
-                                {visibleLaunchingIds.has(g.id) ? '启动中…' : '启动'}
-                              </button>
+                              {renderLibraryLaunch(g, true)}
                             </article>
                           ))}
                         </div>
@@ -1534,10 +1539,7 @@ export default function App() {
             onError={setError}
             onDeleted={(id, report) => {
               if (report.removed) {
-                forgetGame(
-                  id,
-                  games.find((game) => game.id === id),
-                );
+                forgetGame(id, gamesById.get(id));
                 setToast('重复游戏已送入回收站，保留的一份未改动。');
               } else void startLibraryCheck(true);
             }}
@@ -1920,9 +1922,9 @@ export default function App() {
                 ))}
             </select>
           </label>
-          {games.find((game) => game.id === linkGameId) && (
+          {linkedGame && (
             <RelocationEditor
-              game={games.find((game) => game.id === linkGameId)!}
+              game={linkedGame}
               path={linkCandidate.install_path}
               onBusy={setLinkBusy}
               locked={taskActive}
@@ -3341,14 +3343,13 @@ function GameDetail({
                 </div>
               </div>
               <div className="detail-actions">
-                <button
+                <LaunchButton
                   className="primary play-button"
-                  data-launch-pending={launching && !launchProgressVisible}
-                  aria-busy={launching}
+                  launching={launching}
+                  showProgress={launchProgressVisible}
                   disabled={
                     busy ||
                     analysisLocked ||
-                    launching ||
                     confirmClose ||
                     !!launchBlockReason({ ...game, ...configuration }, launchCheck)
                   }
@@ -3359,10 +3360,7 @@ function GameDetail({
                       .then(() => setMessage('启动请求已发送。'))
                       .catch((reason) => setMessage(String(reason)));
                   }}
-                >
-                  <Icon name="play" />
-                  {launchProgressVisible ? '启动中…' : '启动'}
-                </button>
+                />
                 <button
                   disabled={busy || launching}
                   onClick={() =>

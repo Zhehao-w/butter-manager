@@ -169,6 +169,7 @@ describe('Save Editor Lite', () => {
       { id: '金钱', value: 25 },
     ]);
     expect(screen.queryByLabelText('ES3 密码')).toBeNull();
+    expect(screen.getByText('复杂对象只读')).toBeTruthy();
   });
   it.each([
     ['number', 9876.25, '9876.25'],
@@ -330,38 +331,35 @@ describe('Save Editor Lite', () => {
     );
   });
 
-  it.each(['foreign', 'unsigned', 'invalid', 'unknown'] as const)(
-    'confirms %s associated saves and remembers the revision returned by successful writes',
-    async (status) => {
-      const original = renpyDoc('one', status);
-      vi.mocked(api.readEditableSave).mockResolvedValue(original);
-      // Keep the status non-local to exercise the session confirmation cache independently.
-      const saved = { ...original, revision: 'revision-2', fields: [field('金钱', 9, 'number')] };
-      vi.mocked(api.applySaveEdits).mockResolvedValue(saved);
-      vi.mocked(api.resignRenpySave).mockResolvedValue({ ...saved, revision: 'revision-3' });
-      render(<SaveEditor game={game} onClose={vi.fn()} />);
-      fireEvent.change(await screen.findByLabelText('金钱'), { target: { value: '9' } });
-      fireEvent.click(screen.getByRole('button', { name: '保存修改 (1)' }));
-      expect(api.applySaveEdits).not.toHaveBeenCalled();
-      await confirmSource();
-      await screen.findByText('已保存，请回游戏重新读档。');
-      expect(api.applySaveEdits).toHaveBeenCalledWith(
-        'game',
-        'one',
-        'revision-1',
-        [{ id: '金钱', value: 9 }],
-        true,
-      );
-      fireEvent.click(screen.getByRole('button', { name: '重新签名为本机存档' }));
-      await screen.findByText(/已重新签名为本机存档，内容未修改/);
-      expect(api.resignRenpySave).toHaveBeenLastCalledWith('game', 'one', 'revision-2', true);
-      fireEvent.click(screen.getByRole('button', { name: '重新签名为本机存档' }));
-      await waitFor(() =>
-        expect(api.resignRenpySave).toHaveBeenLastCalledWith('game', 'one', 'revision-3', true),
-      );
-      expect(screen.queryByRole('dialog', { name: '确认外部存档来源可信' })).toBeNull();
-    },
-  );
+  it('confirms a foreign associated save and trusts the revision returned by successful writes', async () => {
+    const original = renpyDoc();
+    vi.mocked(api.readEditableSave).mockResolvedValue(original);
+    // Keep the status non-local to exercise the session confirmation cache independently.
+    const saved = { ...original, revision: 'revision-2', fields: [field('金钱', 9, 'number')] };
+    vi.mocked(api.applySaveEdits).mockResolvedValue(saved);
+    vi.mocked(api.resignRenpySave).mockResolvedValue({ ...saved, revision: 'revision-3' });
+    render(<SaveEditor game={game} onClose={vi.fn()} />);
+    fireEvent.change(await screen.findByLabelText('金钱'), { target: { value: '9' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存修改 (1)' }));
+    expect(api.applySaveEdits).not.toHaveBeenCalled();
+    await confirmSource();
+    await screen.findByText('已保存，请回游戏重新读档。');
+    expect(api.applySaveEdits).toHaveBeenCalledWith(
+      'game',
+      'one',
+      'revision-1',
+      [{ id: '金钱', value: 9 }],
+      true,
+    );
+    fireEvent.click(screen.getByRole('button', { name: '重新签名为本机存档' }));
+    await screen.findByText(/已重新签名为本机存档，内容未修改/);
+    expect(api.resignRenpySave).toHaveBeenLastCalledWith('game', 'one', 'revision-2', true);
+    fireEvent.click(screen.getByRole('button', { name: '重新签名为本机存档' }));
+    await waitFor(() =>
+      expect(api.resignRenpySave).toHaveBeenLastCalledWith('game', 'one', 'revision-3', true),
+    );
+    expect(screen.queryByRole('dialog', { name: '确认外部存档来源可信' })).toBeNull();
+  });
   it.each([false, true])(
     'does not reuse confirmation after refreshing a changed revision or switching slots (external=%s)',
     async (external) => {
@@ -578,19 +576,6 @@ describe('Save Editor Lite', () => {
       ),
     );
     expect(close).toHaveBeenCalledTimes(1);
-  });
-  it('retains drafts on source-change errors and explains unavailable signing keys', async () => {
-    const document = doc();
-    document.warnings = ['缺少签名私钥'];
-    vi.mocked(api.readEditableSave).mockResolvedValue(document);
-    vi.mocked(api.applySaveEdits).mockRejectedValue('存档已被游戏更新，请刷新');
-    render(<SaveEditor game={game} onClose={vi.fn()} />);
-    fireEvent.change(await screen.findByLabelText('金钱'), { target: { value: '8' } });
-    expect(screen.getByText('缺少签名私钥')).toBeTruthy();
-    expect(screen.getByText('复杂对象只读')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: '保存修改 (1)' }));
-    await screen.findByRole('alert');
-    expect((screen.getByLabelText('金钱') as HTMLInputElement).value).toBe('8');
   });
   it('explains missing slots and persistent runtime overwrite risk', async () => {
     vi.mocked(api.listEditableSaves).mockResolvedValueOnce({

@@ -5,7 +5,7 @@ import { activeJob, useJob } from './useJob';
 import { useStableVirtualizer } from './useStableVirtualizer';
 import { Icon, PageHeader, SearchField } from './ui';
 import { DeleteGameDialog } from './DeleteGameDialog';
-import { displayVersion } from './library';
+import { displayVersion, gameSearchFields, indexGames, normalizeSearch } from './library';
 import { directoryTime } from './scan';
 import { LaunchBadge } from './gameStatus';
 import type { DeleteReport, DuplicatePair, DuplicateReview, DuplicateStatus, Game } from './types';
@@ -119,7 +119,7 @@ export function LibraryDuplicates({
     };
   }, [visible, onError]);
 
-  const gamesById = useMemo(() => new Map(games.map((game) => [game.id, game])), [games]);
+  const gamesById = indexGames(games);
   const statuses = useMemo(
     () => new Map(reviews.map((review) => [pairKey(review), review.status])),
     [reviews],
@@ -144,25 +144,33 @@ export function LibraryDuplicates({
     for (const pair of allPairs) result[statuses.get(pairKey(pair)) || 'pending']++;
     return result;
   }, [allPairs, statuses]);
+  const searchFields = useMemo(
+    () =>
+      games.map((game) => ({
+        id: game.id,
+        fields: [...gameSearchFields(game), game.current_version, game.engine].map(normalizeSearch),
+      })),
+    [games],
+  );
+  const matchingIds = useMemo(() => {
+    const needle = normalizeSearch(search);
+    return needle
+      ? new Set(
+          searchFields
+            .filter(({ fields }) => fields.some((field) => field.includes(needle)))
+            .map(({ id }) => id),
+        )
+      : null;
+  }, [search, searchFields]);
   const rows = useMemo(() => {
-    const needle = search.normalize('NFKC').toLocaleLowerCase();
     return allPairs.filter((pair) => {
       const state = statuses.get(pairKey(pair)) || 'pending';
       return (
         (view === 'all' || state === view) &&
-        [gamesById.get(pair.left_id)!, gamesById.get(pair.right_id)!].some((game) =>
-          [
-            game.display_title,
-            game.canonical_title,
-            game.install_path,
-            game.current_version,
-            game.engine,
-            ...game.aliases,
-          ].some((text) => text.normalize('NFKC').toLocaleLowerCase().includes(needle)),
-        )
+        (!matchingIds || matchingIds.has(pair.left_id) || matchingIds.has(pair.right_id))
       );
     });
-  }, [allPairs, statuses, view, search, gamesById]);
+  }, [allPairs, statuses, view, matchingIds]);
   const scroll = useRef<HTMLDivElement>(null);
   const scrollPositions = useRef({ all: 0, pending: 0, confirmed: 0, excluded: 0 });
   useLayoutEffect(() => {

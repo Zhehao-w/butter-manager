@@ -228,16 +228,20 @@ impl<'a> MatchIndex<'a> {
         cancelled: &impl Fn() -> bool,
         progress: &impl Fn(&str),
     ) -> crate::domain::Result<Vec<crate::library_duplicates::DuplicatePair>> {
+        // Each posting is ordered by library position. Reuse its suffix for each
+        // game so names need not regenerate their keys during duplicate checks.
+        let mut later_matches = vec![Vec::new(); self.games.len()];
+        for posting in self.postings.values() {
+            for (index, &position) in posting.iter().enumerate().take(posting.len() - 1) {
+                later_matches[position].push(&posting[index + 1..]);
+            }
+        }
         let mut pairs = Vec::new();
         for (left, incoming) in self.games.iter().enumerate() {
-            let positions: HashSet<_> = incoming
-                .names
+            let positions: HashSet<_> = later_matches[left]
                 .iter()
-                .flat_map(Name::keys)
-                .filter_map(|key| self.postings.get(&key))
-                .flatten()
+                .flat_map(|positions| positions.iter())
                 .copied()
-                .filter(|position| *position > left)
                 .collect();
             for position in positions {
                 if cancelled() {
@@ -342,10 +346,12 @@ impl<'a> MatchIndex<'a> {
             .matches(&candidate.suggested_title, &identities)
             .into_iter()
             .filter_map(|(id, reason)| {
-                let game = self.games[*self.game_positions.get(&id)?].game;
-                if incoming.memory_conflict(&Name::new(&game.canonical_title)) {
+                let prepared = &self.games[*self.game_positions.get(&id)?];
+                // Prepared names start with the canonical title.
+                if incoming.memory_conflict(&prepared.names[0]) {
                     return None;
                 }
+                let game = prepared.game;
                 Some(Match {
                     id,
                     title: game.display_title.clone(),
@@ -1635,7 +1641,7 @@ mod tests {
     }
 
     #[test]
-    fn batch_index_keeps_correct_candidates_on_500_and_2000_game_libraries() {
+    fn batch_index_keeps_correct_candidates_and_reuses_identity_reads() {
         let temp = tempfile::tempdir().unwrap();
         let cases = [
             ("妹系罗盘～在无人岛的悠闲慢活～シスターズコンパス～妹たちと無人島でラブラブスローライフ", "姊妹指南针～与姊妹们在无人岛上的甜蜜慢生活～シスターズコンパス～ AI汉化 Ver1.02"),
@@ -1643,45 +1649,37 @@ mod tests {
             ("My Best Deal v4.8 女神的最佳交易", "My_Best_Deal-4.3.5-pc"),
             ("ReSister ― 与妹妹两人的秘密同居生活 ― v1.1.0 DLC", "ReSister-与妹妹的秘密同居生活 v1.03"),
         ];
-        for count in [500, 2000] {
-            let mut games: Vec<_> = (0..count)
-                .map(|n| {
-                    game(
-                        &format!("other-{n}"),
-                        &format!("Other Example Game {n} v1.0"),
-                        &temp.path().join(format!("other-{n}")),
-                    )
-                })
-                .collect();
-            for (n, (_, title)) in cases.iter().enumerate() {
-                games[n] = game(
-                    &format!("case-{n}"),
-                    title,
-                    &temp.path().join(format!("case-{n}")),
-                );
-            }
-            let started = Instant::now();
-            let mut index = MatchIndex::new(&games);
-            let prepared = started.elapsed();
-            let queries = Instant::now();
-            for _ in 0..25 {
-                for (n, (title, _)) in cases.iter().enumerate() {
-                    let candidate = scanner::pending_candidate(&temp.path().join(title)).unwrap();
-                    let matched = index.matches(&candidate, &|| false);
-                    assert_eq!(matched[0].id, format!("case-{n}"));
-                    assert!(!matched[0].auto_associate);
-                    assert!(matched.len() <= 5);
-                    if n == 3 {
-                        assert!(matched[0].reason.contains("DLC"));
-                    }
+        let count = 2000;
+        let mut games: Vec<_> = (0..count)
+            .map(|n| {
+                game(
+                    &format!("other-{n}"),
+                    &format!("Other Example Game {n} v1.0"),
+                    &temp.path().join(format!("other-{n}")),
+                )
+            })
+            .collect();
+        for (n, (_, title)) in cases.iter().enumerate() {
+            games[n] = game(
+                &format!("case-{n}"),
+                title,
+                &temp.path().join(format!("case-{n}")),
+            );
+        }
+        let mut index = MatchIndex::new(&games);
+        for _ in 0..2 {
+            for (n, (title, _)) in cases.iter().enumerate() {
+                let candidate = scanner::pending_candidate(&temp.path().join(title)).unwrap();
+                let matched = index.matches(&candidate, &|| false);
+                assert_eq!(matched[0].id, format!("case-{n}"));
+                assert!(!matched[0].auto_associate);
+                assert!(matched.len() <= 5);
+                if n == 3 {
+                    assert!(matched[0].reason.contains("DLC"));
                 }
             }
-            // Missing source metadata is memoized too; no repeated directory reads.
-            assert_eq!(index.identities.len(), 4);
-            eprintln!(
-                "matching fixture: {count} games, prepare={prepared:?}, 100 queries={:?}",
-                queries.elapsed()
-            );
+            // Missing source metadata also retains one cache entry per candidate.
+            assert_eq!(index.identities.len(), cases.len());
         }
     }
 

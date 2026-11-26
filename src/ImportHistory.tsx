@@ -1,13 +1,15 @@
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useStableVirtualizer } from './useStableVirtualizer';
 import { Icon, Modal } from './ui';
-import { bytesText, displayVersion, formatTime } from './library';
+import { bytesText, displayVersion, foldCase, formatTime, indexGames } from './library';
 import { LaunchBadge } from './gameStatus';
 import type { Game, ImportItem, ImportPlan } from './types';
 
 export function isImportRecord(item: ImportItem) {
   return item.state === 'completed' || item.state === 'rolled_back';
 }
+
+const historyPathKey = (path: string) => path.replaceAll('\\', '/').toLowerCase();
 
 function resultText(item: ImportItem) {
   if (item.state === 'rolled_back')
@@ -78,6 +80,15 @@ export function ImportHistory({
   const scroll = useRef<HTMLDivElement>(null);
   const offset = useRef(initialOffset);
   const lastSearch = useRef(search);
+  const gamesById = indexGames(games);
+  const gamesByPath = useMemo(() => {
+    const byPath = new Map<string, Game>();
+    for (const game of games) {
+      const key = historyPathKey(game.install_path);
+      if (!byPath.has(key)) byPath.set(key, game);
+    }
+    return byPath;
+  }, [games]);
   const records = useMemo(
     () =>
       plans
@@ -85,12 +96,7 @@ export function ImportHistory({
           plan.items.flatMap((item, index) => {
             if (!isImportRecord(item)) return [];
             const id = item.registered_id || item.selection.existing_id;
-            const game = games.find((game) =>
-              id
-                ? game.id === id
-                : game.install_path.replaceAll('\\', '/').toLowerCase() ===
-                  item.target.replaceAll('\\', '/').toLowerCase(),
-            );
+            const game = id ? gamesById.get(id) : gamesByPath.get(historyPathKey(item.target));
             const timestamp = item.completed_at_ms ?? plan.recorded_at_ms;
             const date = timestamp != null ? new Date(timestamp) : null;
             const validDate = date && !Number.isNaN(date.getTime()) ? date : null;
@@ -101,6 +107,14 @@ export function ImportHistory({
                 index,
                 item,
                 game,
+                searchFields: [
+                  item.selection.title,
+                  game?.display_title,
+                  item.selection.source,
+                  item.target,
+                  item.selection.version,
+                  item.update?.old_version,
+                ].map((value) => foldCase(value ?? '')),
                 timestamp: validDate?.getTime() ?? 0,
                 dateLabel:
                   validDate?.toLocaleDateString('zh-CN', {
@@ -119,22 +133,15 @@ export function ImportHistory({
           }),
         )
         .sort((a, b) => b.timestamp - a.timestamp || a.key.localeCompare(b.key)),
-    [plans, games],
+    [plans, gamesById, gamesByPath],
   );
   const rows = useMemo(() => {
-    const keyword = search.trim().toLocaleLowerCase();
-    return records.filter(({ item, game }) =>
-      [
-        item.selection.title,
-        game?.display_title,
-        item.selection.source,
-        item.target,
-        item.selection.version,
-        item.update?.old_version,
-      ].some((value) => value?.toLocaleLowerCase().includes(keyword)),
-    );
+    const keyword = foldCase(search.trim());
+    return keyword
+      ? records.filter(({ searchFields }) => searchFields.some((value) => value.includes(keyword)))
+      : records;
   }, [records, search]);
-  const detail = records.find((record) => record.key === detailKey);
+  const detail = detailKey ? records.find((record) => record.key === detailKey) : undefined;
   useLayoutEffect(() => {
     if (search !== lastSearch.current) {
       offset.current = 0;

@@ -592,33 +592,20 @@ export function ImportPage({
     [newCandidates],
   );
   const searchKey = foldCase(search.trim());
-  const searching = !!searchKey;
-  const candidateSearchFields = useMemo(
-    () =>
-      searching
-        ? sortedCandidates.map((candidate) => {
-            const choice = choices[candidate.install_path];
-            return [
-              candidate.suggested_title,
-              candidate.install_path,
-              choice?.version,
-              choice?.title,
-              choice?.external_player?.game_file,
-              choice?.executable,
-            ].map((value) => foldCase(value ?? ''));
-          })
-        : [],
-    [sortedCandidates, choices, searching],
-  );
-  const rows = useMemo(
-    () =>
-      searchKey
-        ? sortedCandidates.filter((_, index) =>
-            candidateSearchFields[index].some((field) => field.includes(searchKey)),
-          )
-        : sortedCandidates,
-    [sortedCandidates, candidateSearchFields, searchKey],
-  );
+  const rows = useMemo(() => {
+    if (!searchKey) return sortedCandidates;
+    return sortedCandidates.filter((candidate) => {
+      const choice = choices[candidate.install_path];
+      return [
+        candidate.suggested_title,
+        candidate.install_path,
+        choice?.version,
+        choice?.title,
+        choice?.external_player?.game_file,
+        choice?.executable,
+      ].some((value) => value && foldCase(value).includes(searchKey));
+    });
+  }, [sortedCandidates, choices, searchKey]);
   const count = view === 'new' ? rows.length : 0;
   const virtual = count > 50;
   const itemKey = useMemo(() => (index: number) => rows[index].install_path, [rows]);
@@ -708,20 +695,19 @@ export function ImportPage({
   const linkGames = useMemo(() => {
     if (!linkSource) return [];
     const ranked = new Set((linkRecommendations ?? []).map((match) => match.id));
-    const ordered = [
+    return [
       ...[...ranked].map((id) => gamesById.get(id)).filter((game) => game !== undefined),
       ...games.filter((game) => !ranked.has(game.id)),
     ];
-    return ordered.map((game) => ({ game, fields: gameSearchFields(game).map(foldCase) }));
   }, [games, gamesById, linkRecommendations, linkSource]);
   const manualGames = useMemo(() => {
     const needle = foldCase(linkSearch);
-    const results: Game[] = [];
-    for (const { game, fields } of linkGames) {
-      if (!needle || fields.some((value) => value.includes(needle))) results.push(game);
-      if (results.length === 50) break;
-    }
-    return results;
+    const found = needle
+      ? linkGames.filter((game) =>
+          gameSearchFields(game).some((value) => foldCase(value).includes(needle)),
+        )
+      : linkGames;
+    return found.slice(0, 50);
   }, [linkGames, linkSearch]);
   return (
     <section className="import-page batch-import" hidden={!visible} aria-label="批量导入游戏">

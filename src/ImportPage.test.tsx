@@ -718,6 +718,7 @@ describe('batch import flow', () => {
     render(<ImportPage {...props()} games={[oldGame]} />);
     fireEvent.click(await screen.findByRole('button', { name: /查看导入预览/ }));
     const review = await screen.findByRole('dialog', { name: '确认导入与更新' });
+    expect(within(review).getByText('更新').dataset.importStatus).toBe('update');
     expect(within(review).getByText('目标：E:/Library/用户确认的新目录 v1.2')).toBeTruthy();
     expect(within(review).getByText('启动参数：-dx11')).toBeTruthy();
   });
@@ -1567,6 +1568,7 @@ describe('batch import flow', () => {
       'true',
     );
     expect(within(dialog).getByText('Edited Game')).toBeTruthy();
+    expect(within(dialog).getByText('新增').dataset.importStatus).toBe('new');
     expect(within(dialog).getByRole('listitem').textContent).toContain('跨盘复制');
     expect(api.importApply).not.toHaveBeenCalled();
     fireEvent.click(within(dialog).getByRole('button', { name: '返回调整' }));

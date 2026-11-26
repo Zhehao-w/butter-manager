@@ -124,7 +124,9 @@ export function ImportPlanReview({
               <li key={selection.source} className="panel">
                 <div className="import-review-heading">
                   <strong>{selection.title}</strong>
-                  <span className="mode">{updating ? '更新' : '新增'}</span>
+                  <span className="mode" data-import-status={updating ? 'update' : 'new'}>
+                    {updating ? '更新' : '新增'}
+                  </span>
                 </div>
                 <p className="import-review-meta muted">
                   {updating
